@@ -36,6 +36,7 @@ import (
 
 const (
 	condCapacity    = v1.ConditionCapacityPressure
+	reasonQuota     = "QuotaExceeded"
 	condIdleWarned  = "IdleWarningSent"
 	condMaxWarned   = "MaxWarningSent"
 	activityStep    = 5 * time.Minute
@@ -226,7 +227,7 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 	}
 	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
 		// Quota is capacity pressure like an unschedulable pod (G8).
-		res, err := r.capacity(ctx, s, tmpl)
+		res, err := r.capacity(ctx, s, tmpl, true)
 		return nil, res, err
 	}
 	return pod, ctrl.Result{}, err
@@ -322,7 +323,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	case st.Phase == v1.SessionReady:
 		return r.running(ctx, s, tmpl, pod)
 	case claim.Unschedulable(pod):
-		return r.capacity(ctx, s, tmpl)
+		return r.capacity(ctx, s, tmpl, false)
 	}
 	if c := meta.FindStatusCondition(st.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
@@ -536,17 +537,23 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 }
 
 // capacity handles a session pod that cannot be placed (G8): evict the oldest idle pod of the node pool and fail after exhaustedAfter.
-func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate) (ctrl.Result, error) {
+// quota is true when the pod create was refused by a resource quota. That is told once per session as an Event and a log line.
+func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, quota bool) (ctrl.Result, error) {
 	now := r.clock.Now()
 	np := r.nodePool(tmpl)
 	r.pressure.Mark(np)
 	orig := s.DeepCopy()
 	since := now
+	told := false
 	if c := meta.FindStatusCondition(s.Status.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
-		since = c.LastTransitionTime.Time
+		since, told = c.LastTransitionTime.Time, c.Reason == reasonQuota
 	}
-	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionTrue, Reason: "NoCapacity",
-		Message: "the pod cannot be placed in its node pool", LastTransitionTime: metav1.NewTime(now)})
+	reason, message := "NoCapacity", "the pod cannot be placed in its node pool"
+	if quota {
+		reason, message = reasonQuota, "the pod was refused by the resource quota of the namespace"
+	}
+	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionTrue, Reason: reason,
+		Message: message, LastTransitionTime: metav1.NewTime(now)})
 	if s.Status.Phase == "" {
 		s.Status.Phase = v1.SessionPending
 	}
@@ -558,17 +565,25 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 	if err := r.List(ctx, &idle, client.InNamespace(s.Namespace), client.MatchingLabels{v1.LabelComponent: v1.ComponentSession, v1.LabelState: v1.StateIdle}); err != nil {
 		return ctrl.Result{}, err
 	}
-	if v := claim.OldestIdle(idle.Items, np); v != nil {
-		if err := r.Delete(ctx, v); client.IgnoreNotFound(err) != nil {
+	if quota && !told {
+		r.events.Eventf(s, nil, corev1.EventTypeWarning, reasonQuota, reasonQuota, "%s", message)
+		slog.InfoContext(ctx, "the pod create was refused by the resource quota", "session", s.Name, "node_pool", gaugeName(np))
+	}
+	if v := claim.OldestIdle(idle.Items, np); v != nil && r.pressure.mayEvict(np, v.Name) {
+		// The precondition keeps a pod that was claimed a moment ago when the cache is stale.
+		err := r.Delete(ctx, v, client.Preconditions{ResourceVersion: &v.ResourceVersion})
+		if err == nil {
+			r.pressure.evictedPod(np, v.Name)
+			telemetry.CapacityEvictions.WithLabelValues(gaugeName(np)).Inc()
+			slog.InfoContext(ctx, "evicted the oldest idle instance for capacity", "session", s.Name, "node_pool", gaugeName(np))
+		} else if err = client.IgnoreNotFound(ignoreConflict(err)); err != nil {
 			return ctrl.Result{}, err
 		}
-		telemetry.CapacityEvictions.WithLabelValues(gaugeName(np)).Inc()
-		slog.InfoContext(ctx, "evicted the oldest idle instance for capacity", "session", s.Name, "node_pool", gaugeName(np))
 	}
 
 	left := r.cfg.Capacity.ExhaustedAfter.Duration - now.Sub(since)
 	if left <= 0 {
-		return r.fail(ctx, s, v1.ErrorCapacityExhausted, "there is no capacity to start the session")
+		return r.fail(ctx, s, v1.ErrorCapacityExhausted, fmt.Sprintf("there is no capacity to start the session in node pool %s", gaugeName(np)))
 	}
 	return ctrl.Result{RequeueAfter: min(left, 2*time.Second)}, nil
 }

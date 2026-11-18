@@ -323,13 +323,21 @@ func TestCapacityPressureEvictsAndFails(t *testing.T) {
 	createSession(t, "s-cap", "tpl-cap")
 	var st v1.IDESessionStatus
 	eventually(t, "cold pod", func() bool { st = sessionStatus("s-cap"); return st.PodName != "" })
+	evictions := func() float64 { return testutil.ToFloat64(telemetry.CapacityEvictions.WithLabelValues("np-full")) }
+	before := evictions()
 	setUnschedulable(t, st.PodName)
 
 	eventually(t, "idle pods of the full node pool gone", func() bool { return len(podsWith(full)) == 0 })
+	if d := evictions() - before; d != 1 {
+		t.Errorf("capacity evictions rose by %v, want 1", d)
+	}
 	eventually(t, "capacity-exhausted", func() bool {
 		st = sessionStatus("s-cap")
 		return st.Phase == v1.SessionFailed && st.ErrorCode == v1.ErrorCapacityExhausted
 	})
+	if !strings.Contains(st.Message, "np-full") {
+		t.Errorf("message %q does not name the node pool", st.Message)
+	}
 	if n := len(podsWith(other)); n != 2 {
 		t.Errorf("other node pool has %d idle pods, want 2", n)
 	}
@@ -1139,4 +1147,23 @@ func TestEmptyClaimCountsOnlyForTemplatesWithAPool(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	createSession(t, "s-emptypool", "tpl-emptypool")
 	eventually(t, "empty claim counted", func() bool { return count("tpl-emptypool") >= 1 })
+}
+
+func TestPressureMayEvict(t *testing.T) {
+	c := &offsetClock{}
+	p := newPressure(c)
+	if !p.mayEvict("np", "a") {
+		t.Fatal("first eviction must be allowed")
+	}
+	p.evictedPod("np", "a")
+	if p.mayEvict("np", "a") || p.mayEvict("np", "b") {
+		t.Error("a second eviction inside the window must wait")
+	}
+	if !p.mayEvict("other", "x") {
+		t.Error("another node pool is not affected")
+	}
+	c.Step(evictWindow)
+	if p.mayEvict("np", "a") || !p.mayEvict("np", "b") {
+		t.Error("after the window only a different pod may go")
+	}
 }
