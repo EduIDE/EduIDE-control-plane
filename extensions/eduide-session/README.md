@@ -1,0 +1,37 @@
+# eduide-session (experimental)
+
+VS Code-API extension (runs as a Theia plugin) that connects an EduIDE session to the in-pod agent.
+It replaces the `EduIDE-data-bridge` extension and the Theia Cloud monitor extension.
+The extension never opens a server.
+It long-polls the agent on loopback (`GET /v1/session?after=<version>&timeout=30`), keeps the latest data in memory and sends activity heartbeats (`POST /v1/heartbeat`).
+
+Agent URL: `http://127.0.0.1:8082`, override with the env var `EDUIDE_AGENT_URL`.
+The contract is `api/agent/v1.yaml` (tag `local`).
+
+## Command contract (unchanged from the data bridge)
+
+- `dataBridge.getEnv(keys: string[]): Record<string, string>` waits (up to 30 s) until launch data exists, then returns the requested keys that are set. Returns `{}` after the wait if there is no data.
+- `dataBridge.getEnvState(): { injected: boolean; environment: Record<string, string> }` returns at once. `injected` is true once the session is claimed and launch data arrived. Poll it until `injected` is true.
+
+The extension id changes: Scorpio looks up `tum-aet.data-bridge` and must switch to `eduide.eduide-session`.
+
+## Notices and heartbeat
+
+- Notices `idle-warning` and `max-warning` show as warning messages with the action "I am still here", which sends a heartbeat at once. `info` shows as an information message. Each notice shows once.
+- Heartbeats go out on text document changes (file and untitled), editor selection and active editor changes, window focus and terminal data (when the API offers it), at most once per minute.
+- Errors (agent not yet up) back off from 0.5 s to 15 s. `deactivate` aborts the pending poll.
+
+## Migration
+
+Remove `data-bridge` and the `monitor-theia` extension from the IDE image and install the `.vsix` instead.
+The old `DATA_BRIDGE_ENABLED` switch and the HTTP injection endpoint are gone; launch data now arrives from the agent.
+The old `dataBridge.showLogs` command is not provided.
+
+## Development
+
+```
+npm ci
+npm run lint
+npm test      # plain node:test against a fake agent HTTP server, no VS Code needed
+npm run package   # builds dist/extension.js (esbuild) and eduide-session.vsix
+```
