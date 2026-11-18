@@ -27,7 +27,7 @@ With 1,000 sessions the operator must not write 1,000 status updates a minute.
 
 Chosen option: "agent collects, operator pulls".
 
-- Sources in the agent: the extension heartbeat (`POST /v1/heartbeat`, on real input, at most once per minute) and proxied requests. `GET /v1/status` returns the latest as `lastActivity` and the number of open WebSocket connections.
+- The only activity source is the extension heartbeat (`POST /v1/heartbeat`, on real input, at most once per minute). Proxied requests do not count, because an open tab polls without a user. `GET /v1/status` returns the latest heartbeat as `lastActivity` and the number of open WebSocket connections.
 - A claimed session with 0 connections and no activity counts as inactive: no browser means idle (G7).
 - The operator polls `status` with bounded concurrency and jitter. At 1,000 sessions that is about 1,000 requests a minute, which is trivial. It uses the control listener with the instance token ([0006](0006-agent-sidecar.md)). The NetworkPolicy allows only the operator ([0019](0019-network-isolation.md)).
 - The operator writes `status.lastActivity` only when it moves by more than 5 minutes. Status updates happen only on real change.
