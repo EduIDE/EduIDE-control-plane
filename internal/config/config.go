@@ -84,6 +84,14 @@ type Placement struct {
 	Affinity     *corev1.Affinity    `json:"affinity,omitempty"`
 	// NodePoolLabel is the node label key that names a node pool; capacity pressure is per value of it.
 	NodePoolLabel string `json:"nodePoolLabel,omitempty"`
+	// Prepull keeps template images warm on the nodes of this placement with one DaemonSet per template.
+	Prepull Prepull `json:"prepull,omitempty"`
+}
+
+type Prepull struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// PauseImage runs after the pull init container. Default registry.k8s.io/pause:3.10.
+	PauseImage string `json:"pauseImage,omitempty"`
 }
 
 type Capacity struct {
@@ -164,6 +172,9 @@ func (c *Config) defaults() {
 	}
 	if c.RateLimit.LaunchesPerMinute == 0 {
 		c.RateLimit.LaunchesPerMinute = 10
+	}
+	if c.Placement.Prepull.PauseImage == "" {
+		c.Placement.Prepull.PauseImage = "registry.k8s.io/pause:3.10"
 	}
 	if c.Gateway.Namespace == "" {
 		c.Gateway.Namespace = c.Namespace
