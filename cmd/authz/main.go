@@ -111,7 +111,7 @@ func run(cfgPath string) error {
 	})
 	httpSrv := &http.Server{Addr: ":9090", Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 
-	lis, err := net.Listen("tcp", ":9001") //nolint:gosec // the pod serves the gateway
+	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", ":9001") //nolint:gosec // the pod serves the gateway
 	if err != nil {
 		return err
 	}
