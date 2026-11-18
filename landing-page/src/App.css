@@ -102,6 +102,13 @@ header {
     width: auto;
 }
 
+/* Wrapper of the optional back link and the account menu in the header. */
+.bar-end {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+
 .account {
     position: relative;
 }

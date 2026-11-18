@@ -80,6 +80,8 @@ const en = {
     'footer.bug': 'Report a bug',
     'footer.imprint': 'Imprint',
     'footer.privacy': 'Privacy',
+    'footer.status': 'Status',
+    'menu.admin': 'Admin',
     'legal.imprint': 'Imprint',
     'legal.privacy': 'Privacy',
     'legal.loading': 'Loading...',
@@ -169,6 +171,8 @@ const de: Record<MessageKey, string> = {
     'footer.bug': 'Fehler melden',
     'footer.imprint': 'Impressum',
     'footer.privacy': 'Datenschutz',
+    'footer.status': 'Status',
+    'menu.admin': 'Admin',
     'legal.imprint': 'Impressum',
     'legal.privacy': 'Datenschutz',
     'legal.loading': 'Wird geladen...',
@@ -183,8 +187,22 @@ const STORAGE_KEY = 'lang';
 
 export type Translate = (key: MessageKey, params?: Record<string, string | number>) => string;
 
-export function translate(lang: Lang, key: MessageKey, params?: Record<string, string | number>): string {
-    return MESSAGES[lang][key].replace(/\{(\w+)\}/g, (whole, name: string) => (name in (params ?? {}) ? String(params?.[name]) : whole));
+export type Params = Record<string, string | number>;
+
+export function fill(text: string, params?: Params): string {
+    return text.replace(/\{(\w+)\}/g, (whole, name: string) => (name in (params ?? {}) ? String(params?.[name]) : whole));
+}
+
+export function translate(lang: Lang, key: MessageKey, params?: Params): string {
+    return fill(MESSAGES[lang][key], params);
+}
+
+/** A separate dictionary for a lazily loaded page, so its strings stay out of the main bundle. */
+export function makeText<K extends string>(
+    enText: Record<K, string>,
+    deText: Record<K, string>
+): (lang: Lang, key: K, params?: Params) => string {
+    return (lang, key, params) => fill((lang === 'de' ? deText : enText)[key], params);
 }
 
 export function hasMessage(key: string): key is MessageKey {

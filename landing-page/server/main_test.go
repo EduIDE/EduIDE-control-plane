@@ -53,6 +53,9 @@ func TestHandler(t *testing.T) {
 	}{
 		{"/", 200, "INDEX", "no-cache"},
 		{"/me/overview", 200, "INDEX", "no-cache"},
+		{"/status", 200, "INDEX", "no-cache"},
+		{"/admin", 200, "INDEX", "no-cache"},
+		{"/admin/sessions", 200, "INDEX", "no-cache"},
 		{"/assets/a.js", 200, "JS", "immutable"},
 		{"/assets/missing.js", 404, "", ""},
 		{"/config.json", 200, `{"keycloak"`, "no-store"},

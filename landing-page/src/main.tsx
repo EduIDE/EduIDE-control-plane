@@ -10,7 +10,7 @@ import { Shell } from './components/Shell';
 import { loadConfig } from './config';
 import { loadLang, translate } from './i18n';
 import { I18nProvider } from './I18nProvider';
-import { legalRoute } from './legal';
+import { appRoute } from './routes';
 import { userFromToken } from './user';
 
 async function start(): Promise<void> {
@@ -21,14 +21,26 @@ async function start(): Promise<void> {
         const config = await loadConfig();
         document.title = config.title ?? 'EduIDE';
         // The legal pages and the footer must work without an account, so they render before Keycloak asks for a login.
-        const route = legalRoute(window.location.pathname);
-        if (route) {
+        const route = appRoute(window.location.pathname);
+        if (route.kind === 'legal') {
             root.render(
                 <React.StrictMode>
                     <I18nProvider>
                         <Shell config={config}>
-                            <LegalPage route={route} page={config.legal[route]} />
+                            <LegalPage route={route.route} page={config.legal[route.route]} />
                         </Shell>
+                    </I18nProvider>
+                </React.StrictMode>
+            );
+            return;
+        }
+        if (route.kind === 'status') {
+            // Like the legal pages, the status must stay reachable when sign-in is what is broken.
+            const { StatusPage } = await import('./status/StatusPage');
+            root.render(
+                <React.StrictMode>
+                    <I18nProvider>
+                        <StatusPage config={config} />
                     </I18nProvider>
                 </React.StrictMode>
             );

@@ -7,13 +7,15 @@ interface ShellProps {
     config: AppConfig;
     user?: UserInfo;
     logoutUrl?: string;
+    admin?: boolean;
+    back?: boolean;
     children: React.ReactNode;
 }
 
 /** Header, content and footer of every page. The footer stays at the bottom of the viewport. */
-export const Shell = ({ config, user, logoutUrl, children }: ShellProps): React.JSX.Element => (
+export const Shell = ({ config, user, logoutUrl, admin, back, children }: ShellProps): React.JSX.Element => (
     <div className='app'>
-        <Header title={config.title} user={user} logoutUrl={logoutUrl} />
+        <Header title={config.title} user={user} logoutUrl={logoutUrl} admin={admin} back={back} />
         <main>{children}</main>
         <Footer footerLinks={config.footerLinks} legal={config.legal} />
     </div>

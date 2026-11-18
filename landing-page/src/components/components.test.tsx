@@ -49,6 +49,7 @@ describe('Footer', () => {
         expect(screen.getByRole('link', { name: 'Report a bug' }).getAttribute('href')).toBe(
             'https://github.com/EduIDE/EduIDE-control-plane/issues'
         );
+        expect(screen.getByRole('link', { name: 'Status' }).getAttribute('href')).toBe('/status');
         expect(screen.getByRole('link', { name: 'Imprint' }).getAttribute('href')).toBe('https://example.org/imprint');
         expect(screen.getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('/privacy');
         expect(screen.queryByText(/feature/i)).toBeNull();

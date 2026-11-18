@@ -60,6 +60,7 @@ export const Footer = ({ footerLinks, legal }: FooterProps): React.JSX.Element =
                             {l.text}
                         </External>
                     ))}
+                    <a href='/status'>{t('footer.status')}</a>
                     {legalLink('imprint')}
                     {legalLink('privacy')}
                 </span>

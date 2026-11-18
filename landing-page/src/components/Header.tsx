@@ -1,4 +1,4 @@
-import { Check, Languages, LogOut } from 'lucide-react';
+import { ArrowLeft, Check, Languages, LogOut, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { LANGS, useI18n } from '../i18n';
@@ -8,11 +8,15 @@ interface HeaderProps {
     title?: string;
     user?: UserInfo;
     logoutUrl?: string;
+    /** Show the entry to the admin panel (only when the service granted access). */
+    admin?: boolean;
+    /** A link back to the landing page, for pages that are reachable without being on it. */
+    back?: boolean;
 }
 
 const LANG_NAMES = { en: 'English', de: 'Deutsch' };
 
-export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): React.JSX.Element => {
+export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back }: HeaderProps): React.JSX.Element => {
     const { t, lang, setLang } = useI18n();
     const [open, setOpen] = useState(false);
     const box = useRef<HTMLDivElement | undefined>(undefined);
@@ -48,48 +52,62 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
                     <img src='/assets/logos/theia-logo.png' alt={t('brand.logoAlt')} />
                     {title}
                 </a>
-                <div
-                    className='account'
-                    ref={el => {
-                        box.current = el ?? undefined;
-                    }}
-                >
-                    <button
-                        className='avatar'
-                        ref={el => {
-                            avatar.current = el ?? undefined;
-                        }}
-                        aria-expanded={open}
-                        aria-label={user ? t('account', { label: user.label }) : t('language')}
-                        title={user?.label}
-                        onClick={() => setOpen(o => !o)}
-                    >
-                        {user ? user.initials : <Languages aria-hidden />}
-                    </button>
-                    {open && (
-                        <div className='menu'>
-                            <div className='menu-label'>{t('language')}</div>
-                            {LANGS.map(l => (
-                                <button
-                                    key={l}
-                                    aria-pressed={l === lang}
-                                    onClick={() => {
-                                        setLang(l);
-                                        setOpen(false);
-                                    }}
-                                >
-                                    {LANG_NAMES[l]}
-                                    {l === lang && <Check className='check' aria-hidden />}
-                                </button>
-                            ))}
-                            {logoutUrl && (
-                                <a href={logoutUrl}>
-                                    <LogOut aria-hidden />
-                                    {t('signOut')}
-                                </a>
-                            )}
-                        </div>
+                <div className='bar-end'>
+                    {back && (
+                        <a className='link' href='/'>
+                            <ArrowLeft aria-hidden />
+                            {t('legal.home')}
+                        </a>
                     )}
+                    <div
+                        className='account'
+                        ref={el => {
+                            box.current = el ?? undefined;
+                        }}
+                    >
+                        <button
+                            className='avatar'
+                            ref={el => {
+                                avatar.current = el ?? undefined;
+                            }}
+                            aria-expanded={open}
+                            aria-label={user ? t('account', { label: user.label }) : t('language')}
+                            title={user?.label}
+                            onClick={() => setOpen(o => !o)}
+                        >
+                            {user ? user.initials : <Languages aria-hidden />}
+                        </button>
+                        {open && (
+                            <div className='menu'>
+                                <div className='menu-label'>{t('language')}</div>
+                                {LANGS.map(l => (
+                                    <button
+                                        key={l}
+                                        aria-pressed={l === lang}
+                                        onClick={() => {
+                                            setLang(l);
+                                            setOpen(false);
+                                        }}
+                                    >
+                                        {LANG_NAMES[l]}
+                                        {l === lang && <Check className='check' aria-hidden />}
+                                    </button>
+                                ))}
+                                {admin && (
+                                    <a href='/admin'>
+                                        <ShieldCheck aria-hidden />
+                                        {t('menu.admin')}
+                                    </a>
+                                )}
+                                {logoutUrl && (
+                                    <a href={logoutUrl}>
+                                        <LogOut aria-hidden />
+                                        {t('signOut')}
+                                    </a>
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
         </header>

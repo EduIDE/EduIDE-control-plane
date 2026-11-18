@@ -4,7 +4,7 @@
  */
 
 export interface paths {
-    "/status": {
+    '/status': {
         parameters: {
             query?: never;
             header?: never;
@@ -18,7 +18,7 @@ export interface paths {
          *     `signIn` is `down` when the OIDC discovery of the issuer is unreachable. `workspaces` is `down` when a workspace is
          *     Pending for more than 2 min. `warm` is true while the pool of the template has an idle ready instance.
          */
-        get: operations["getPublicStatus"];
+        get: operations['getPublicStatus'];
         put?: never;
         post?: never;
         delete?: never;
@@ -27,14 +27,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/templates": {
+    '/templates': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listTemplates"];
+        get: operations['listTemplates'];
         put?: never;
         post?: never;
         delete?: never;
@@ -43,7 +43,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/templates/events": {
+    '/templates/events': {
         parameters: {
             query?: never;
             header?: never;
@@ -54,7 +54,7 @@ export interface paths {
          * @description Server-Sent Events. Event `templates` with the full template list (as `GET /templates`) as data.
          *     The stream starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
          */
-        get: operations["watchTemplates"];
+        get: operations['watchTemplates'];
         put?: never;
         post?: never;
         delete?: never;
@@ -63,51 +63,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/sessions": {
+    '/sessions': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listSessions"];
+        get: operations['listSessions'];
         put?: never;
         /**
          * @description Launches a session. Idempotent (G14): the key is template plus workspace, or for sessions
          *     without persistence template plus a hash of the launch data. A repeated launch returns the
          *     existing session with 200. Send `traceparent` to join the launch trace.
          */
-        post: operations["launchSession"];
+        post: operations['launchSession'];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/sessions/{name}": {
+    '/sessions/{name}': {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
-        get: operations["getSession"];
+        get: operations['getSession'];
         put?: never;
         post?: never;
-        delete: operations["deleteSession"];
+        delete: operations['deleteSession'];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/sessions/{name}/events": {
+    '/sessions/{name}/events': {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -116,7 +116,7 @@ export interface paths {
          *     The stream starts with the current state. Comments (`: ping`) keep it open every 15 s.
          *     After phase Ready or Failed the server sends the final event and closes.
          */
-        get: operations["watchSession"];
+        get: operations['watchSession'];
         put?: never;
         post?: never;
         delete?: never;
@@ -125,33 +125,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/workspaces": {
+    '/workspaces': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listWorkspaces"];
+        get: operations['listWorkspaces'];
         put?: never;
         /**
          * @description Get-or-create: the workspace name is derived from user, template and `display.source`, so a repeated
          *     request returns the existing workspace (also with 201). Fails with `persistence-not-allowed` when the
          *     template does not allow persistence `volume`, and with `template-not-found` for an unknown template.
          */
-        post: operations["createWorkspace"];
+        post: operations['createWorkspace'];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/workspaces/{name}": {
+    '/workspaces/{name}': {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -163,13 +163,13 @@ export interface paths {
          *     deletes the session and waits until it is gone (at most 30 s), then deletes the workspace.
          *     The code `workspace-in-use` is unused since U14 and stays in the enum for compatibility.
          */
-        delete: operations["deleteWorkspace"];
+        delete: operations['deleteWorkspace'];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/me/overview": {
+    '/me/overview': {
         parameters: {
             query?: never;
             header?: never;
@@ -177,7 +177,7 @@ export interface paths {
             cookie?: never;
         };
         /** @description Merged list for the landing page (G15). Running sessions and workspaces without a running session. */
-        get: operations["getOverview"];
+        get: operations['getOverview'];
         put?: never;
         post?: never;
         delete?: never;
@@ -186,7 +186,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/me/overview/events": {
+    '/me/overview/events': {
         parameters: {
             query?: never;
             header?: never;
@@ -194,7 +194,7 @@ export interface paths {
             cookie?: never;
         };
         /** @description Server-Sent Events. Event `overview` with a full Overview as data on every change, starting with the current state. */
-        get: operations["watchOverview"];
+        get: operations['watchOverview'];
         put?: never;
         post?: never;
         delete?: never;
@@ -203,7 +203,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/status": {
+    '/admin/status': {
         parameters: {
             query?: never;
             header?: never;
@@ -214,7 +214,7 @@ export interface paths {
          * @description Admin panel status page (U16). Counts and warnings come from the service cache and Kubernetes events.
          *     `stats` and `nodePools` are present only when `admin.prometheusURL` is configured and answers.
          */
-        get: operations["getAdminStatus"];
+        get: operations['getAdminStatus'];
         put?: never;
         post?: never;
         delete?: never;
@@ -223,7 +223,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/status/events": {
+    '/admin/status/events': {
         parameters: {
             query?: never;
             header?: never;
@@ -234,7 +234,7 @@ export interface paths {
          * @description Server-Sent Events. Event `status` with an AdminStatus as data. Starts with the current state,
          *     sends at most one event per 5 s and a comment (`: ping`) every 15 s.
          */
-        get: operations["watchAdminStatus"];
+        get: operations['watchAdminStatus'];
         put?: never;
         post?: never;
         delete?: never;
@@ -243,14 +243,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/pools": {
+    '/admin/pools': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listAdminPools"];
+        get: operations['listAdminPools'];
         put?: never;
         post?: never;
         delete?: never;
@@ -259,7 +259,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/sessions": {
+    '/admin/sessions': {
         parameters: {
             query?: never;
             header?: never;
@@ -267,7 +267,7 @@ export interface paths {
             cookie?: never;
         };
         /** @description All sessions of all users, ordered by name. Users appear only as `ownerHash`. */
-        get: operations["listAdminSessions"];
+        get: operations['listAdminSessions'];
         put?: never;
         post?: never;
         delete?: never;
@@ -276,7 +276,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/sessions/events": {
+    '/admin/sessions/events': {
         parameters: {
             query?: never;
             header?: never;
@@ -287,7 +287,7 @@ export interface paths {
          * @description Server-Sent Events. Event `sessions` with the first page of the list (default limit, no filters) as data.
          *     Starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
          */
-        get: operations["watchAdminSessions"];
+        get: operations['watchAdminSessions'];
         put?: never;
         post?: never;
         delete?: never;
@@ -296,16 +296,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/sessions/{name}": {
+    '/admin/sessions/{name}': {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
-        get: operations["getAdminSession"];
+        get: operations['getAdminSession'];
         put?: never;
         post?: never;
         delete?: never;
@@ -314,14 +314,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/workspaces": {
+    '/admin/workspaces': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listAdminWorkspaces"];
+        get: operations['listAdminWorkspaces'];
         put?: never;
         post?: never;
         delete?: never;
@@ -330,14 +330,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/problems": {
+    '/admin/problems': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getAdminProblems"];
+        get: operations['getAdminProblems'];
         put?: never;
         post?: never;
         delete?: never;
@@ -346,14 +346,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/templates": {
+    '/admin/templates': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["listAdminTemplates"];
+        get: operations['listAdminTemplates'];
         put?: never;
         post?: never;
         delete?: never;
@@ -362,14 +362,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/config": {
+    '/admin/config': {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get: operations["getAdminConfig"];
+        get: operations['getAdminConfig'];
         put?: never;
         post?: never;
         delete?: never;
@@ -392,12 +392,27 @@ export interface components {
              * @description Stable machine-readable code. New codes may be added within v1.
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-in-use" | "session-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
+            code:
+                | 'unauthorized'
+                | 'forbidden'
+                | 'not-found'
+                | 'invalid-input'
+                | 'unknown-key'
+                | 'persistence-not-allowed'
+                | 'template-not-found'
+                | 'workspace-not-found'
+                | 'workspace-in-use'
+                | 'session-limit-reached'
+                | 'capacity-exhausted'
+                | 'start-failed'
+                | 'rate-limited'
+                | 'payload-too-large'
+                | 'internal';
             /** @description Running sessions of the user, only with `session-limit-reached`. */
-            sessions?: components["schemas"]["Session"][];
+            sessions?: components['schemas']['Session'][];
         };
         /** @enum {string} */
-        PersistenceMode: "none" | "volume";
+        PersistenceMode: 'none' | 'volume';
         Display: {
             title?: string;
             source?: string;
@@ -406,8 +421,8 @@ export interface components {
             name: string;
             displayName: string;
             logoUrl?: string;
-            persistence: components["schemas"]["PersistenceMode"][];
-            defaultPersistence: components["schemas"]["PersistenceMode"];
+            persistence: components['schemas']['PersistenceMode'][];
+            defaultPersistence: components['schemas']['PersistenceMode'];
             /** @description Keys a launch request may send in `data`. */
             injectableKeys: string[];
             /** @description A pool prewarms sessions without persistence. */
@@ -415,10 +430,10 @@ export interface components {
             /** @description EduIDE version of the template image, read from the image annotation (U12). Absent without metadata. */
             imageVersion?: string;
             /** @description Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata. */
-            variants?: components["schemas"]["TemplateVariant"][];
+            variants?: components['schemas']['TemplateVariant'][];
             /** @description What the image brings along, in groups with the versions installed at build time (U12). */
-            includes?: components["schemas"]["TemplateIncludeGroup"][];
-            startEstimate?: components["schemas"]["StartEstimates"];
+            includes?: components['schemas']['TemplateIncludeGroup'][];
+            startEstimate?: components['schemas']['StartEstimates'];
         };
         TemplateVariant: {
             id: string;
@@ -428,7 +443,7 @@ export interface components {
         };
         TemplateIncludeGroup: {
             group: string;
-            items: components["schemas"]["TemplateIncludeItem"][];
+            items: components['schemas']['TemplateIncludeItem'][];
         };
         TemplateIncludeItem: {
             name: string;
@@ -436,8 +451,8 @@ export interface components {
         };
         /** @description Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent. */
         StartEstimates: {
-            none?: components["schemas"]["StartEstimate"];
-            volume?: components["schemas"]["StartEstimate"];
+            none?: components['schemas']['StartEstimate'];
+            volume?: components['schemas']['StartEstimate'];
         };
         StartEstimate: {
             /**
@@ -449,35 +464,35 @@ export interface components {
              * @description warm when a pool has an idle ready instance now (only without persistence).
              * @enum {string}
              */
-            strategy: "warm" | "cold";
+            strategy: 'warm' | 'cold';
             /** @description Number of observed starts the median is based on. */
             samples: number;
         };
         LaunchRequest: {
             template: string;
-            persistence?: components["schemas"]["PersistenceMode"];
+            persistence?: components['schemas']['PersistenceMode'];
             /** @description Start on this existing workspace of the user. Implies persistence volume. */
             workspace?: string;
             /** @description Launch data, only keys of the template's injectableKeys with source Request. At most 8 KiB in total (G18). */
             data?: {
                 [key: string]: string;
             };
-            display?: components["schemas"]["Display"];
+            display?: components['schemas']['Display'];
         };
         /** @enum {string} */
-        SessionPhase: "Pending" | "Starting" | "Ready" | "Failed";
+        SessionPhase: 'Pending' | 'Starting' | 'Ready' | 'Failed';
         Session: {
             name: string;
             template: string;
             workspace?: string;
-            phase: components["schemas"]["SessionPhase"];
+            phase: components['schemas']['SessionPhase'];
             /** @description Set once phase is Ready. */
             url?: string;
             /** @enum {string} */
-            startStrategy?: "warm-ready" | "warm-starting" | "cold";
+            startStrategy?: 'warm-ready' | 'warm-starting' | 'cold';
             errorCode?: string;
             message?: string;
-            display?: components["schemas"]["Display"];
+            display?: components['schemas']['Display'];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -494,19 +509,19 @@ export interface components {
              * @description Which timeout `stopsAt` stems from.
              * @enum {string}
              */
-            stopReason?: "idle" | "max";
+            stopReason?: 'idle' | 'max';
         };
         WorkspaceRequest: {
             template: string;
-            display?: components["schemas"]["Display"];
+            display?: components['schemas']['Display'];
         };
         /** @enum {string} */
-        WorkspacePhase: "Pending" | "Ready" | "Expired";
+        WorkspacePhase: 'Pending' | 'Ready' | 'Expired';
         Workspace: {
             name: string;
             template: string;
-            phase: components["schemas"]["WorkspacePhase"];
-            display?: components["schemas"]["Display"];
+            phase: components['schemas']['WorkspacePhase'];
+            display?: components['schemas']['Display'];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -522,7 +537,7 @@ export interface components {
         };
         OverviewItem: {
             /** @enum {string} */
-            kind: "session" | "workspace";
+            kind: 'session' | 'workspace';
             /** @description From display.title, else derived from display.source (G15). */
             title: string;
             source?: string;
@@ -544,15 +559,15 @@ export interface components {
              * @description Of the workspace, see Workspace.deletesAt.
              */
             deletesAt?: string;
-            session?: components["schemas"]["Session"];
-            workspace?: components["schemas"]["Workspace"];
+            session?: components['schemas']['Session'];
+            workspace?: components['schemas']['Workspace'];
         };
         Overview: {
-            items: components["schemas"]["OverviewItem"][];
+            items: components['schemas']['OverviewItem'][];
         };
         AdminWarning: {
             /** @enum {string} */
-            code: "pool-empty" | "capacity-pressure" | "scaler-silent";
+            code: 'pool-empty' | 'capacity-pressure' | 'scaler-silent';
             pool?: string;
             /** Format: date-time */
             since?: string;
@@ -570,7 +585,7 @@ export interface components {
         };
         AdminStartP95: {
             template: string;
-            persistence: components["schemas"]["PersistenceMode"];
+            persistence: components['schemas']['PersistenceMode'];
             /** Format: double */
             seconds: number;
         };
@@ -594,13 +609,13 @@ export interface components {
         };
         AdminPoolFree: {
             pool: string;
-            points: components["schemas"]["TimePoint"][];
+            points: components['schemas']['TimePoint'][];
         };
         /** @description Figures from Prometheus. Every field is absent when its query fails. */
         AdminStats: {
             startsLastHour?: number;
             failuresLastHour?: number;
-            startP95?: components["schemas"]["AdminStartP95"][];
+            startP95?: components['schemas']['AdminStartP95'][];
             /**
              * Format: double
              * @description CPU requests over allocatable CPU of the cluster (kube-state-metrics).
@@ -608,11 +623,11 @@ export interface components {
             cpuRequestsPercent?: number;
             nodeCount?: number;
             /** @description Last 12 h, one bucket per hour. */
-            startsPerHour?: components["schemas"]["AdminStartsBucket"][];
+            startsPerHour?: components['schemas']['AdminStartsBucket'][];
             /** @description Last 12 h, one point per hour. */
-            startLatency?: components["schemas"]["AdminLatencyPoint"][];
+            startLatency?: components['schemas']['AdminLatencyPoint'][];
             /** @description Idle ready instances per pool, last 6 h. */
-            poolFree?: components["schemas"]["AdminPoolFree"][];
+            poolFree?: components['schemas']['AdminPoolFree'][];
         };
         AdminStatus: {
             /** @description Sessions in phase Ready. */
@@ -625,9 +640,9 @@ export interface components {
             /** @description A pool reports condition CapacityPressure. */
             capacityPressure: boolean;
             /** @description Pressure per node pool, from eduide_capacity_pressure. Only with Prometheus. */
-            nodePools?: components["schemas"]["NodePoolPressure"][];
-            warnings: components["schemas"]["AdminWarning"][];
-            stats?: components["schemas"]["AdminStats"];
+            nodePools?: components['schemas']['NodePoolPressure'][];
+            warnings: components['schemas']['AdminWarning'][];
+            stats?: components['schemas']['AdminStats'];
         };
         /** @description A scaler decision, from the Kubernetes event the pool scaler writes on the IDEPool. */
         AdminDecision: {
@@ -635,7 +650,7 @@ export interface components {
             time: string;
             pool: string;
             /** @enum {string} */
-            reason: "ScaledUp" | "ScaledDown" | "Held";
+            reason: 'ScaledUp' | 'ScaledDown' | 'Held';
             message: string;
         };
         AdminPool: {
@@ -651,7 +666,7 @@ export interface components {
              * @description empty: a target above 0 and no idle ready instance. pressure: the pool has condition CapacityPressure.
              * @enum {string}
              */
-            state: "ok" | "empty" | "pressure";
+            state: 'ok' | 'empty' | 'pressure';
             /**
              * Format: date-time
              * @description Since when the pool is empty, as far as this service replica has seen it.
@@ -660,19 +675,19 @@ export interface components {
             capacityPressure: boolean;
             /** @description Annotation eduide.github.io/scaler-mode of the pool, if set. */
             scalerMode?: string;
-            lastDecision?: components["schemas"]["AdminDecision"];
+            lastDecision?: components['schemas']['AdminDecision'];
         };
         AdminPools: {
-            pools: components["schemas"]["AdminPool"][];
+            pools: components['schemas']['AdminPool'][];
             /** @description Newest first. */
-            decisions: components["schemas"]["AdminDecision"][];
+            decisions: components['schemas']['AdminDecision'][];
         };
         AdminSession: {
             name: string;
             template: string;
-            persistence: components["schemas"]["PersistenceMode"];
+            persistence: components['schemas']['PersistenceMode'];
             workspace?: string;
-            phase: components["schemas"]["SessionPhase"];
+            phase: components['schemas']['SessionPhase'];
             /** @description warm-ready, warm-starting or cold, see Session.startStrategy. */
             startStrategy?: string;
             errorCode?: string;
@@ -706,13 +721,13 @@ export interface components {
             /** Format: date-time */
             ready?: string;
         };
-        AdminSessionDetail: components["schemas"]["AdminSession"] & {
-            timestamps?: components["schemas"]["AdminSessionTimestamps"];
+        AdminSessionDetail: components['schemas']['AdminSession'] & {
+            timestamps?: components['schemas']['AdminSessionTimestamps'];
             /** @description Names of the keys in the launch data Secret. Never the values (G18). */
             launchDataKeys: string[];
         };
         AdminSessionList: {
-            items: components["schemas"]["AdminSession"][];
+            items: components['schemas']['AdminSession'][];
             /** @description Sessions that match the filters, over all pages. */
             total: number;
             /** @description Cursor of the next page; absent on the last page. */
@@ -722,12 +737,12 @@ export interface components {
          * @description inUse: a session runs on it. expired: phase Expired. expiring: deletion within 3 days. active: all others.
          * @enum {string}
          */
-        AdminWorkspaceState: "active" | "inUse" | "expiring" | "expired";
+        AdminWorkspaceState: 'active' | 'inUse' | 'expiring' | 'expired';
         AdminWorkspace: {
             name: string;
             template: string;
-            phase: components["schemas"]["WorkspacePhase"];
-            state: components["schemas"]["AdminWorkspaceState"];
+            phase: components['schemas']['WorkspacePhase'];
+            state: components['schemas']['AdminWorkspaceState'];
             title?: string;
             ownerHash: string;
             /**
@@ -757,14 +772,14 @@ export interface components {
             expired: number;
             /** Format: int64 */
             requestedBytes: number;
-            quota?: components["schemas"]["StorageQuota"];
+            quota?: components['schemas']['StorageQuota'];
         };
         AdminWorkspaceList: {
-            items: components["schemas"]["AdminWorkspace"][];
+            items: components['schemas']['AdminWorkspace'][];
             /** @description Workspaces that match the filters, over all pages. */
             total: number;
             next?: string;
-            summary: components["schemas"]["AdminWorkspaceSummary"];
+            summary: components['schemas']['AdminWorkspaceSummary'];
         };
         AdminCodeCount: {
             code: string;
@@ -785,18 +800,18 @@ export interface components {
         };
         AdminProblems: {
             /** @enum {string} */
-            since: "1h" | "24h";
+            since: '1h' | '24h';
             /** @description Failed sessions per code over `since`. Only with Prometheus. */
-            codes?: components["schemas"]["AdminCodeCount"][];
+            codes?: components['schemas']['AdminCodeCount'][];
             /** @description Warning events on sessions within the last hour, newest first. */
-            events: components["schemas"]["AdminProblemEvent"][];
+            events: components['schemas']['AdminProblemEvent'][];
         };
         AdminInjectableKey: {
             name: string;
             /** @enum {string} */
-            source: "Request" | "UserName" | "UserEmail";
+            source: 'Request' | 'UserName' | 'UserEmail';
             /** @enum {string} */
-            format?: "HTTPSURL" | "Token" | "Enum" | "Pattern";
+            format?: 'HTTPSURL' | 'Token' | 'Enum' | 'Pattern';
             maxLength?: number;
             required: boolean;
         };
@@ -818,16 +833,16 @@ export interface components {
             image: string;
             imageDigest?: string;
             imageVersion?: string;
-            persistence: components["schemas"]["PersistenceMode"][];
-            defaultPersistence: components["schemas"]["PersistenceMode"];
-            injectableKeys: components["schemas"]["AdminInjectableKey"][];
-            timeouts: components["schemas"]["AdminTimeouts"];
+            persistence: components['schemas']['PersistenceMode'][];
+            defaultPersistence: components['schemas']['PersistenceMode'];
+            injectableKeys: components['schemas']['AdminInjectableKey'][];
+            timeouts: components['schemas']['AdminTimeouts'];
             /** @description Retention override of the template. Absent: the deployment default applies. */
             retentionSeconds?: number;
-            variants?: components["schemas"]["TemplateVariant"][];
-            includes?: components["schemas"]["TemplateIncludeGroup"][];
-            startEstimate?: components["schemas"]["StartEstimates"];
-            pool?: components["schemas"]["AdminPoolRef"];
+            variants?: components['schemas']['TemplateVariant'][];
+            includes?: components['schemas']['TemplateIncludeGroup'][];
+            startEstimate?: components['schemas']['StartEstimates'];
+            pool?: components['schemas']['AdminPoolRef'];
         };
         /** @description Effective config of the deployment. Contains no secret, token or user data. */
         AdminConfig: {
@@ -881,34 +896,34 @@ export interface components {
          * @description `signIn` and `workspaces` are only ok or down.
          * @enum {string}
          */
-        ServiceLevel: "ok" | "slow" | "down";
+        ServiceLevel: 'ok' | 'slow' | 'down';
         PublicStatusParts: {
-            signIn: components["schemas"]["ServiceLevel"];
-            starting: components["schemas"]["ServiceLevel"];
-            workspaces: components["schemas"]["ServiceLevel"];
+            signIn: components['schemas']['ServiceLevel'];
+            starting: components['schemas']['ServiceLevel'];
+            workspaces: components['schemas']['ServiceLevel'];
         };
         PublicSeconds: {
             /** Format: double */
             seconds: number;
         };
         PublicStartEstimate: {
-            none?: components["schemas"]["PublicSeconds"];
-            volume?: components["schemas"]["PublicSeconds"];
+            none?: components['schemas']['PublicSeconds'];
+            volume?: components['schemas']['PublicSeconds'];
         };
         PublicTemplate: {
             name: string;
             displayName: string;
             logoUrl?: string;
-            startEstimate: components["schemas"]["PublicStartEstimate"];
+            startEstimate: components['schemas']['PublicStartEstimate'];
             /** @description The pool of the template has an idle ready instance. */
             warm: boolean;
         };
         PublicStatus: {
-            overall: components["schemas"]["ServiceLevel"];
+            overall: components['schemas']['ServiceLevel'];
             /** Format: date-time */
             updatedAt: string;
-            parts: components["schemas"]["PublicStatusParts"];
-            templates: components["schemas"]["PublicTemplate"][];
+            parts: components['schemas']['PublicStatusParts'];
+            templates: components['schemas']['PublicTemplate'][];
         };
     };
     responses: {
@@ -918,7 +933,7 @@ export interface components {
                 [name: string]: unknown;
             };
             content: {
-                "application/problem+json": components["schemas"]["Problem"];
+                'application/problem+json': components['schemas']['Problem'];
             };
         };
     };
@@ -946,14 +961,14 @@ export interface operations {
             /** @description Status. */
             200: {
                 headers: {
-                    "Cache-Control"?: string;
+                    'Cache-Control'?: string;
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PublicStatus"];
+                    'application/json': components['schemas']['PublicStatus'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listTemplates: {
@@ -971,10 +986,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Template"][];
+                    'application/json': components['schemas']['Template'][];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     watchTemplates: {
@@ -992,10 +1007,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    'text/event-stream': string;
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listSessions: {
@@ -1013,10 +1028,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"][];
+                    'application/json': components['schemas']['Session'][];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     launchSession: {
@@ -1030,7 +1045,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LaunchRequest"];
+                'application/json': components['schemas']['LaunchRequest'];
             };
         };
         responses: {
@@ -1040,7 +1055,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"];
+                    'application/json': components['schemas']['Session'];
                 };
             };
             /** @description New session. */
@@ -1049,10 +1064,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"];
+                    'application/json': components['schemas']['Session'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getSession: {
@@ -1060,7 +1075,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -1072,10 +1087,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Session"];
+                    'application/json': components['schemas']['Session'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     deleteSession: {
@@ -1083,7 +1098,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -1102,10 +1117,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/problem+json": components["schemas"]["Problem"];
+                    'application/problem+json': components['schemas']['Problem'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     watchSession: {
@@ -1113,7 +1128,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -1125,10 +1140,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    'text/event-stream': string;
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listWorkspaces: {
@@ -1146,10 +1161,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"][];
+                    'application/json': components['schemas']['Workspace'][];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     createWorkspace: {
@@ -1161,7 +1176,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["WorkspaceRequest"];
+                'application/json': components['schemas']['WorkspaceRequest'];
             };
         };
         responses: {
@@ -1171,10 +1186,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Workspace"];
+                    'application/json': components['schemas']['Workspace'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     deleteWorkspace: {
@@ -1182,7 +1197,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -1195,7 +1210,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getOverview: {
@@ -1213,10 +1228,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Overview"];
+                    'application/json': components['schemas']['Overview'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     watchOverview: {
@@ -1234,10 +1249,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    'text/event-stream': string;
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getAdminStatus: {
@@ -1255,10 +1270,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminStatus"];
+                    'application/json': components['schemas']['AdminStatus'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     watchAdminStatus: {
@@ -1276,10 +1291,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    'text/event-stream': string;
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listAdminPools: {
@@ -1297,23 +1312,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminPools"];
+                    'application/json': components['schemas']['AdminPools'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listAdminSessions: {
         parameters: {
             query?: {
                 template?: string;
-                persistence?: components["schemas"]["PersistenceMode"];
-                phase?: components["schemas"]["SessionPhase"];
+                persistence?: components['schemas']['PersistenceMode'];
+                phase?: components['schemas']['SessionPhase'];
                 /** @description Case-insensitive part of the session name or title. */
                 q?: string;
                 /** @description `next` of the previous page. */
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
+                cursor?: components['parameters']['Cursor'];
+                limit?: components['parameters']['Limit'];
             };
             header?: never;
             path?: never;
@@ -1327,10 +1342,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminSessionList"];
+                    'application/json': components['schemas']['AdminSessionList'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     watchAdminSessions: {
@@ -1348,10 +1363,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "text/event-stream": string;
+                    'text/event-stream': string;
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getAdminSession: {
@@ -1359,7 +1374,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                name: components["parameters"]["Name"];
+                name: components['parameters']['Name'];
             };
             cookie?: never;
         };
@@ -1371,22 +1386,22 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminSessionDetail"];
+                    'application/json': components['schemas']['AdminSessionDetail'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listAdminWorkspaces: {
         parameters: {
             query?: {
                 template?: string;
-                state?: components["schemas"]["AdminWorkspaceState"];
+                state?: components['schemas']['AdminWorkspaceState'];
                 /** @description Case-insensitive part of the workspace name, title or owner hash. */
                 q?: string;
                 /** @description `next` of the previous page. */
-                cursor?: components["parameters"]["Cursor"];
-                limit?: components["parameters"]["Limit"];
+                cursor?: components['parameters']['Cursor'];
+                limit?: components['parameters']['Limit'];
             };
             header?: never;
             path?: never;
@@ -1400,17 +1415,17 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminWorkspaceList"];
+                    'application/json': components['schemas']['AdminWorkspaceList'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getAdminProblems: {
         parameters: {
             query?: {
                 /** @description Window of the counts per code. Default 24h. */
-                since?: "1h" | "24h";
+                since?: '1h' | '24h';
             };
             header?: never;
             path?: never;
@@ -1424,10 +1439,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminProblems"];
+                    'application/json': components['schemas']['AdminProblems'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     listAdminTemplates: {
@@ -1445,10 +1460,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminTemplate"][];
+                    'application/json': components['schemas']['AdminTemplate'][];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
     getAdminConfig: {
@@ -1466,10 +1481,10 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["AdminConfig"];
+                    'application/json': components['schemas']['AdminConfig'];
                 };
             };
-            default: components["responses"]["Problem"];
+            default: components['responses']['Problem'];
         };
     };
 }
