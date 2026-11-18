@@ -1,0 +1,50 @@
+{
+  "name": "eduide-session",
+  "displayName": "EduIDE Session",
+  "description": "Connects an EduIDE session to its agent: launch data, activity heartbeat and timeout notices",
+  "version": "0.1.0",
+  "publisher": "eduide",
+  "license": "EPL-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EduIDE/EduIDE-control-plane"
+  },
+  "engines": {
+    "vscode": "^1.106.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "*"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "dataBridge.getEnv",
+        "title": "EduIDE Session: Retrieve a list of environment variables"
+      },
+      {
+        "command": "dataBridge.getEnvState",
+        "title": "EduIDE Session: Retrieve the full injected environment and readiness flag"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc --noEmit && node esbuild.mjs",
+    "lint": "eslint src test",
+    "test": "node --import tsx --test test/*.test.ts",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository -o eduide-session.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/vscode": "1.106.0",
+    "@vscode/vsce": "4.1.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.15.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.73.0"
+  }
+}
