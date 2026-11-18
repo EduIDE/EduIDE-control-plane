@@ -42,7 +42,7 @@ The chart's `values.yaml` lists every value with its default. The values below m
 | Value (config key) | Example |
 |---|---|
 | `deployment` | `course-a` |
-| `hosts.service` | `eduide.example.org` |
+| `hosts.service` | `eduide.example.org` (must differ from the instance and webview host: the session routes catch every path there) |
 | `hosts.instance` | `instance.eduide.example.org` |
 | `hosts.webview` | `webview.instance.eduide.example.org` (default: `webview.` plus the instance host) |
 | `gateway.name`, `gateway.namespace`, `gateway.sectionName` | `shared-gateway`, `envoy-gateway-system` |

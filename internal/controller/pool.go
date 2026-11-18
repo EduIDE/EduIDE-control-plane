@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -142,7 +143,8 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if p.DeletionTimestamp != nil {
 			return nil
 		}
-		return client.IgnoreNotFound(r.Delete(ctx, p))
+		// The resourceVersion guard spares a pod a session claimed a moment ago: the claim changed it (ADR 0009).
+		return client.IgnoreNotFound(ignoreConflict(r.Delete(ctx, p, client.Preconditions{ResourceVersion: &p.ResourceVersion})))
 	}
 	for i := range all.Items {
 		p := &all.Items[i]
@@ -167,8 +169,10 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				return ctrl.Result{}, err
 			}
 		case p.Labels[v1.LabelState] == v1.StateIdle:
-			// A restarted container is gone for good; waiting errors get a grace period, a pull can fail once.
-			if why := claim.Broken(p); why != "" && (why == "restarted" || now.Sub(p.CreationTimestamp.Time) > stuckLimit) {
+			// A restarted container is gone for good; a hopeless wait gets a grace period. A pull that can heal keeps the pod.
+			_, hopeless := claim.Hopeless(p)
+			if why := claim.Broken(p); why == "restarted" || hopeless != "" && now.Sub(p.CreationTimestamp.Time) > stuckLimit {
+				why = cmp.Or(hopeless, why)
 				slog.WarnContext(ctx, "deleted a broken idle instance", "pool", pool.Name, "reason", why)
 				if err := del(p); err != nil {
 					return ctrl.Result{}, err
@@ -194,52 +198,55 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		return ctrl.Result{}, err
 	}
 
-	// Idle pods built from an older template or agent image are replaced, ready ones one at a time and never the last ready one.
-	hash := r.specHash(tmpl)
-	var fresh, stale []corev1.Pod
-	for _, p := range idle {
-		if p.Annotations[v1.AnnotationSpecHash] == hash {
-			fresh = append(fresh, p)
-		} else {
-			stale = append(stale, p)
-		}
-	}
-	idle, staleReady := append([]corev1.Pod(nil), fresh...), []corev1.Pod(nil)
-	for i := range stale {
-		if claim.Ready(&stale[i]) {
-			staleReady = append(staleReady, stale[i])
-		} else if err := del(&stale[i]); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-	freshReady := 0
-	for i := range fresh {
-		if claim.Ready(&fresh[i]) {
-			freshReady++
-		}
-	}
-	if len(staleReady) > 0 && (freshReady >= 1 || len(staleReady) >= 2) {
-		sort.Slice(staleReady, func(i, j int) bool { return staleReady[i].CreationTimestamp.Before(&staleReady[j].CreationTimestamp) })
-		if err := del(&staleReady[0]); err != nil {
-			return ctrl.Result{}, err
-		}
-		slog.InfoContext(ctx, "replacing an idle instance built from an older template", "pool", pool.Name)
-		staleReady = staleReady[1:]
-	}
-	idle = append(idle, staleReady...)
-
 	np := r.nodePool(tmpl)
 	underPressure := r.pressure.Active(np)
 	target := claim.EffectiveIdle(pool.Spec.MinIdle, pool.Spec.TargetIdle, pool.Spec.MaxInstances, claimed, underPressure)
 	if duplicate != "" {
 		target = 0
 	}
-	created := map[string]bool{}
+
+	// Idle pods built from an older template or agent image are replaced. Old ones that are not ready go at once.
+	// An old ready one goes only when the pool has more ready pods than its target, and the pool starts one pod
+	// above its target while old ones are left, so the ready count never drops during the roll.
+	hash := r.specHash(tmpl)
+	var keep, staleReady []corev1.Pod
+	ready := int32(0)
+	for i := range idle {
+		p := &idle[i]
+		switch {
+		case p.Annotations[v1.AnnotationSpecHash] != hash && !claim.Ready(p):
+			if err := del(p); err != nil {
+				return ctrl.Result{}, err
+			}
+			continue
+		case p.Annotations[v1.AnnotationSpecHash] != hash:
+			staleReady = append(staleReady, *p)
+		default:
+			keep = append(keep, *p)
+		}
+		if claim.Ready(p) {
+			ready++
+		}
+	}
+	sort.Slice(staleReady, func(i, j int) bool { return staleReady[i].CreationTimestamp.Before(&staleReady[j].CreationTimestamp) })
+	for len(staleReady) > 0 && ready > target {
+		if err := del(&staleReady[0]); err != nil {
+			return ctrl.Result{}, err
+		}
+		slog.InfoContext(ctx, "replacing an idle instance built from an older template", "pool", pool.Name)
+		staleReady, ready = staleReady[1:], ready-1
+	}
+	idle = append(keep, staleReady...)
+	surge := int32(0)
+	if len(staleReady) > 0 && target > 0 && !underPressure && claimed+target < pool.Spec.MaxInstances {
+		surge = 1
+	}
+
 	pending := r.unseen(req.NamespacedName, all.Items, r.clock.Now())
 
-	switch have := int32(len(idle)) + pending; { //nolint:gosec // bounded by maxInstances
-	case have < target:
-		n := min(int(target-have), maxCreatesPerPass)
+	switch have, want := int32(len(idle))+pending, target+surge; { //nolint:gosec // bounded by maxInstances
+	case have < want:
+		n := min(int(want-have), maxCreatesPerPass)
 		for range n {
 			pod, err := r.createInstance(ctx, tmpl, pool, map[string]string{v1.LabelPool: pool.Name, v1.LabelState: v1.StateIdle}, "")
 			if err != nil {
@@ -247,21 +254,14 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			}
 			r.expect(req.NamespacedName, pod.Name, r.clock.Now())
 			idle = append(idle, *pod)
-			created[pod.Name] = true
 		}
-		if int(target-have) > n {
+		if int(want-have) > n {
 			res.RequeueAfter = time.Second
 		}
-	case have > target:
+	case have > want:
 		gone := map[string]bool{}
-		// Old pods go before the ones that replace them.
-		n := int(have - target)
-		victims := claim.Surplus(staleReady, n)
-		if rest := n - len(victims); rest > 0 {
-			victims = append(victims, claim.Surplus(fresh, rest)...)
-		}
-		for _, p := range victims {
-			if err := r.Delete(ctx, &p); client.IgnoreNotFound(err) != nil {
+		for _, p := range claim.Surplus(idle, int(have-want)) {
+			if err := del(&p); err != nil {
 				return ctrl.Result{}, err
 			}
 			gone[p.Name] = true
@@ -281,15 +281,6 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			ready++
 			continue
 		}
-		starting++
-	}
-	// Surge: with only old idle pods left and room for one more, start a replacement so the old ones can go.
-	if len(staleReady) > 0 && len(fresh) == 0 && pending == 0 && duplicate == "" && claimed+int32(len(idle)) < pool.Spec.MaxInstances && !underPressure && len(created) == 0 { //nolint:gosec // bounded
-		pod, err := r.createInstance(ctx, tmpl, pool, map[string]string{v1.LabelPool: pool.Name, v1.LabelState: v1.StateIdle}, "")
-		if err != nil {
-			return ctrl.Result{}, err
-		}
-		r.expect(req.NamespacedName, pod.Name, r.clock.Now())
 		starting++
 	}
 	pool.Status.IdleReady, pool.Status.IdleStarting, pool.Status.Claimed = ready, starting, claimed
@@ -334,17 +325,19 @@ func ignoreConflict(err error) error {
 
 // orphanLeft is how long a claimed pod may stay before it is deleted: -1 when its session is alive, 0 when the grace is over.
 func (r *poolReconciler) orphanLeft(ctx context.Context, p *corev1.Pod, now time.Time) (time.Duration, error) {
-	name := p.Labels[v1.LabelSession]
-	s := &v1.IDESession{}
-	key := client.ObjectKey{Namespace: p.Namespace, Name: name}
-	err := r.Get(ctx, key, s)
-	if apierrors.IsNotFound(err) {
-		// The cache can lag behind a session created a moment ago.
-		err = r.reader.Get(ctx, key, s)
-	}
-	alive := err == nil && s.DeletionTimestamp == nil
-	if err != nil && !apierrors.IsNotFound(err) {
-		return 0, err
+	alive := false
+	if name := p.Labels[v1.LabelSession]; name != "" {
+		s := &v1.IDESession{}
+		key := client.ObjectKey{Namespace: p.Namespace, Name: name}
+		err := r.Get(ctx, key, s)
+		if apierrors.IsNotFound(err) {
+			// The cache can lag behind a session created a moment ago.
+			err = r.reader.Get(ctx, key, s)
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return 0, err
+		}
+		alive = err == nil && s.DeletionTimestamp == nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -354,6 +347,12 @@ func (r *poolReconciler) orphanLeft(ctx context.Context, p *corev1.Pod, now time
 	}
 	if r.orphans == nil {
 		r.orphans = map[string]time.Time{}
+	}
+	// Most orphans are pods of ended sessions that their finalizer deletes; forget the ones nobody asks for again.
+	for k, t := range r.orphans {
+		if now.Sub(t) > 2*orphanGrace {
+			delete(r.orphans, k)
+		}
 	}
 	since, ok := r.orphans[p.Name]
 	if !ok {

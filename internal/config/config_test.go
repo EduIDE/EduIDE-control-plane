@@ -36,6 +36,7 @@ func TestParseRejects(t *testing.T) {
 		"unknown":   minimal + "bogus: 1\n",
 		"no-limit":  minimal + "sessionsPerUser: -1\n",
 		"bad-strip": minimal + "overview: {titleStripPattern: '(['}\n",
+		"same-host": strings.Replace(minimal, "service: ide.example.org", "service: instance.ide.example.org", 1),
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("%s: want error", name)

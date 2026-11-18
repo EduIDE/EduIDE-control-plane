@@ -341,7 +341,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance did not become ready in time")
 		}
 		wait := time.Minute
-		if c, reason := claim.StuckWaiting(pod); reason != "" {
+		if c, reason := claim.Hopeless(pod); reason != "" {
 			left := stuckLimit - now.Sub(st.Timestamps.Claimed.Time)
 			if left <= 0 {
 				return r.fail(ctx, s, v1.ErrorStartFailed, fmt.Sprintf("the instance cannot start: container %s waits with %s", c, reason))
@@ -727,7 +727,7 @@ func (r *sessionReconciler) allowedData(ctx context.Context, s *v1.IDESession, t
 			dropped = append(dropped, k)
 		case len(v) > n:
 			cut = append(cut, k)
-			out[k] = v[:n]
+			out[k] = strings.ToValidUTF8(v[:n], "") // no half rune at the cut
 		default:
 			out[k] = v
 		}

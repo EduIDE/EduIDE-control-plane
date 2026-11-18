@@ -730,18 +730,30 @@ func TestImagePullErrorFailsFast(t *testing.T) {
 	if err := get(p); err != nil {
 		t.Fatal(err)
 	}
-	p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ide", State: corev1.ContainerState{
-		Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: "secret-registry-detail"}}}}
-	if err := k8s.Status().Update(context.Background(), p); err != nil {
-		t.Fatal(err)
+	setWaiting := func(msg string) {
+		if err := get(p); err != nil {
+			t.Fatal(err)
+		}
+		p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ide", State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: msg}}}}
+		if err := k8s.Status().Update(context.Background(), p); err != nil {
+			t.Fatal(err)
+		}
 	}
+	setWaiting(`Back-off pulling image "r.example.org/secret-registry-detail/ide:1": ErrImagePull: manifest unknown`)
 	time.Sleep(500 * time.Millisecond)
 	if st = sessionStatus("s-pull"); st.Phase == v1.SessionFailed {
 		t.Fatalf("failed before the grace period: %+v", st)
 	}
 	clk.Step(stuckLimit + time.Second)
 	defer clk.Step(-stuckLimit - time.Second)
-	poke(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-pull", Namespace: testNS}})
+	// A pull that can heal, such as a timeout of a large image, is not given up after the grace period.
+	setWaiting(`Back-off pulling image "r.example.org/ide:1": ErrImagePull: dial tcp: i/o timeout`)
+	time.Sleep(500 * time.Millisecond)
+	if st = sessionStatus("s-pull"); st.Phase == v1.SessionFailed {
+		t.Fatalf("a transient pull error failed the session: %+v", st)
+	}
+	setWaiting(`Back-off pulling image "r.example.org/secret-registry-detail/ide:1": ErrImagePull: manifest unknown`)
 	eventually(t, "start-failed", func() bool { st = sessionStatus("s-pull"); return st.Phase == v1.SessionFailed })
 	if st.ErrorCode != v1.ErrorStartFailed || !strings.Contains(st.Message, "ImagePullBackOff") || strings.Contains(st.Message, "secret-registry-detail") {
 		t.Errorf("status: %+v", st)
@@ -854,21 +866,40 @@ func TestTemplateChangeRollsIdlePods(t *testing.T) {
 			break
 		}
 	}
-	// Ready replacements come up, one old pod goes at a time and a ready idle pod stays.
+	// A replacement starts above the target; no old pod goes before a replacement is ready.
+	var surge string
 	eventually(t, "a replacement exists", func() bool {
 		for _, p := range poolPods("pool-roll") {
 			if !old[p.Name] {
-				setReady(t, p.Name)
+				surge = p.Name
 				return true
 			}
 		}
 		return false
 	})
+	time.Sleep(time.Second)
+	readyIdle := func(ps []corev1.Pod) (n int) {
+		for _, p := range ps {
+			if claim.Ready(&p) {
+				n++
+			}
+		}
+		return n
+	}
+	if ps := poolPods("pool-roll"); readyIdle(ps) != 2 || len(ps) != 3 {
+		t.Fatalf("before the replacement is ready: %d ready of %d", readyIdle(ps), len(ps))
+	}
+	setReady(t, surge)
 	eventually(t, "all pods replaced", func() bool {
 		ps := poolPods("pool-roll")
+		if n := readyIdle(ps); n < 2 {
+			t.Errorf("only %d ready idle pods during the roll", n)
+		}
+		done := len(ps) == 2
 		for _, p := range ps {
 			if old[p.Name] {
-				return false
+				done = false
+				continue
 			}
 			if p.Spec.Containers[0].Image != "example.org/ide:2" {
 				t.Errorf("image %s", p.Spec.Containers[0].Image)
@@ -877,7 +908,7 @@ func TestTemplateChangeRollsIdlePods(t *testing.T) {
 				setReady(t, p.Name)
 			}
 		}
-		return len(ps) == 2
+		return done
 	})
 }
 
@@ -961,14 +992,19 @@ func TestBrokenIdlePodsAreReplaced(t *testing.T) {
 		}
 		return len(ps) == 2
 	})
-	// A pull error: replaced after the grace period, and a claim skips it meanwhile.
-	setStatus(pods[1].Name, corev1.ContainerStatus{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull"}}})
-	time.Sleep(500 * time.Millisecond)
-	if notFound(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: pods[1].Name, Namespace: testNS}}) {
-		t.Fatal("replaced before the grace period")
+	// A pull error: replaced after the grace period, and a claim skips it meanwhile. A pull that can heal stays.
+	pull := func(msg string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull", Message: msg}}}
 	}
+	setStatus(pods[1].Name, pull("429 Too Many Requests"))
 	clk.Step(stuckLimit + time.Second)
 	defer clk.Step(-stuckLimit - time.Second)
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-broken", Namespace: testNS}})
+	time.Sleep(500 * time.Millisecond)
+	if notFound(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: pods[1].Name, Namespace: testNS}}) {
+		t.Fatal("a pod with a pull error that can heal was replaced")
+	}
+	setStatus(pods[1].Name, pull("failed to resolve reference: not found"))
 	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-broken", Namespace: testNS}})
 	eventually(t, "pull error pod replaced", func() bool {
 		for _, p := range poolPods("pool-broken") {
@@ -1025,6 +1061,30 @@ func TestSessionFailsWhenTheTokenSecretIsGone(t *testing.T) {
 	eventually(t, "failed", func() bool { st = sessionStatus("s-notoken"); return st.Phase == v1.SessionFailed })
 	if st.ErrorCode != v1.ErrorStartFailed || !strings.Contains(st.Message, "token Secret") {
 		t.Errorf("status: %+v", st)
+	}
+}
+
+// A create that failed after the pod leaves it without children; a pod that has not started gets new ones.
+func TestHalfCreatedInstanceIsCompleted(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-half"))
+	createSession(t, "s-half", "tpl-half")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-half"); return st.PodName != "" })
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: st.PodName + "-token", Namespace: testNS}}
+	route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	eventually(t, "children", func() bool { return get(sec) == nil && get(route) == nil && get(svc) == nil })
+	for _, o := range []client.Object{route, svc, sec} {
+		if err := k8s.Delete(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "children gone", func() bool { return notFound(sec) && notFound(route) })
+	poke(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-half", Namespace: testNS}})
+	eventually(t, "children recreated", func() bool { return get(sec) == nil && get(route) == nil && get(svc) == nil })
+	if st = sessionStatus("s-half"); st.Phase == v1.SessionFailed {
+		t.Fatalf("session failed: %+v", st)
 	}
 }
 

@@ -20,7 +20,7 @@ helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-cont
 | Secret `<release>-user-salt` | Generated once with `lookup`, kept on upgrade |
 | IDETemplate and IDEPool | From `templates` |
 | SecurityPolicy | OIDC login plus ext_authz (gRPC, `failOpen: false`) on all HTTPRoutes labelled `eduide.github.io/route: session` |
-| HTTPRoutes | `/api/` on `config.hosts.service`, `/oauth2/` on `config.hosts.instance` |
+| HTTPRoutes | `/api/` on `config.hosts.service`; a catch-all `/` with label `eduide.github.io/route=session` on the instance and webview host (unknown ids and the OIDC callback, ADR 0005) |
 | NetworkPolicies | Session pods: default deny, :8080 from Envoy, :8081 from the operator (ADR 0019) |
 | Pool scaler (optional) | Deployment, config, RBAC for `idepools` and `idepools/scale` |
 | PodMonitor, PrometheusRule, dashboard (optional) | Based on `docs/contracts/metrics.md` |

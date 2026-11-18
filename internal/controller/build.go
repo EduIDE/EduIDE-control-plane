@@ -153,17 +153,25 @@ func (d *deps) specHash(t *v1.IDETemplate) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
-// repairChildren makes sure Service and HTTPRoute of an existing instance exist. gone is true when its token
-// Secret is missing: the pod cannot get its token back, so the caller discards the instance.
+// repairChildren makes sure token Secret, Service and HTTPRoute of an existing instance exist. gone is true when
+// the token Secret is missing and the token cannot come back: the pod has read it already or its route carries it.
+// The caller discards such an instance. A pod that has not started yet, after a create that failed half way, gets a new token.
 func (d *deps) repairChildren(ctx context.Context, pod *corev1.Pod) (gone bool, err error) {
-	key := client.ObjectKey{Namespace: pod.Namespace, Name: tokenName(pod.Labels[v1.LabelInstance])}
+	instance := pod.Labels[v1.LabelInstance]
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: tokenName(instance)}
 	if err := d.Get(ctx, key, &corev1.Secret{}); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return false, err
 		}
 		// The cache can lag behind a Secret created a moment ago.
 		if err := d.reader.Get(ctx, key, &corev1.Secret{}); err != nil {
-			return apierrors.IsNotFound(err), client.IgnoreNotFound(err)
+			if !apierrors.IsNotFound(err) {
+				return false, err
+			}
+			routeKey := client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}
+			if claim.Started(pod) || d.Get(ctx, routeKey, &gatewayv1.HTTPRoute{}) == nil {
+				return true, nil
+			}
 		}
 	}
 	return false, d.ensureChildren(ctx, pod)

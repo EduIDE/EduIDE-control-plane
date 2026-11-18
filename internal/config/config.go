@@ -207,6 +207,10 @@ func (c *Config) validate() error {
 	req(c.OIDC.IssuerURL, "oidc.issuerURL")
 	req(c.OIDC.GatewayClientID, "oidc.gatewayClientID")
 	req(c.Agent.Image, "agent.image")
+	if c.Hosts.Service != "" && (strings.EqualFold(c.Hosts.Service, c.Hosts.Instance) || strings.EqualFold(c.Hosts.Service, c.Hosts.Webview)) {
+		// The session routes catch every path of the instance and webview host (ADR 0005).
+		errs = append(errs, errors.New("config: hosts.service must differ from hosts.instance and hosts.webview"))
+	}
 	if len(c.OIDC.ClientIDs) == 0 {
 		errs = append(errs, errors.New("config: oidc.clientIDs needs at least one client"))
 	}
