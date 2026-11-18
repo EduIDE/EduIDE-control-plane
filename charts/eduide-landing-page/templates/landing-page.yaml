@@ -37,10 +37,14 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      terminationGracePeriodSeconds: {{ add .Values.endpointDrainSeconds 15 }}
       containers:
       - name: landing-page
         image: {{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
+        lifecycle:
+          preStop:
+            sleep: {seconds: {{ .Values.endpointDrainSeconds }}}
         ports:
         - {name: http, containerPort: 8080}
         readinessProbe:

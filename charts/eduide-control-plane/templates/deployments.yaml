@@ -44,11 +44,20 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if ne $c.name "operator" }}
+      # Envoy Gateway takes up to a minute or more to drop a pod from its endpoints; keep serving meanwhile.
+      terminationGracePeriodSeconds: {{ add $.Values.endpointDrainSeconds 15 }}
+      {{- end }}
       containers:
       - name: {{ $c.name }}
         image: {{ include "ecp.image" (dict "ctx" $ "name" $c.name) }}
         imagePullPolicy: {{ $.Values.image.pullPolicy }}
         args: [--config, /etc/eduide/config.yaml]
+        {{- if ne $c.name "operator" }}
+        lifecycle:
+          preStop:
+            sleep: {seconds: {{ $.Values.endpointDrainSeconds }}}
+        {{- end }}
         env:
         - name: POD_NAMESPACE
           valueFrom:

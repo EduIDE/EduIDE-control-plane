@@ -76,7 +76,7 @@ describe('session state', () => {
     });
 
     it('builds a traceparent', () => {
-        expect(newTraceparent()).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-00$/);
+        expect(newTraceparent()).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
     });
 });
 

@@ -129,5 +129,6 @@ export const isFinal = (s: LaunchState): boolean => s.kind === 'ready' || s.kind
 /** W3C trace context header for the launch, so the service joins the browser's trace. Sampled flag off: no browser exporter. */
 export function newTraceparent(random: (n: number) => Uint8Array = n => crypto.getRandomValues(new Uint8Array(n))): string {
     const hex = (n: number): string => Array.from(random(n), b => b.toString(16).padStart(2, '0')).join('');
-    return `00-${hex(16)}-${hex(8)}-00`;
+    // Flag 01: the launch trace is always sampled.
+    return `00-${hex(16)}-${hex(8)}-01`;
 }

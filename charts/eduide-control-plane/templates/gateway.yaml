@@ -50,6 +50,19 @@ spec:
   oidc:
     provider:
       issuer: {{ .Values.config.oidc.issuerURL | quote }}
+      {{- with .Values.oidc.authorizationEndpoint }}
+      authorizationEndpoint: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.oidc.tokenEndpoint }}
+      tokenEndpoint: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.oidc.endSessionEndpoint }}
+      endSessionEndpoint: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.oidc.providerBackendRefs }}
+      backendRefs:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     clientID: {{ .Values.config.oidc.gatewayClientID | quote }}
     clientSecret:
       name: {{ .Values.oidc.clientSecretName }}

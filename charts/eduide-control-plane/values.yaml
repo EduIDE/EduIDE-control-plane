@@ -8,6 +8,10 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 
+# service and authz keep serving this long after termination starts, until Envoy Gateway removed them
+# from its endpoints (measured on stud: more than a minute).
+endpointDrainSeconds: 90
+
 # Rendered 1:1 into config.yaml (internal/config). Unknown keys make the binaries fail on start.
 config:
   # required: short name of the deployment, used in metrics and traces
@@ -54,6 +58,13 @@ oidc:
   # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID
   # under the key "client-secret" (the key the SecurityPolicy reads).
   clientSecretName: ""
+  # Optional: reach the identity provider through these backends instead of directly, for clusters
+  # whose Envoy pods have no direct egress. Pair it with a BackendTLSPolicy for the issuer host.
+  providerBackendRefs: []
+  # Optional: set the endpoints instead of letting Envoy Gateway discover them from the issuer.
+  authorizationEndpoint: ""
+  tokenEndpoint: ""
+  endSessionEndpoint: ""
 
 operator:
   replicas: 1

@@ -33,8 +33,7 @@ func Setup(ctx context.Context, service, endpoint string) (func(context.Context)
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(resource.NewWithAttributes(semconv.SchemaURL, semconv.ServiceName(service))),
-		// Start path traces come with a sampled parent; reconcile traces sample at 1 %.
-		sdktrace.WithSampler(sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.01))),
+		sdktrace.WithSampler(StartPathSampler{}),
 	)
 	otel.SetTracerProvider(tp)
 	return tp.Shutdown, nil
@@ -67,3 +66,18 @@ func (h traceHandler) WithAttrs(a []slog.Attr) slog.Handler {
 	return traceHandler{h.Handler.WithAttrs(a)}
 }
 func (h traceHandler) WithGroup(n string) slog.Handler { return traceHandler{h.Handler.WithGroup(n)} }
+
+// StartPathSpan names the root span of a launch. It and everything below it is always sampled (plan:
+// start path traces at 100 %); other traces follow the parent and sample new roots at 1 %.
+const StartPathSpan = "launch"
+
+type StartPathSampler struct{}
+
+func (StartPathSampler) ShouldSample(p sdktrace.SamplingParameters) sdktrace.SamplingResult {
+	if p.Name == StartPathSpan {
+		return sdktrace.AlwaysSample().ShouldSample(p)
+	}
+	return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(0.01)).ShouldSample(p)
+}
+
+func (StartPathSampler) Description() string { return "StartPathSampler" }

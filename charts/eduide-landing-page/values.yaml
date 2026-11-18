@@ -5,6 +5,8 @@ image:
   pullPolicy: IfNotPresent
 imagePullSecrets: []
 replicas: 1
+# Keep serving after termination starts until Envoy Gateway removed the pod from its endpoints.
+endpointDrainSeconds: 90
 
 # required: host of the landing page, the same as config.hosts.service of the control plane chart
 host: ""

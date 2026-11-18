@@ -1,6 +1,10 @@
 package telemetry
 
 import (
+	"context"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"os"
 	"regexp"
 	"slices"
@@ -59,5 +63,17 @@ func TestUserIDIsStableAndSalted(t *testing.T) {
 	a, b := UserID([]byte("s1"), "alice"), UserID([]byte("s2"), "alice")
 	if a == b || a != UserID([]byte("s1"), "alice") || len(a) != 16 {
 		t.Fatalf("unexpected ids %s %s", a, b)
+	}
+}
+
+func TestStartPathSamplerAlwaysSamplesLaunch(t *testing.T) {
+	s := StartPathSampler{}
+	unsampledParent := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{1}, SpanID: trace.SpanID{1}, Remote: true}))
+	if got := s.ShouldSample(sdktrace.SamplingParameters{ParentContext: unsampledParent, TraceID: trace.TraceID{1}, Name: StartPathSpan}); got.Decision != sdktrace.RecordAndSample {
+		t.Fatalf("launch under an unsampled parent must be sampled, got %v", got.Decision)
+	}
+	if got := s.ShouldSample(sdktrace.SamplingParameters{ParentContext: unsampledParent, TraceID: trace.TraceID{1}, Name: "reconcile"}); got.Decision == sdktrace.RecordAndSample {
+		t.Fatal("other spans follow an unsampled parent")
 	}
 }
