@@ -1,0 +1,81 @@
+# Session access
+
+Who may open which IDE, and how the gateway decides. Source: [ADR 0005](../adr/0005-session-auth-at-gateway.md). Metrics: `eduide_authz_decisions_total`, `eduide_authz_check_seconds`.
+
+## Components
+
+- One `SecurityPolicy` (Envoy Gateway) per deployment selects all HTTPRoutes with the label `eduide.github.io/route=session`. It configures the `oidc` filter (Keycloak realm of the deployment, confidential gateway client `oidc.gatewayClientID`, ID token cookie `oidc.idTokenCookie`, refresh token) and `extAuth` to `authz` over gRPC with `failOpen: false`.
+- `authz` keeps its own informer on `IDESession` objects and makes no API call per request.
+- Each session route also sets `X-EduIDE-Instance-Token`. The agent forwards only requests with that token. This is the second line, next to the NetworkPolicy.
+- The chart adds an HTTPRoute for `/oauth2/` on the instance host (label `route=session`, backend: the service, answers 404) so the OIDC callback has a route.
+
+## Filter order finding
+
+Envoy Gateway runs the HTTP filters in a fixed order: ext_authz (position 5) before oauth2 (8) and jwt_authn (9). Verified in Envoy Gateway v1.8.3 (`internal/xds/translator/httpfilters.go`). The shared EnvoyProxy of the cluster sets no `filterOrder` and we do not change it.
+
+Consequence: when `authz` runs, the OIDC filter has neither validated the token nor set a header. `authz` cannot trust headers derived from the token. It verifies the ID token cookie itself (go-oidc, JWKS cached, issuer `oidc.issuerURL`, audience `oidc.gatewayClientID`).
+
+## Decision
+
+For every request on a session route, in this order:
+
+| Case | Answer |
+|---|---|
+| Path starts with `/oauth2/` | allow |
+| No auth cookie at all: no ID token cookie and no cookie named `BearerToken*`, `OauthHMAC*`, `OauthExpires*`, `IdToken*`, `RefreshToken*` | allow; the oauth2 filter runs next and forces the login, so nothing reaches the IDE |
+| ID token cookie present but invalid or expired | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
+| Valid token, first path segment is the `status.instance` of an `IDESession` in phase `Ready`, not being deleted, and `spec.owner` equals the token claim `oidc.userClaim` | allow |
+| Valid token, anything else (unknown, free, foreign, released instance) | 403 |
+| Internal error | 403 |
+
+The instance id is random and unguessable, so allowing a request without cookies leaks nothing about sessions.
+Release removes access first: the session leaves `Ready`, `authz` denies at once, then the operator deletes the pod.
+WebSockets are checked at the upgrade request.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant B as browser
+  participant E as Envoy Gateway
+  participant Z as authz
+  participant O as oauth2 filter
+  participant K as Keycloak
+  participant P as agent (session pod)
+  B->>E: GET /<instance>/ (cookies)
+  E->>Z: ext_authz check (runs first)
+  alt no auth cookie
+    Z-->>E: allow
+    E->>O: oauth2 filter
+    O-->>B: 302 to Keycloak login
+    B->>K: login
+    K-->>B: 302 to /oauth2/callback
+    B->>E: GET /oauth2/callback
+    E->>Z: check (path /oauth2/)
+    Z-->>E: allow
+    E->>O: code exchange
+    O-->>B: Set-Cookie eduide-id, 302 to /<instance>/
+  else invalid or expired ID token
+    Z-->>E: 302 same URL, expire auth cookies
+    E-->>B: 302 (new login follows)
+  else valid token
+    Z->>Z: instance Ready, not deleting, owner matches?
+    alt yes
+      Z-->>E: allow
+      E->>P: request + X-EduIDE-Instance-Token, prefix rewritten to /
+      P-->>B: IDE response
+    else no
+      Z-->>E: 403
+      E-->>B: 403
+    end
+  end
+```
+
+## Tradeoffs
+
+- `authz` verifies a JWT per request (keys cached). An expired token costs one extra redirect.
+- Case "no auth cookie" relies on the oauth2 filter running after ext_authz. The e2e suite requests a session route without cookies and expects a login redirect, never IDE content.
+- If a cluster allows an own EnvoyProxy with `filterOrder`, `authz` can trust Envoy-set headers and drop the token check. **Planned** follow-up, not built.
+- Fallback if the gateway spike fails in a cluster: oauth2-proxy per pod with an e-mail file written by the agent. Not built.
+- The cookie domain covers the instance host and the webview host.
+
+Failure behavior: if `authz` is down, nobody gets into a new IDE. Open WebSockets stay up. See the [authz runbook](../operations/authz-errors.md).

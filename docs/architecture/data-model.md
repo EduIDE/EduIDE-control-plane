@@ -1,0 +1,94 @@
+# Data model
+
+API group `eduide.github.io`, version `v1alpha1`. The Go types in [api/v1alpha1](../../api/v1alpha1) are the source; the CRD YAML in [config/crd](../../config/crd) is generated from them.
+Change rules: [ADR 0011](../adr/0011-crd-versioning-cel.md). Object model diagram: [object-model.svg](diagrams/object-model.svg).
+
+## CRDs
+
+| CRD | Purpose | Key fields |
+|---|---|---|
+| `IDETemplate` | Kind of IDE: image, resources, port, env, allowlist, persistence, timeouts, placement | `spec.image`, `spec.port`, `spec.resources`, `spec.env`, `spec.injectableKeys`, `spec.persistence` (`allowed`, `default`, `size`, `mountPath`), `spec.timeouts` (`idle`, `warning`, `max`), `spec.retention`, `spec.placement`, `spec.bandwidth` |
+| `IDEPool` | Prewarmed instances of one template (optional) | `spec.templateRef`, `spec.minIdle` (floor, Helm), `spec.targetIdle` (pool-scaler), `spec.maxInstances`; status `replicas`, `idleReady`, `idleStarting`, `claimed`, `selector`; scale subresource maps to `targetIdle` |
+| `IDEWorkspace` | Persistent user files | `spec.owner`, `spec.templateRef`, `spec.persistence` (`mode`, `size`, `storageClassName`, `existingClaimName`), `spec.retention`, `spec.display`; status `phase` (`Pending`, `Ready`, `Expired`), `claimName`, `lastUsed`, `expiresAt`, `expiredAt` |
+| `IDESession` | One running IDE | `spec.owner`, `spec.templateRef`, `spec.workspaceRef`, `spec.dataSecretRef`, `spec.display`; status `phase`, `startStrategy`, `instance`, `podName`, `url`, `errorCode`, `message`, `timestamps`, `lastActivity` |
+
+Notes:
+
+- `IDEPool` is separate from the template: Helm owns the template, the pool scaler owns `targetIdle`. No field has two owners.
+- `injectableKeys` is the allowlist for launch data. There is no `fromSecrets` and no `fromConfigMaps`.
+- `persistence.mode` is `none` or `volume`. **Planned:** `snapshot` (optional phase 9). The enum allows it additively.
+- A session with a `workspaceRef` always starts cold. The startup strategy shows it as `cold`.
+- Status of every CRD carries `observedGeneration` and `conditions`.
+- Launch data is never part of a CR spec or status.
+
+### Session phases
+
+`Pending`, `Starting`, `Ready`, `Failed`.
+Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `start-failed`.
+Timestamps in `status.timestamps`: `claimed`, `podReady`, `agentReady`, `ready` (see [start-path.md](start-path.md)).
+Start strategies: `warm-ready`, `warm-starting`, `cold`.
+
+## Labels and annotations
+
+Source: [api/v1alpha1/labels.go](../../api/v1alpha1/labels.go). Prefix `eduide.github.io/`.
+
+| Key | Values | Set on | Read by |
+|---|---|---|---|
+| `app.kubernetes.io/managed-by` | `eduide` | everything the control plane creates | informers (filter) |
+| `eduide.github.io/component` | `session`, `workspace` | pods, services, routes, PVCs | operator |
+| `eduide.github.io/template` | template name | session pods, pools | operator, scaler |
+| `eduide.github.io/pool` | pool name | pool pods (kept after claim) | operator |
+| `eduide.github.io/session` | session name | claimed or cold pods | operator, authz |
+| `eduide.github.io/workspace` | workspace name | PVCs, sessions | operator |
+| `eduide.github.io/instance` | instance id | all objects of an instance | operator, authz |
+| `eduide.github.io/state` | `idle`, `claimed` | session pods | operator (claim) |
+| `eduide.github.io/owner-hash` | hash of the owner | pods, sessions, workspaces | service (owner lists) |
+| `eduide.github.io/launch-key` | idempotency key | `IDESession` | service (launch is idempotent) |
+| `eduide.github.io/route` | `session` | session HTTPRoutes | SecurityPolicy selector |
+| `eduide.github.io/node-pool` | node pool label value | session pods | operator (capacity per node pool) |
+
+| Annotation | Meaning |
+|---|---|
+| `eduide.github.io/traceparent` | W3C trace context of the launch, set by the service |
+| `eduide.github.io/retain` | `"true"` on an `IDEWorkspace` cancels expiry |
+| `eduide.github.io/scaler-mode`, `eduide.github.io/scaler-override` | Pool scaler control on `IDEPool` |
+
+Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer `eduide.github.io/session` on `IDESession`.
+
+## Naming
+
+| Object | Name |
+|---|---|
+| Instance id | 20 characters, lowercase base32 without padding of random bytes (`crypto/rand`). Unguessable. First URL path segment and label `instance`. |
+| Session pod | `ide-<instance>` |
+| Service | `ide-<instance>`, port 8080 `http` to the agent proxy |
+| HTTPRoute | `ide-<instance>` |
+| Instance token Secret | `ide-<instance>-token`, key `token`, 32 random bytes hex |
+| Session | `s-<10 random [a-z0-9]>`, created by the service |
+| Launch data Secret | `<session>-data`, key set by the allowlist |
+| Workspace | `w-<first 16 hex of sha256(owner \x00 template \x00 source)>`; `source` is `GIT_URI` or `display.source`. Get-or-create, so the same input gives the same workspace. |
+| Workspace PVC | same name as the workspace, also in `status.claimName` |
+
+## Ownership
+
+| Object | Owner reference |
+|---|---|
+| Pool pod | `IDEPool` (controller ref); on claim the controller ref moves to the `IDESession` |
+| Service, HTTPRoute, token Secret | the pod |
+| Launch data Secret | the `IDESession` |
+| Workspace PVC | the `IDEWorkspace` |
+
+Kubernetes garbage collection removes dependents. No manual cleanup.
+
+## Session pod
+
+Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`).
+The workspace mounts at `persistence.mountPath` (default `/home/project`), otherwise an `emptyDir`.
+Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egress-bandwidth` come from the template.
+
+## Deployment config
+
+`/etc/eduide/config.yaml` from a ConfigMap, read with `--config`. Typed in [internal/config/config.go](../../internal/config/config.go).
+Required: `deployment`, `namespace` (or `POD_NAMESPACE`), `hosts.service`, `hosts.instance`, `gateway.name`, `oidc.issuerURL`, `oidc.gatewayClientID`, `oidc.clientIDs`, `agent.image`.
+Defaults: `sessionsPerUser` 3, `oidc.userClaim` `preferred_username`, `oidc.idTokenCookie` `eduide-id`, `workspaces.retention` 14 days, `workspaces.grace` 24 h, `capacity.exhaustedAfter` 45 s, `rateLimit.launchesPerMinute` 10.
+Secrets come from files or environment variables, never from flags or the config file.
