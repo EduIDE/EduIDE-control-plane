@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +24,7 @@ func main() {
 	files, _ := filepath.Glob("config/crd/*.yaml")
 	var problems []string
 	for _, f := range files {
-		base, err := exec.Command("git", "show", os.Args[1]+":"+f).Output() // #nosec G204 -- developer tool
+		base, err := exec.CommandContext(context.Background(), "git", "show", os.Args[1]+":"+f).Output() // #nosec G204 G702 -- developer tool, revision from CI
 		if err != nil {
 			continue // new CRD
 		}

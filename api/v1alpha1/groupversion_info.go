@@ -4,12 +4,20 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 )
 
 var (
 	GroupVersion  = schema.GroupVersion{Group: "eduide.github.io", Version: "v1alpha1"}
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
-	AddToScheme   = SchemeBuilder.AddToScheme
+	SchemeBuilder = runtime.NewSchemeBuilder(func(s *runtime.Scheme) error {
+		s.AddKnownTypes(GroupVersion, objects...)
+		metav1.AddToGroupVersion(s, GroupVersion)
+		return nil
+	})
+	AddToScheme = SchemeBuilder.AddToScheme
+	objects     []runtime.Object
 )
+
+func register(o ...runtime.Object) { objects = append(objects, o...) }

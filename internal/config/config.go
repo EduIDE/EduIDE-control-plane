@@ -119,7 +119,7 @@ type RateLimit struct {
 
 // Load reads and validates the config file. Values are never logged.
 func Load(path string) (*Config, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) // #nosec G304 -- path comes from the operator's own flag
 	if err != nil {
 		return nil, err
 	}

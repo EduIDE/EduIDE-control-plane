@@ -112,4 +112,4 @@ type IDESessionList struct {
 	Items           []IDESession `json:"items"`
 }
 
-func init() { SchemeBuilder.Register(&IDESession{}, &IDESessionList{}) }
+func init() { register(&IDESession{}, &IDESessionList{}) }

@@ -146,8 +146,8 @@ type IDETemplateSpec struct {
 	// +listType=map
 	// +listMapKey=name
 	// +optional
-	InjectableKeys []InjectableKey `json:"injectableKeys,omitempty"`
-	Persistence TemplatePersistence `json:"persistence"`
+	InjectableKeys []InjectableKey     `json:"injectableKeys,omitempty"`
+	Persistence    TemplatePersistence `json:"persistence"`
 	// +optional
 	Timeouts Timeouts `json:"timeouts,omitempty"`
 	// Retention of workspaces after last use; overrides the deployment default (G19).
@@ -191,4 +191,4 @@ type IDETemplateList struct {
 	Items           []IDETemplate `json:"items"`
 }
 
-func init() { SchemeBuilder.Register(&IDETemplate{}, &IDETemplateList{}) }
+func init() { register(&IDETemplate{}, &IDETemplateList{}) }

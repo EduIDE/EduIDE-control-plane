@@ -94,4 +94,4 @@ type IDEWorkspaceList struct {
 	Items           []IDEWorkspace `json:"items"`
 }
 
-func init() { SchemeBuilder.Register(&IDEWorkspace{}, &IDEWorkspaceList{}) }
+func init() { register(&IDEWorkspace{}, &IDEWorkspaceList{}) }

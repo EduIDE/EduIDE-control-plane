@@ -65,4 +65,4 @@ type IDEPoolList struct {
 	Items           []IDEPool `json:"items"`
 }
 
-func init() { SchemeBuilder.Register(&IDEPool{}, &IDEPoolList{}) }
+func init() { register(&IDEPool{}, &IDEPoolList{}) }
