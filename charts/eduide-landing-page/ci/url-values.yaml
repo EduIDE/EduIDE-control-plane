@@ -1,0 +1,10 @@
+host: ide.example.org
+gateway:
+  name: eduide
+  namespace: envoy-gateway-system
+  sectionName: https
+legal:
+  imprint:
+    url: https://example.org/imprint
+  privacy:
+    url: https://example.org/privacy

@@ -1,5 +1,0 @@
-host: ide.example.org
-gateway:
-  name: eduide
-  namespace: envoy-gateway-system
-  sectionName: https

@@ -1,9 +1,30 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["host", "gateway"],
+  "required": ["host", "gateway", "legal"],
   "properties": {
     "host": {"type": "string", "minLength": 1},
-    "gateway": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}
+    "gateway": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}},
+    "config": {"type": "object", "not": {"required": ["legal"]}},
+    "legal": {
+      "type": "object",
+      "required": ["imprint", "privacy"],
+      "additionalProperties": false,
+      "properties": {
+        "imprint": {"$ref": "#/definitions/legalPage"},
+        "privacy": {"$ref": "#/definitions/legalPage"}
+      }
+    }
+  },
+  "definitions": {
+    "legalPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {"type": "string", "pattern": "^https?://[^\\s]+$"},
+        "markdown": {"type": "string", "minLength": 1}
+      },
+      "oneOf": [{"required": ["url"]}, {"required": ["markdown"]}]
+    }
   }
 }

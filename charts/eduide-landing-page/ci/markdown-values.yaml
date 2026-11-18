@@ -1,0 +1,8 @@
+host: ide.example.org
+gateway:
+  name: eduide
+legal:
+  imprint:
+    markdown: "# Imprint\n\nDummy text for CI."
+  privacy:
+    url: https://example.org/privacy
