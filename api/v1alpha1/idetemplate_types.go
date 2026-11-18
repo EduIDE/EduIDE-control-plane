@@ -87,14 +87,21 @@ type TemplatePersistence struct {
 
 // Timeouts of a session (G14).
 // +kubebuilder:validation:XValidation:rule="!has(self.warning) || !has(self.idle) || duration(self.warning) < duration(self.idle)",message="warning must be shorter than idle"
+// +kubebuilder:validation:XValidation:rule="!has(self.max) || !has(self.idle) || duration(self.max) >= duration(self.idle)",message="max must not be shorter than idle"
 type Timeouts struct {
 	// Idle ends a session without activity. Default 60m.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Idle *metav1.Duration `json:"idle,omitempty"`
 	// Warning tells the user this long after the last activity. Default 50m.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Warning *metav1.Duration `json:"warning,omitempty"`
 	// Max ends a session regardless of activity. Default 24h.
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Max *metav1.Duration `json:"max,omitempty"`
 }
@@ -151,6 +158,8 @@ type IDETemplateSpec struct {
 	// +optional
 	Timeouts Timeouts `json:"timeouts,omitempty"`
 	// Retention of workspaces after last use; overrides the deployment default (G19).
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Retention *metav1.Duration `json:"retention,omitempty"`
 	// +optional

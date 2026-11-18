@@ -1236,6 +1236,7 @@ spec:
               retention:
                 description: Retention of workspaces after last use; overrides the
                   deployment default (G19).
+                pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                 type: string
               runAsUser:
                 description: RunAsUser and FSGroup of the IDE container.
@@ -1246,20 +1247,26 @@ spec:
                 properties:
                   idle:
                     description: Idle ends a session without activity. Default 60m.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                   max:
                     description: Max ends a session regardless of activity. Default
                       24h.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                   warning:
                     description: Warning tells the user this long after the last activity.
                       Default 50m.
+                    pattern: ^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$
                     type: string
                 type: object
                 x-kubernetes-validations:
                 - message: warning must be shorter than idle
                   rule: '!has(self.warning) || !has(self.idle) || duration(self.warning)
                     < duration(self.idle)'
+                - message: max must not be shorter than idle
+                  rule: '!has(self.max) || !has(self.idle) || duration(self.max) >=
+                    duration(self.idle)'
             required:
             - image
             - persistence
