@@ -1,7 +1,7 @@
 {
-  "name": "eduidec-landing-page",
+  "name": "eduide-landing-page",
   "version": "1.0.0",
-  "description": "Landing page for EduIDE Cloud workspace management",
+  "description": "Landing page of the EduIDE control plane (experimental)",
   "license": "EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0",
   "private": true,
   "type": "module",
@@ -10,14 +10,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/EduIDE/EduIDE-Landing-Page.git"
+    "url": "https://github.com/EduIDE/EduIDE-control-plane.git",
+    "directory": "landing-page"
   },
-  "homepage": "https://github.com/EduIDE/EduIDE-Landing-Page#readme",
+  "homepage": "https://github.com/EduIDE/EduIDE-control-plane/tree/main/landing-page#readme",
   "bugs": {
-    "url": "https://github.com/EduIDE/EduIDE-Landing-Page/issues"
+    "url": "https://github.com/EduIDE/EduIDE-control-plane/issues"
   },
   "keywords": [
-    "theia",
     "cloud",
     "kubernetes",
     "landing-page",
@@ -34,14 +34,15 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\"",
+    "sync-client": "rm -rf src/api-client && mkdir -p src/api-client && cp ../clients/typescript/src/index.ts ../clients/typescript/src/schema.gen.ts src/api-client/",
+    "check-client": "npm run sync-client && git diff --exit-code -- src/api-client"
   },
   "dependencies": {
-    "@eclipse-theiacloud/common": "1.2.0",
-    "@sentry/react": "^11.11.0",
     "keycloak-js": "26.2.5",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -69,9 +70,6 @@
     "vitest": "^5.1.0"
   },
   "overrides": {
-    "@eclipse-theiacloud/common": {
-      "uuid": "^11.1.1"
-    },
     "@typescript-eslint/typescript-estree": {
       "minimatch": "^11.0.1"
     }

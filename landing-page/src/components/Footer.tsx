@@ -1,4 +1,4 @@
-import type { FooterLinksConfig } from '../common-extensions/types';
+import type { FooterLinksConfig } from '../config';
 
 interface FooterProps {
     selectedAppDefinition: string;
@@ -6,7 +6,7 @@ interface FooterProps {
     footerLinks?: FooterLinksConfig;
 }
 
-const ISSUES_URL = 'https://github.com/EduIDE/EduIDE-Cloud/issues';
+const ISSUES_URL = 'https://github.com/EduIDE/EduIDE-control-plane/issues';
 
 interface ConfiguredLinkProps {
     link?: { text: string; url: string; target?: string; rel?: string };
@@ -42,8 +42,8 @@ export const Footer = ({ selectedAppDefinition, onNavigate, footerLinks }: Foote
 
             <div className='App__footer__content'>
                 <div className='App__footer__attribution'>
-                    <a href={footerLinks?.attribution?.url || 'https://aet.cit.tum.de/'} target='_blank' rel='noreferrer'>
-                        {footerLinks?.attribution?.text || 'Built by TUM AET Team 👨‍💻'}
+                    <a href={footerLinks?.attribution?.url || 'https://github.com/EduIDE'} target='_blank' rel='noreferrer'>
+                        {footerLinks?.attribution?.text || 'EduIDE'}
                     </a>
                     {footerLinks?.attribution?.version && (
                         <>
@@ -66,7 +66,7 @@ export const Footer = ({ selectedAppDefinition, onNavigate, footerLinks }: Foote
                 <div className='App__footer__legal'>
                     <ConfiguredLink
                         link={footerLinks?.about}
-                        fallback={{ text: 'About', url: 'https://aet.cit.tum.de/' }}
+                        fallback={{ text: 'About', url: 'https://github.com/EduIDE' }}
                         className='App__footer__link'
                     />
                     <span className='App__footer__separator'>|</span>

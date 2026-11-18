@@ -1,31 +1,21 @@
-# Build stage
-FROM node:26-alpine AS build
-
+# Build context: landing-page/
+FROM node:26-alpine AS web
 WORKDIR /app
-
-# Copy package files
 COPY package.json package-lock.json ./
-
-# Install all dependencies (including devDependencies for build)
 RUN npm ci
-
-# Copy source code and configs
 COPY tsconfig.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
 COPY public ./public
+RUN npm run build
 
-# Build application
-RUN npm run build && \
-    (chmod 644 /app/dist/favicon.ico || true)
+FROM golang:1.27.4-alpine AS server
+WORKDIR /src
+COPY server/go.mod ./
+COPY server/*.go ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /server .
 
-# Production stage
-FROM nginxinc/nginx-unprivileged:stable-alpine AS production
-
-# Copy custom nginx config
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copy built static files
-COPY --from=build /app/dist /usr/share/nginx/html
-
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=server /server /server
+COPY --from=web /app/dist /app/dist
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/server"]

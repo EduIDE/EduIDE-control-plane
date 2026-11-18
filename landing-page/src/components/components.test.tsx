@@ -1,22 +1,16 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getServiceAuthToken } from '../common-extensions/types';
+import type { PrivacyConfig } from '../config';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { useTheme } from '../contexts/useTheme';
 import { AppLogo } from './AppLogo';
-import { ConfirmIdentity } from './ConfirmIdentity';
 import { ErrorComponent } from './ErrorComponent';
 import { Footer } from './Footer';
 import { Header } from './Header';
 import { Imprint } from './Imprint';
-import { Info } from './Info';
-import { LaunchApp } from './LaunchApp';
 import { Loading } from './Loading';
-import { LoginButton } from './LoginButton';
 import { Privacy } from './Privacy';
-import { SelectApp } from './SelectApp';
-import { SelectBuildSystem } from './SelectBuildSystem';
 import { Spinner } from './Spinner';
 import { ThemeToggle } from './ThemeToggle';
 
@@ -25,169 +19,6 @@ function stubLocation(): { href: string } {
     vi.stubGlobal('location', location);
     return location;
 }
-
-function logoOf(name: string): string | null {
-    return screen.getByRole('img', { name: `${name} logo` }).getAttribute('src');
-}
-
-describe('SelectApp', () => {
-    it('hides only apps with visible: false', () => {
-        render(
-            <SelectApp
-                appDefinitions={[
-                    { appId: 'default', appName: 'Default' },
-                    { appId: 'shown', appName: 'Shown', visible: true },
-                    { appId: 'hidden', appName: 'Hidden', visible: false }
-                ]}
-                useEphemeralStorage={false}
-                onSelectApp={vi.fn()}
-            />
-        );
-        screen.getByText('Default');
-        screen.getByText('Shown');
-        expect(screen.queryByText('Hidden')).toBeNull();
-    });
-
-    it.each([
-        ['derives from the app name', { appName: 'Java 17  Plus' }, '/assets/logos/java-17-plus-logo.png'],
-        ['ignores a blank image', { appName: 'Java', image: '   ' }, '/assets/logos/java-logo.png'],
-        ['resolves a plain name', { appName: 'Java', image: 'Open JDK' }, '/assets/logos/open-jdk-logo.png'],
-        ['keeps a filename', { appName: 'Java', image: 'jdk.SVG' }, '/assets/logos/jdk.SVG'],
-        ['keeps an absolute path', { appName: 'Java', image: '/custom/logo.png' }, '/custom/logo.png']
-    ])('logo %s', (_, app, expected) => {
-        render(<SelectApp appDefinitions={[{ appId: 'id', ...app }]} useEphemeralStorage={false} onSelectApp={vi.fn()} />);
-        expect(screen.getByRole('img').getAttribute('src')).toBe(expected);
-    });
-
-    it('selects by serviceAuthToken, falling back to appId', () => {
-        const onSelectApp = vi.fn();
-        render(
-            <SelectApp
-                appDefinitions={[
-                    { serviceAuthToken: 'token', appId: 'ignored', appName: 'New' },
-                    { appId: 'legacy', appName: 'Old' }
-                ]}
-                useEphemeralStorage={false}
-                onSelectApp={onSelectApp}
-            />
-        );
-        fireEvent.click(screen.getByText('New'));
-        fireEvent.click(screen.getByText('Old'));
-        expect(onSelectApp.mock.calls).toEqual([
-            ['token', 'New'],
-            ['legacy', 'Old']
-        ]);
-    });
-
-    it('renders nothing selectable without apps', () => {
-        render(<SelectApp appDefinitions={undefined} useEphemeralStorage={false} onSelectApp={vi.fn()} />);
-        expect(screen.queryByRole('button')).toBeNull();
-    });
-});
-
-describe('SelectBuildSystem', () => {
-    const BUILD_SYSTEMS = [
-        { id: 'Make File', label: 'GNU Make' },
-        { id: 'bazel', label: 'Bazel' }
-    ];
-
-    it('derives logos from the id, not the label', () => {
-        render(<SelectBuildSystem buildSystems={BUILD_SYSTEMS} onSelect={vi.fn()} onBack={vi.fn()} />);
-        screen.getByText('GNU Make');
-        expect(logoOf('Make File')).toBe('/assets/logos/make-file-logo.png');
-    });
-
-    it('reports the selected id and the way back', () => {
-        const onSelect = vi.fn();
-        const onBack = vi.fn();
-        render(<SelectBuildSystem buildSystems={BUILD_SYSTEMS} onSelect={onSelect} onBack={onBack} />);
-        fireEvent.click(screen.getByText('Bazel'));
-        expect(onSelect).toHaveBeenCalledWith('bazel');
-        fireEvent.click(screen.getByRole('button', { name: /Back/ }));
-        expect(onBack).toHaveBeenCalledOnce();
-    });
-});
-
-describe('persistence badge', () => {
-    it('shows Temporary or Saved per app, falling back to the installation default', () => {
-        render(
-            <SelectApp
-                appDefinitions={[
-                    { appId: 'a', appName: 'Inherits' },
-                    { appId: 'b', appName: 'Keeps', ephemeral: false },
-                    { appId: 'c', appName: 'Discards', ephemeral: true }
-                ]}
-                useEphemeralStorage={true}
-                onSelectApp={vi.fn()}
-            />
-        );
-        within(screen.getByRole('button', { name: /Inherits/ })).getByText('Temporary');
-        within(screen.getByRole('button', { name: /Keeps/ })).getByText('Saved');
-        within(screen.getByRole('button', { name: /Discards/ })).getByText('Temporary');
-    });
-
-    it('describes the tile once, keeping the tooltip out of the accessible name', () => {
-        render(
-            <SelectApp appDefinitions={[{ appId: 'a', appName: 'A', ephemeral: false }]} useEphemeralStorage={true} onSelectApp={vi.fn()} />
-        );
-        const tile = screen.getByRole('button', { name: 'A logo Select A Saved' });
-        const tooltip = screen.getByRole('tooltip', { hidden: true });
-        expect(tooltip.getAttribute('aria-hidden')).toBe('true');
-        expect(tile.getAttribute('aria-describedby')).toBe(tooltip.id);
-        expect(tooltip.textContent).toBe('Files are kept between sessions.');
-    });
-
-    it('is repeated with its hint on the launch screen and the progress screen', () => {
-        const { rerender } = render(<LaunchApp appName='Java' appDefinition='java-17' ephemeral={true} onStartSession={vi.fn()} />);
-        screen.getByText('Temporary');
-        screen.getByText(/Files are lost when the session ends\./);
-        rerender(<Loading ephemeral={false} />);
-        expect(screen.getByRole('status').textContent).toContain('Saved');
-        screen.getByText(/Files are kept between sessions\./);
-    });
-});
-
-describe('LaunchApp', () => {
-    it('starts the given app definition', () => {
-        const onStartSession = vi.fn();
-        render(<LaunchApp appName='Java' appDefinition='java-17' onStartSession={onStartSession} />);
-        fireEvent.click(screen.getByRole('button', { name: /Launch Java/ }));
-        expect(onStartSession).toHaveBeenCalledWith('java-17');
-    });
-});
-
-describe('ConfirmIdentity', () => {
-    const renderConfirm = (suggestedUser = 'ada'): ReturnType<typeof vi.fn> => {
-        const onConfirm = vi.fn();
-        render(<ConfirmIdentity suggestedUser={suggestedUser} onConfirm={onConfirm} />);
-        return onConfirm;
-    };
-
-    it('names the suggested user and confirms it only on request', () => {
-        const onConfirm = renderConfirm();
-        screen.getByText('ada');
-        expect(onConfirm).not.toHaveBeenCalled();
-        fireEvent.click(screen.getByRole('button', { name: 'Continue as this user' }));
-        expect(onConfirm).toHaveBeenCalledWith('ada');
-    });
-
-    it('confirms an edited, trimmed name with Enter', () => {
-        const onConfirm = renderConfirm();
-        const input = screen.getByLabelText('Username');
-        fireEvent.change(input, { target: { value: '  grace ' } });
-        fireEvent.keyDown(input, { key: 'Enter' });
-        expect(onConfirm).toHaveBeenCalledWith('grace');
-    });
-
-    it('refuses a blank name', () => {
-        const onConfirm = renderConfirm();
-        const input = screen.getByLabelText('Username');
-        fireEvent.change(input, { target: { value: '   ' } });
-        fireEvent.keyDown(input, { key: 'Enter' });
-        expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Continue as this user' }).disabled).toBe(true);
-        expect(onConfirm).not.toHaveBeenCalled();
-    });
-});
 
 describe('ErrorComponent', () => {
     it('shows a message, and nothing without one', () => {
@@ -201,9 +32,9 @@ describe('ErrorComponent', () => {
 describe('Footer', () => {
     it('falls back to the default links and shows no made-up version', () => {
         render(<Footer selectedAppDefinition='' />);
-        expect(screen.getByRole('link', { name: /Built by TUM AET Team/ }).getAttribute('href')).toBe('https://aet.cit.tum.de/');
+        expect(screen.getByRole('link', { name: /EduIDE/ }).getAttribute('href')).toBe('https://github.com/EduIDE');
         expect(screen.getByRole('link', { name: /Report a bug/ }).getAttribute('href')).toBe(
-            'https://github.com/EduIDE/EduIDE-Cloud/issues'
+            'https://github.com/EduIDE/EduIDE-control-plane/issues'
         );
         screen.getByRole('link', { name: /Request a feature/ });
         screen.getByRole('link', { name: 'About' });
@@ -289,25 +120,6 @@ describe('Header', () => {
     });
 });
 
-describe('Info', () => {
-    it('adapts the defaults to whether login is needed', () => {
-        const { rerender } = render(<Info usesLogin={true} />);
-        screen.getByText('Login & launch Session');
-        screen.getByText(/top right corner to login/);
-        rerender(<Info usesLogin={false} />);
-        screen.getByText('Launch session');
-        expect(screen.queryByText(/top right corner to login/)).toBeNull();
-    });
-
-    it('prefers configured texts and can be disabled', () => {
-        const { container, rerender } = render(<Info usesLogin={false} title='Title' text='Text' />);
-        screen.getByText('Title');
-        screen.getByText('Text');
-        rerender(<Info usesLogin={false} title='Title' disable={true} />);
-        expect(container.innerHTML).toBe('');
-    });
-});
-
 describe('Loading and Spinner', () => {
     it('shows the default or the configured text with a spinner', () => {
         const { container, rerender } = render(<Loading />);
@@ -320,15 +132,6 @@ describe('Loading and Spinner', () => {
     it('Spinner renders on its own', () => {
         const { container } = render(<Spinner />);
         expect(container.querySelector('.circular-spinner')).not.toBeNull();
-    });
-});
-
-describe('LoginButton', () => {
-    it('logs in', () => {
-        const login = vi.fn();
-        render(<LoginButton login={login} />);
-        fireEvent.click(screen.getByRole('button', { name: 'Login' }));
-        expect(login).toHaveBeenCalledOnce();
     });
 });
 
@@ -420,18 +223,7 @@ describe('Imprint', () => {
 });
 
 describe('Privacy', () => {
-    const renderPrivacy = (privacy?: unknown, onNavigate?: () => void): string => {
-        vi.stubGlobal('theiaCloudConfig', {
-            serviceAuthToken: 'token',
-            appName: 'EduIDE',
-            serviceUrl: 'https://service.example',
-            appDefinition: 'app',
-            useKeycloak: false,
-            useEphemeralStorage: true,
-            privacy
-        });
-        return render(<Privacy onNavigate={onNavigate} />).container.textContent ?? '';
-    };
+    const renderPrivacy = (privacy?: unknown, onNavigate?: () => void): string => render(<Privacy onNavigate={onNavigate} privacy={privacy as PrivacyConfig | undefined} />).container.textContent ?? '';
 
     it('goes back through onNavigate, or the browser history without it', () => {
         const onNavigate = vi.fn();
@@ -540,13 +332,5 @@ describe('Privacy', () => {
                 'Workspace data is discarded when the session ends.'
             );
         });
-    });
-});
-
-describe('getServiceAuthToken', () => {
-    it('prefers serviceAuthToken, then appId, and throws without either', () => {
-        expect(getServiceAuthToken({ serviceAuthToken: 'token', appId: 'legacy', appName: 'App' })).toBe('token');
-        expect(getServiceAuthToken({ appId: 'legacy', appName: 'App' })).toBe('legacy');
-        expect(() => getServiceAuthToken({ appName: 'App' } as never)).toThrow('Unable to extract service auth token');
     });
 });

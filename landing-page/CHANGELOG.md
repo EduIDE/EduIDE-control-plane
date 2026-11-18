@@ -5,6 +5,14 @@ The section of a version becomes the notes of its GitHub Release.
 
 ## [Unreleased]
 
+### Changes
+
+- The landing page runs on the control plane REST API (`@eduide/control-plane-client`) instead of Theia Cloud; sessions are followed through server-sent events
+- New overview at `/me/overview` with running sessions and workspaces
+- The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
+- Runtime config is `/config.json`, served by a small Go static server that replaces nginx
+- Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
+
 ## [1.5.1] - 2026-11-18
 
 ### Fixes

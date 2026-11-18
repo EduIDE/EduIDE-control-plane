@@ -1,354 +1,64 @@
 # EduIDE Landing Page
 
-Landing page for EduIDE Cloud workspace management, providing a user-friendly interface for launching cloud-based development environments.
+> **Experimental.** Part of the EduIDE control plane. Interfaces, configuration and behavior can change without notice.
+
+The page a student lands on: it starts an IDE session through the control plane REST API (`/api/v1`) and lists the user's running sessions and saved workspaces. A Vite and React app, served by a small Go static server.
 
 ## Features
 
-- **User Authentication**: Keycloak-based authentication and authorization
-- **Workspace Management**: Launch and manage multiple cloud-based IDEs
-- **Dynamic Configuration**: Runtime configuration via `config.js`
-- **Query Parameters**: Support for various URL parameters (appDef, gitUri, gitRef, gitUser, gitMail, artemisToken, artemisUrl, user)
-- **Responsive Design**: Modern UI with dark/light theme support
+- Launch from an Artemis link (`?appDef=<template>&gitUri=...`) or pick an environment
+- Progress through the session event stream (SSE); redirect when the session is Ready, error by problem code when it fails (`capacity-exhausted`, `session-limit-reached` with the list of running sessions)
+- Overview at `/me/overview`: running sessions (Open, Stop), workspaces without session (Start, Delete with confirmation), a warning 3 days before a workspace expires, live updates
 
-## Prerequisites
+## Link parameters
 
-- **Node.js**: >= 26.0.0
-- **npm**: Latest stable version
-- **Docker** (for containerized deployment): Docker with Buildx support for multi-arch builds
-
-## Quick Start
-
-### Local Development
-
-```bash
-# Clone the repository
-git clone https://github.com/EduIDE/EduIDE-Landing-Page.git
-cd EduIDE-Landing-Page
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
-```
-
-The landing page will be available at `http://localhost:5173`
-
-### Build for Production
-
-```bash
-# Build the application
-npm run build
-
-# Preview the production build
-npm run preview
-```
-
-The built files will be in the `dist/` directory.
-
-### Docker Deployment
-
-```bash
-# Build the Docker image
-docker build -t ghcr.io/eduide/eduide-landing-page:latest .
-
-# Run the container
-docker run -d -p 80:8080 ghcr.io/eduide/eduide-landing-page:latest
-```
+| Where | Name | Meaning |
+|---|---|---|
+| query | `appDef` | template name |
+| query | `gitUri`, `gitRef`, `artemisUrl` | launch data (only keys the template allows are sent) |
+| query | `title` | optional title shown in the overview |
+| query | `persistence` | optional `none` or `volume`, else the template default |
+| fragment | `artemisToken` | Artemis token. Read before Keycloak starts, kept in `sessionStorage`, removed from the address bar, deleted after the launch. `?artemisToken` still works and logs a deprecation warning |
 
 ## Configuration
 
-The landing page is configured via `public/config.js`. Create or modify this file to set up your environment:
+The server serves `/etc/eduide/landing/config.json` as `GET /config.json` (a ConfigMap in the chart). The page loads it at startup.
 
-```javascript
-window.theiaCloudConfig = {
-  // Basic configuration
-  serviceAuthToken: "your-service-auth-token",
-  appName: "EduIDE",
-  serviceUrl: "https://your-theia-cloud-instance.com",
-  appDefinition: "your-app-definition",
-  useKeycloak: true,
-  useEphemeralStorage: true,
-
-  // Keycloak configuration (if useKeycloak is true)
-  keycloakAuthUrl: "https://your-keycloak-instance.com/auth",
-  keycloakRealm: "your-realm",
-  keycloakClientId: "your-client-id",
-
-  // Landing page options
-  disableInfo: false,
-  infoTitle: "Welcome to EduIDE",
-  infoText: "Your cloud-based IDE for education",
-  loadingText: "Loading your workspace...",
-  logoFileExtension: "png",
-  pageTitle: "EduIDE Cloud",
-  // Sentry stays off unless sentryEnable is true and sentryDsn is set.
-  sentryEnable: true,
-  sentryEnvironment: "production",
-  sentryDsn: "https://examplePublicKey@sentry.example.com/123",
-
-  // Additional apps to display
-  additionalApps: [
-    {
-      serviceAuthToken: "app1-token",
-      appName: "Python Environment"
-    },
-    {
-      serviceAuthToken: "java-17",
-      appName: "Java",
-      image: "java-17"
-    }
-  ]
-};
+```json
+{
+  "apiBaseUrl": "/api/v1",
+  "keycloak": { "url": "https://keycloak.example.org", "realm": "eduide", "clientId": "landing" },
+  "title": "EduIDE",
+  "legacy": false
+}
 ```
 
-### Configuration Options
+Optional keys: `footerLinks` (attribution, bugReport, featureRequest, about) and `privacy` (see `src/config.ts`). `legacy` is reserved and not used yet.
 
-| Option | Type | Required | Description |
-|--------|------|----------|-------------|
-| `serviceAuthToken` | string | Yes | Service authentication token |
-| `appName` | string | Yes | Application name |
-| `serviceUrl` | string | Yes | Theia Cloud service URL |
-| `appDefinition` | string | Yes | Application definition identifier |
-| `useKeycloak` | boolean | Yes | Enable Keycloak authentication |
-| `useEphemeralStorage` | boolean | Yes | Default persistence of launched sessions: `true` launches ephemeral sessions, `false` workspace-backed ones. An app can override it with `ephemeral` |
-| `keycloakAuthUrl` | string | Conditional | Keycloak auth server URL |
-| `keycloakRealm` | string | Conditional | Keycloak realm name |
-| `keycloakClientId` | string | Conditional | Keycloak client ID |
-| `disableInfo` | boolean | No | Disable info banner |
-| `infoTitle` | string | No | Info banner title |
-| `infoText` | string | No | Info banner text |
-| `loadingText` | string | No | Loading message text |
-| `logoFileExtension` | string | No | Logo file extension (png, svg, etc.) |
-| `sentryEnable` | boolean | No | Enable Sentry browser monitoring. Defaults to off and also needs `sentryDsn` |
-| `sentryEnvironment` | string | No | Sentry environment tag, e.g. namespace or deployment name |
-| `sentryDsn` | string | No | Sentry endpoint to report to. There is no built-in default |
-| `trustedArtemisHosts` | array | No | Hosts whose Artemis links start a session without a click. Both `gitUri` and `artemisUrl` must match. Default: none |
-| `additionalApps` | array | No | Additional apps to display |
-| `footerLinks` | object | No | Footer link configuration |
+For local development copy that file to `public/config.json` (git-ignored) and run `npm run dev`.
 
-Each entry in `additionalApps` may optionally include `image` (or `Image` for compatibility). When omitted, the landing page keeps the current behavior and derives the logo path from `appName`. Apps may set `ephemeral: true` or `false` to decide whether their sessions discard their files, instead of the installation-wide `useEphemeralStorage`. The effective value is `ephemeral ?? useEphemeralStorage` (only a boolean counts), requires chart 3.0.0 or later to be set by the chart, applies to launches with a build system too, and is shown to users as a "Temporary" or "Saved" badge on the tile and on the launch screen. An app known only through `appDefinition`, without an `additionalApps` entry, follows `useEphemeralStorage`. An ephemeral launch that the service refuses with a 400 (any 400 without a JSON reason counts; with one, it must mention a workspace-backed session) is retried workspace-backed. Apps may also set `visible: false` to stay launchable through direct `appDef` URLs without appearing on the landing page. Visibility defaults to true and does not need to be configured for visible apps. When provided, the landing page uses the image value like this:
+## Commands
 
-- Plain name like `java-17` becomes `/assets/logos/java-17-logo.png`
-- Filename like `java-17-logo.png` becomes `/assets/logos/java-17-logo.png`
-- Absolute path like `/custom/logo.png` is used as-is
-
-## Query Parameters
-
-The landing page supports various URL query parameters to pre-configure the session:
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `appDef` | string | Application definition to launch |
-| `gitUri` | string | Git repository URL to clone |
-| `gitRef` | string | Branch, tag or commit to check out (`GIT_REF`) |
-| `gitUser` | string | Git username for authentication |
-| `gitMail` | string | Git email for authentication |
-| `artemisUrl` | string | Artemis service URL |
-| `artemisToken` | string | Artemis authentication token |
-| `user` | string | Suggested identity without Keycloak. It is not adopted automatically; the visitor must confirm it first (`ConfirmIdentity`) |
-
-**Auto-clone and private repositories:** On session start the repository is cloned from `gitUri`; no credential is added. For a private Artemis repository the credential must be embedded in `gitUri` itself, for example `https://<user>:<token>@host/org/repo.git`, and the hosts of `gitUri` and `artemisUrl` must be in `trustedArtemisHosts`. Because `gitUri` may contain a token, treat the URL as sensitive. Any other link can only open public repositories; private ones ask the student to sign in inside the session.
-
-**Links to GitHub, GitLab and Gitea/Forgejo (alpha):** on only while `allowedGitHosts` lists a host; the EduIDE-Helm chart leaves it empty, and a config without the key counts as empty. While it is empty, a `gitUri` link without an `artemisToken` is refused, and an Artemis link from a host outside `trustedArtemisHosts` works as before after a click. With hosts listed, a `gitUri` that is not a trusted Artemis link must be an HTTPS URL on a host in `allowedGitHosts` (config key, for example `['github.com', 'gitlab.com']` plus your Gitea or Forgejo host) or in `trustedArtemisHosts`. Other links are refused before anything starts, with the reason shown. Credentials in the URL are refused. Such a link passes on only `gitUri` and `gitRef`; `artemisUrl`, `artemisToken`, `gitUser` and `gitMail` are dropped. The page sets `GIT_SOURCE` itself: `artemis` for a trusted Artemis link, `external` for any other `gitUri`.
-
-Example: `https://your-landing-page.com/?appDef=myapp&gitUri=https://github.com/user/repo.git&gitRef=main`
-
-## NPM Scripts
-
-| Script | Description |
-|--------|-------------|
-| `npm run dev` | Start development server |
-| `npm run build` | Build for production |
-| `npm run preview` | Preview production build |
-| `npm test` | Run the test suite once (Vitest) |
-| `npm run typecheck` | Run TypeScript type checking |
-| `npm run lint` | Run ESLint linter |
-| `npm run lint:fix` | Auto-fix linting issues |
-| `npm run format` | Format code with Prettier |
-| `npm run format:check` | Check code formatting |
-
-## Keycloak Setup
-
-To enable Keycloak authentication:
-
-1. Create a Keycloak client in your Keycloak instance
-2. Configure the client with the following settings:
-   - **Client Protocol**: openid-connect
-   - **Access Type**: confidential or public (depending on your setup)
-   - **Valid Redirect URIs**: Your landing page URL (e.g., `http://localhost:5173/*` for dev)
-   - **Web Origins**: Your landing page URL
-3. Update `public/config.js` with your Keycloak configuration
-
-## Development Guide
-
-### Project Structure
-
-```
-EduIDE-Landing-Page/
-├── src/
-│   ├── components/          # React components
-│   │   ├── AppLogo.tsx
-│   │   ├── ConfirmIdentity.tsx # confirms a `?user=` identity before it is used
-│   │   ├── ErrorComponent.tsx
-│   │   ├── Footer.tsx
-│   │   ├── Header.tsx
-│   │   ├── Imprint.tsx
-│   │   ├── Info.tsx
-│   │   ├── LaunchApp.tsx
-│   │   ├── Loading.tsx
-│   │   ├── LoginButton.tsx
-│   │   ├── PersistenceBadge.tsx # "Temporary" or "Saved" badge
-│   │   ├── Privacy.tsx
-│   │   ├── SelectApp.tsx
-│   │   ├── SelectBuildSystem.tsx
-│   │   ├── SessionEnded.tsx # /session-ended: explains an ended session, offers to resume it
-│   │   ├── Spinner.tsx
-│   │   └── ThemeToggle.tsx
-│   ├── contexts/            # React contexts
-│   │   └── ThemeContext.tsx
-│   ├── App.tsx              # Main application component
-│   ├── App.test.tsx         # Tests sit next to the code they cover
-│   ├── App.css              # Application styles
-│   └── main.tsx             # Entry point
-├── public/                  # Static assets
-│   ├── assets/              # Images, logos, etc.
-│   ├── config.js            # Runtime configuration
-│   └── favicon.ico
-├── .github/workflows/       # CI/CD workflows
-│   └── docker-build.yml
-├── Dockerfile               # Multi-stage Docker build
-├── nginx.conf               # Nginx configuration
-├── vite.config.ts           # Vite build configuration
-├── tsconfig.json            # TypeScript configuration
-└── package.json             # Project dependencies
-```
-
-### Adding New Features
-
-1. **Add React Components**: Place in `src/components/`
-2. **Update Configuration**: Modify `public/config.js` for runtime changes
-3. **Add Dependencies**: Add to `package.json` and run `npm install`
-4. **Update Styles**: Modify `src/App.css` or component-specific CSS files
-
-### Dependency Updates
-
-This project uses npm and commits both `package.json` and `package-lock.json`. Prefer a conservative update first, then handle major upgrades separately.
-
-1. Check the current working tree and dependency status:
-
-   ```bash
-   git status --short
-   npm outdated
-   npm audit
-   ```
-
-2. Update dependencies within the existing `package.json` semver ranges:
-
-   ```bash
-   npm update
-   ```
-
-3. If direct dependency ranges should be raised to the versions now installed, update `package.json` and reconcile the lockfile:
-
-   ```bash
-   npm install --package-lock-only
-   ```
-
-4. Review major upgrades from `npm outdated` individually. Do not batch unrelated major upgrades unless you also verify the related code/config changes. Keep coupled packages on compatible versions, for example:
-
-   ```bash
-   npm install -D @typescript-eslint/eslint-plugin@latest @typescript-eslint/parser@latest
-   ```
-
-5. Verify the result:
-
-   ```bash
-   npm run build
-   npx eslint . --ext ts,tsx --report-unused-disable-directives --quiet
-   npm audit
-   ```
-
-   The normal `npm run lint` command treats warnings as failures because it uses `--max-warnings 0`. Use the errors-only ESLint command above to confirm that dependency updates did not introduce blocking lint errors, then address warnings separately if needed.
-
-6. Review and commit the dependency update:
-
-   ```bash
-   git diff -- package.json package-lock.json
-   git status --short
-   ```
-
-If `npm audit` reports a vulnerability with `fixAvailable: false`, identify the owning direct dependency and check whether a newer compatible release changes the vulnerable transitive dependency. If no compatible release fixes it, document the residual advisory in the pull request.
-
-### Troubleshooting
-
-**Build Fails with TypeScript Errors**:
 ```bash
-# Check TypeScript errors
-npm run typecheck
+npm run dev           # http://localhost:5173
+npm run lint
+npm test              # vitest
+npm run build
+npm run sync-client   # copy clients/typescript/src into src/api-client
 ```
 
-**Lint Errors**:
+## API client
+
+`src/api-client/` is a committed copy of `clients/typescript/src` (generated from `api/openapi/v1.yaml`), so the Docker build needs only this directory as context. Run `npm run sync-client` after the API changes. CI runs `npm run check-client`, which fails when the copy is stale.
+
+## Image
+
 ```bash
-# Auto-fix linting issues
-npm run lint:fix
+docker build -t eduide-landing-page landing-page   # context: landing-page/
 ```
 
-**Docker Build Fails**:
-- Ensure Docker daemon is running
-- Check Node.js version (>= 26.0.0)
-- Verify `package-lock.json` is present
-
-**404 Errors in Production**:
-- Ensure `base` path in `vite.config.ts` matches your deployment path
-- Check nginx.conf routing configuration
-
-## CI/CD
-
-This project uses GitHub Actions for automated Docker builds and multi-architecture support.
-
-### Workflow Triggers
-
-- **Push to main**: Builds and pushes to `latest` tag
-- **Nightly schedule**: Rebuilds `latest` at 02:00 UTC without layer cache
-- **Pull Request**: Builds image for testing
-- **Manual Dispatch**: Build on demand with a custom tag
-- **Release**: `release.yml`, run by hand with a `version` input, drafts the GitHub Release, builds the image as `X.Y.Z`, verifies it and publishes the release, which creates the `vX.Y.Z` tag (see below)
-
-### Releasing
-
-Ask Claude to "release the landing page" (skill `.claude/skills/release`) or do it by hand: open a release pull request that moves the `## [Unreleased]` entries of `CHANGELOG.md` under `## [X.Y.Z] - YYYY-MM-DD`, then after the merge run `gh workflow run release.yml -R EduIDE/EduIDE-Landing-Page --ref main -f version=X.Y.Z`. `package.json` is not a version file; the build stamps the version from the tag. The CHANGELOG section becomes the release notes. An `-rc.N` version can run from any branch and makes a prerelease. Afterwards bump `versions.landingPage` in EduIDE-Helm.
-
-### Build Platforms
-
-- `linux/amd64`
-- `linux/arm64`
-
-### Image Registry
-
-Built images are pushed to: `ghcr.io/eduide/eduide-landing-page`
+Multi-stage: Node build, Go build of `server/`, `gcr.io/distroless/static-debian12:nonroot`. The server listens on `:8080` and serves `/app/dist` with fallback to `index.html`, `/config.json`, `/healthz`. Responses carry a CSP that allows the Keycloak origin from the config, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`. The CSP is derived at start, so a changed Keycloak URL needs a restart.
 
 ## License
 
-EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0
-
-## Contributing
-
-Contributions are welcome! Please follow these guidelines:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Support
-
-For issues and questions:
-- **GitHub Issues**: https://github.com/EduIDE/EduIDE-Landing-Page/issues
-- **Documentation**: [EduIDE Docs](https://EduIDE.github.io/Docs)
-
-## Related Projects
-
-- [EduIDE-Cloud](https://github.com/EduIDE/EduIDE-Cloud): Main EduIDE Cloud project
-- [EduIDE-deployment](https://github.com/EduIDE/EduIDE-deployment): Kubernetes deployment for EduIDE Cloud
+EPL-2.0 OR GPL-2.0 WITH Classpath-exception-2.0, see `LICENSE`.

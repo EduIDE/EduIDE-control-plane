@@ -10,7 +10,7 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import simpleImportSort from 'eslint-plugin-simple-import-sort';
 
 export default [
-    { ignores: ['dist', 'vite.config.ts', '**/*.d.ts'] },
+    { ignores: ['dist', 'vite.config.ts', '**/*.d.ts', 'src/api-client/**'] },
     {
         ...js.configs.recommended,
         files: ['**/*.{ts,tsx}']

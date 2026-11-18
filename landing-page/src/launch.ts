@@ -1,162 +1,133 @@
-// The app's own setting wins over the installation-wide default. Anything but a boolean (a chart could emit a string) is ignored.
-export function isEphemeralLaunch(app: { ephemeral?: unknown } | undefined, useEphemeralStorage: boolean): boolean {
-    return typeof app?.ephemeral === 'boolean' ? app.ephemeral : useEphemeralStorage;
-}
+import type { LaunchRequest, Problem, Session, Template } from './api-client';
 
 export function persistenceHint(ephemeral: boolean): string {
     return ephemeral ? 'Files are lost when the session ends.' : 'Files are kept between sessions.';
 }
 
-const WORKSPACE_SEGMENT_LIMIT = 12;
-const LAUNCH_RETRIES = 4;
-const GATEWAY_ERRORS = [502, 503, 504];
-const NO_RESPONSE_CODES = ['ECONNABORTED', 'ETIMEDOUT', 'ERR_NETWORK'];
-
-function createDeterministicId(value: string): string {
-    let hash = 0;
-
-    for (let i = 0; i < value.length; i += 1) {
-        hash = (hash << 5) - hash + value.charCodeAt(i);
-        hash |= 0;
-    }
-
-    return Math.abs(hash).toString(16).padStart(8, '0');
-}
-
-function sanitizeWorkspaceSegment(value: string | undefined, fallback: string): string {
-    const sanitized = (value ?? '')
-        .toLowerCase()
-        .replace(/[^a-z0-9-]/g, '-')
-        .replace(/^-+/, '')
-        .replace(/-+$/, '');
-
-    const normalized = sanitized.length > 0 ? sanitized : fallback;
-    return normalized.substring(0, Math.min(normalized.length, WORKSPACE_SEGMENT_LIMIT));
-}
-
-export function createAnonymousUser(): string {
-    const random = Array.from(crypto.getRandomValues(new Uint8Array(8)), byte => byte.toString(16).padStart(2, '0')).join('');
-    return `anonymous-${random}`;
-}
-
-// The user and the full app key go into the hash because their segments are cut off at 12 characters.
-export function createWorkspaceName(
-    appDefinition: string,
-    buildSystemId: string | undefined,
-    workspaceUser: string | undefined,
-    gitUri: string | undefined,
-    gitRef?: string
-): string {
-    // Fold the selected build system (template) into the workspace identity so
-    // that, e.g., the Bazel and Make variants of the same app definition get
-    // separate persistent workspaces instead of sharing (and merging) one.
-    const appKey = buildSystemId ? `${appDefinition}-${buildSystemId}` : appDefinition;
-    const appSegment = sanitizeWorkspaceSegment(appKey, 'app');
-    const userSegment = sanitizeWorkspaceSegment(workspaceUser, 'user');
-
-    if (!gitUri) {
-        return `ws-${appSegment}-playground-${userSegment}-${createDeterministicId(`${workspaceUser}-${appKey}-playground`)}`;
-    }
-
-    // Only a set ref joins the key, so existing workspace names stay the same.
-    const gitKey = gitRef ? `${gitUri}#${gitRef}` : gitUri;
-    const repoName = gitUri
-        .split('/')
-        .pop()
-        ?.replace(/\.git$/, '');
-    const repoSegment = sanitizeWorkspaceSegment(repoName, 'repo');
-    return `ws-${appSegment}-${repoSegment}-${userSegment}-${createDeterministicId(`${workspaceUser}-${appKey}-${gitKey}`)}`;
-}
-
-export function createLaunchEnv(link: {
-    artemisToken?: string;
-    artemisUrl?: string;
+export interface LaunchParams {
+    appDef: string;
     gitUri?: string;
     gitRef?: string;
-    gitSource?: string;
-    gitUser?: string;
-    gitMail?: string;
-    buildSystemId?: string;
-}): Record<string, string> {
-    const env: Record<string, string> = { THEIA: 'true' };
-    if (link.artemisToken) {
-        env.ARTEMIS_TOKEN = link.artemisToken;
-    }
-    if (link.artemisUrl) {
-        env.ARTEMIS_URL = link.artemisUrl;
-    }
-    if (link.gitUri) {
-        env.GIT_URI = link.gitUri;
-    }
-    if (link.gitUser) {
-        env.GIT_USER = link.gitUser;
-    }
-    if (link.gitMail) {
-        env.GIT_MAIL = link.gitMail;
-    }
-    if (link.gitRef) {
-        env.GIT_REF = link.gitRef;
-    }
-    if (link.gitSource) {
-        env.GIT_SOURCE = link.gitSource;
-    }
-    if (link.buildSystemId) {
-        env.TEMPLATE = link.buildSystemId;
-    }
-    return env;
+    artemisUrl?: string;
+    artemisToken?: string;
+    title?: string;
+    persistence?: string;
 }
 
-export function getHostname(url: string | undefined): string | undefined {
+export function parseLaunchParams(search: string): LaunchParams | undefined {
+    const p = new URLSearchParams(search);
+    const appDef = p.get('appDef') ?? p.get('appdef');
+    if (!appDef) {
+        return undefined;
+    }
+    const get = (k: string): string | undefined => p.get(k) || undefined;
+    return {
+        appDef,
+        gitUri: get('gitUri'),
+        gitRef: get('gitRef'),
+        artemisUrl: get('artemisUrl'),
+        title: get('title'),
+        persistence: get('persistence')
+    };
+}
+
+// The display source is not secret, so a token in the userinfo part of an Artemis git URL must not end up in it.
+export function displaySource(gitUri: string): string {
     try {
-        return url ? new URL(url).hostname.toLowerCase() : undefined;
+        const u = new URL(gitUri);
+        u.username = '';
+        u.password = '';
+        return u.href;
+    } catch {
+        return '';
+    }
+}
+
+/** Builds the POST /sessions body. Data keys the template does not list would be refused with 400, so they are left out. */
+export function buildLaunchRequest(params: LaunchParams, template: Template): LaunchRequest {
+    const candidates: Record<string, string | undefined> = {
+        GIT_URI: params.gitUri,
+        GIT_REF: params.gitRef,
+        ARTEMIS_URL: params.artemisUrl,
+        ARTEMIS_TOKEN: params.artemisToken
+    };
+    const data: Record<string, string> = {};
+    for (const [key, value] of Object.entries(candidates)) {
+        if (value && template.injectableKeys.includes(key)) {
+            data[key] = value;
+        }
+    }
+    const request: LaunchRequest = { template: template.name };
+    if (Object.keys(data).length > 0) {
+        request.data = data;
+    }
+    if (params.persistence === 'none' || params.persistence === 'volume') {
+        if (template.persistence.includes(params.persistence)) {
+            request.persistence = params.persistence;
+        }
+    }
+    const title = params.title?.trim();
+    const source = params.gitUri ? displaySource(params.gitUri) : '';
+    if (title || source) {
+        request.display = { ...(title && { title }), ...(source && { source }) };
+    }
+    return request;
+}
+
+export type LaunchState =
+    | { kind: 'creating' }
+    | { kind: 'starting'; session: Session }
+    | { kind: 'ready'; url: string }
+    | { kind: 'failed'; code: string; message: string; sessions?: Session[] };
+
+const MESSAGES: Record<string, string> = {
+    'capacity-exhausted': 'The cluster is full right now. Please try again in a few minutes.',
+    'session-limit-reached': 'You reached the maximum number of running sessions. Stop one of them to start another.',
+    'persistence-not-allowed': 'This environment does not support the requested storage mode.',
+    'template-not-found': 'This environment does not exist.',
+    'start-failed': 'The session could not be started.',
+    'rate-limited': 'Too many requests. Please wait a moment and try again.',
+    unauthorized: 'Your login expired. Reload the page to sign in again.',
+    forbidden: 'You are not allowed to start this session.'
+};
+
+export function failureFromProblem(problem: Partial<Problem> | undefined): LaunchState {
+    const code = problem?.code ?? 'internal';
+    return {
+        kind: 'failed',
+        code,
+        message: MESSAGES[code] ?? problem?.detail ?? problem?.title ?? 'Something went wrong.',
+        sessions: problem?.sessions
+    };
+}
+
+// Only http(s) targets: the URL comes from the API, but a redirect to javascript: must never be possible.
+function safeUrl(url: string | undefined): string | undefined {
+    try {
+        const u = new URL(url ?? '');
+        return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
     } catch {
         return undefined;
     }
 }
 
-export function isTrustedArtemisLink(gitUri: string, artemisUrl: string | undefined, trustedHosts: string[] = []): boolean {
-    const trusted = trustedHosts.map(host => host.trim().toLowerCase());
-    return [gitUri, artemisUrl].every(url => {
-        const hostname = getHostname(url);
-        return hostname !== undefined && trusted.includes(hostname);
-    });
-}
-
-function isGatewayOrTimeoutError(err: unknown): boolean {
-    const { status, originalError } = err as { status?: number; originalError?: { code?: string } };
-    return GATEWAY_ERRORS.includes(status as number) || NO_RESPONSE_CODES.includes(originalError?.code as string);
-}
-
-// A slow start outlasts the gateway's timeout while the service keeps working, so a later
-// request picks up the running session. Every other error is final. The random wait stops
-// a whole lecture from retrying in step.
-export async function launchWithRetry<T>(
-    launch: () => Promise<T>,
-    wait: () => Promise<void> = () => new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 7000))
-): Promise<T> {
-    for (let retriesLeft = LAUNCH_RETRIES; ; retriesLeft -= 1) {
-        try {
-            return await launch();
-        } catch (err) {
-            if (retriesLeft === 0 || !isGatewayOrTimeoutError(err)) {
-                throw err;
-            }
-            await wait();
-        }
+/** The state machine step: every session event maps to the next state. Ready and Failed are final. */
+export function applySession(session: Session): LaunchState {
+    if (session.phase === 'Ready') {
+        const url = safeUrl(session.url);
+        return url ? { kind: 'ready', url } : { kind: 'failed', code: 'internal', message: 'The session has no valid address.' };
     }
-}
-
-// The service can answer 200 without a URL when a session vanished mid-launch. Treat that like a 503,
-// so launchWithRetry asks again instead of the browser being sent to "https://".
-export async function requireSessionUrl(url: Promise<string>): Promise<string> {
-    const resolved = await url;
-    if (!resolved) {
-        throw Object.assign(new Error('The session is still starting.'), { status: 503 });
+    if (session.phase === 'Failed') {
+        const code = session.errorCode ?? 'start-failed';
+        return { kind: 'failed', code, message: MESSAGES[code] ?? session.message ?? MESSAGES['start-failed'] };
     }
-    return resolved;
+    return { kind: 'starting', session };
 }
 
-export function redirectToSession(url: string): void {
-    console.log(`Redirect to: https://${url}`);
-    location.replace(`https://${url}`);
+export const isFinal = (s: LaunchState): boolean => s.kind === 'ready' || s.kind === 'failed';
+
+/** W3C trace context header for the launch, so the service joins the browser's trace. Sampled flag off: no browser exporter. */
+export function newTraceparent(random: (n: number) => Uint8Array = n => crypto.getRandomValues(new Uint8Array(n))): string {
+    const hex = (n: number): string => Array.from(random(n), b => b.toString(16).padStart(2, '0')).join('');
+    return `00-${hex(16)}-${hex(8)}-00`;
 }
