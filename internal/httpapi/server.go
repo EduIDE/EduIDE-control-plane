@@ -41,11 +41,16 @@ type Server struct {
 	mu            sync.Mutex
 	limiters      map[string]*rate.Limiter // shortcut: one entry per user is never evicted, fine for thousands of users
 	adminLimiters map[string]*rate.Limiter
-	quota         *StorageQuota
-	quotaAt       time.Time
 	ipLimiters    map[string]*rate.Limiter // public status (U17), per client IP
 
-	// public status (U17): the cached body and the state of the sign-in check
+	// quotaMu guards the storage quota cache; its refresh calls the API server, which must not block mu.
+	quotaMu sync.Mutex
+	quota   *StorageQuota
+	quotaAt time.Time
+
+	// public status (U17): the cached body and the state of the sign-in check. pubMu lets one request rebuild an
+	// expired body while the others wait for it instead of rebuilding it, too.
+	pubMu   sync.Mutex
 	pubAt   time.Time
 	pubBody []byte
 	signIn  atomic.Bool

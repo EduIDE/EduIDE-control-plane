@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -127,7 +128,7 @@ func (s *Server) GetAdminProblems(w http.ResponseWriter, r *http.Request, p GetA
 	out := AdminProblems{Since: AdminProblemsSince(since), Events: evs}
 	if s.prom != nil {
 		// since is one of the two enum values, so the query text is fixed.
-		q := fmt.Sprintf(`sum by (code) (increase(eduide_session_failures_total[%s]))`, since)
+		q := fmt.Sprintf(`sum by (code) (increase(eduide_session_failures_total{%s}[%s]))`, s.promNS(), since)
 		if res, err := s.prom.Instant(r.Context(), q); err == nil {
 			codes := []AdminCodeCount{}
 			for _, x := range res {
@@ -150,10 +151,6 @@ func (s *Server) adminStatus(ctx context.Context) (AdminStatus, *apiError) {
 		return AdminStatus{}, perr
 	}
 	ps, perr := s.pools(ctx)
-	if perr != nil {
-		return AdminStatus{}, perr
-	}
-	decisions, perr := s.scalerDecisions(ctx)
 	if perr != nil {
 		return AdminStatus{}, perr
 	}
@@ -182,19 +179,41 @@ func (s *Server) adminStatus(ctx context.Context) (AdminStatus, *apiError) {
 				Message: fmt.Sprintf("Pool %s has had no free instance for %d min.", p.Name, int(now.Sub(since).Minutes()))})
 		}
 	}
-	if iv := s.cfg.Admin.ScalerInterval; iv != nil && len(ps) > 0 {
-		if len(decisions) == 0 || now.Sub(decisions[0].Time) > 2*iv.Duration {
-			w := AdminWarning{Code: ScalerSilent, Message: fmt.Sprintf("The pool scaler wrote no event for more than %s.", 2*iv.Duration)}
-			if len(decisions) > 0 {
-				w.Since = &decisions[0].Time
-			}
-			out.Warnings = append(out.Warnings, w)
-		}
-	}
 	if s.prom != nil {
+		if w := s.scalerSilent(ctx, len(ps) > 0); w != nil {
+			out.Warnings = append(out.Warnings, *w)
+		}
 		out.Stats, out.NodePools = s.promStats(ctx)
 	}
 	return out, nil
+}
+
+// promNS is the PromQL matcher of this deployment's namespace (the PodMonitor sets the namespace label).
+func (s *Server) promNS() string { return "namespace=" + strconv.Quote(s.cfg.Namespace) }
+
+// scalerSilent warns when a pool scaler is configured (admin.scalerInterval) but Prometheus has no recent decision
+// round of it: its heartbeat pool_scaler_last_decision_timestamp_seconds is older than two intervals, or absent
+// because the target is down or not scraped. Events cannot tell, a steady pool writes none. A failed query warns
+// about nothing.
+func (s *Server) scalerSilent(ctx context.Context, havePools bool) *AdminWarning {
+	iv := s.cfg.Admin.ScalerInterval
+	if iv == nil || !havePools {
+		return nil
+	}
+	res, err := s.prom.Instant(ctx, `time() - max(pool_scaler_last_decision_timestamp_seconds{`+s.promNS()+`})`)
+	if err != nil {
+		return nil
+	}
+	limit := 2 * iv.Duration
+	if len(res) == 0 {
+		return &AdminWarning{Code: ScalerSilent, Message: "Prometheus has no metrics of the pool scaler: it is down or not scraped."}
+	}
+	age := time.Duration(res[0].Value * float64(time.Second))
+	if age <= limit {
+		return nil
+	}
+	since := s.now().Add(-age)
+	return &AdminWarning{Code: ScalerSilent, Since: &since, Message: fmt.Sprintf("The pool scaler made no decision round for more than %s.", limit)}
 }
 
 func (s *Server) GetAdminStatus(w http.ResponseWriter, r *http.Request) {
@@ -243,13 +262,15 @@ func (s *Server) promStats(ctx context.Context) (*AdminStats, *[]NodePoolPressur
 			return err
 		}
 	}
-	const startCount = `eduide_session_startup_seconds_count`
-	run(scalar(`sum(increase(`+startCount+`{result="ready"}[1h]))`, func(v float64) { st.StartsLastHour = ptr(int(math.Round(v))) }))
-	run(scalar(`sum(increase(eduide_session_failures_total[1h]))`, func(v float64) { st.FailuresLastHour = ptr(int(math.Round(v))) }))
+	// Every eduide_ series is limited to this deployment: other deployments in the cluster report the same names.
+	ns := s.promNS()
+	startCount := `eduide_session_startup_seconds_count{` + ns + `,`
+	run(scalar(`sum(increase(`+startCount+`result="ready"}[1h]))`, func(v float64) { st.StartsLastHour = ptr(int(math.Round(v))) }))
+	run(scalar(`sum(increase(eduide_session_failures_total{`+ns+`}[1h]))`, func(v float64) { st.FailuresLastHour = ptr(int(math.Round(v))) }))
 	run(scalar(`100 * sum(kube_pod_container_resource_requests{resource="cpu"}) / sum(kube_node_status_allocatable{resource="cpu"})`, func(v float64) { st.CpuRequestsPercent = &v }))
 	run(scalar(`count(kube_node_info)`, func(v float64) { st.NodeCount = ptr(int(v)) }))
 	run(func() error {
-		res, err := s.prom.Instant(ctx, `histogram_quantile(0.95, sum by (le, template, persistence) (increase(eduide_session_startup_seconds_bucket{result="ready"}[1h])))`)
+		res, err := s.prom.Instant(ctx, `histogram_quantile(0.95, sum by (le, template, persistence) (increase(eduide_session_startup_seconds_bucket{`+ns+`,result="ready"}[1h])))`)
 		var p95 []AdminStartP95
 		for _, x := range res {
 			p95 = append(p95, AdminStartP95{Template: x.Labels["template"], Persistence: PersistenceMode(x.Labels["persistence"]), Seconds: x.Value})
@@ -263,7 +284,7 @@ func (s *Server) promStats(ctx context.Context) (*AdminStats, *[]NodePoolPressur
 		return err
 	})
 	run(func() error {
-		res, err := s.prom.Instant(ctx, `max by (node_pool) (eduide_capacity_pressure)`)
+		res, err := s.prom.Instant(ctx, `max by (node_pool) (eduide_capacity_pressure{`+ns+`})`)
 		for _, x := range res {
 			pres = append(pres, NodePoolPressure{Name: x.Labels["node_pool"], Pressure: x.Value > 0})
 		}
@@ -274,9 +295,9 @@ func (s *Server) promStats(ctx context.Context) (*AdminStats, *[]NodePoolPressur
 		var series [3][]promSeries
 		var firstErr error
 		for i, q := range []string{
-			`sum(increase(` + startCount + `{result="ready",strategy=~"warm.*"}[1h]))`,
-			`sum(increase(` + startCount + `{result="ready",strategy="cold"}[1h]))`,
-			`sum(increase(` + startCount + `{result="failed"}[1h]))`,
+			`sum(increase(` + startCount + `result="ready",strategy=~"warm.*"}[1h]))`,
+			`sum(increase(` + startCount + `result="ready",strategy="cold"}[1h]))`,
+			`sum(increase(` + startCount + `result="failed"}[1h]))`,
 		} {
 			res, err := s.prom.Range(ctx, q, 12*hour, hour)
 			if err != nil && firstErr == nil {
@@ -314,7 +335,7 @@ func (s *Server) promStats(ctx context.Context) (*AdminStats, *[]NodePoolPressur
 		var times []time.Time
 		var firstErr error
 		for i, q := range []float64{0.5, 0.95} {
-			res, err := s.prom.Range(ctx, fmt.Sprintf(`histogram_quantile(%g, sum by (le) (increase(eduide_session_startup_seconds_bucket{result="ready"}[1h])))`, q), 12*hour, hour)
+			res, err := s.prom.Range(ctx, fmt.Sprintf(`histogram_quantile(%g, sum by (le) (increase(eduide_session_startup_seconds_bucket{%s,result="ready"}[1h])))`, q, ns), 12*hour, hour)
 			if err != nil && firstErr == nil {
 				firstErr = err
 			}
@@ -346,7 +367,7 @@ func (s *Server) promStats(ctx context.Context) (*AdminStats, *[]NodePoolPressur
 		return firstErr
 	})
 	run(func() error {
-		res, err := s.prom.Range(ctx, `sum by (pool) (eduide_pool_instances{state="idle_ready"})`, 6*hour, 15*time.Minute)
+		res, err := s.prom.Range(ctx, `sum by (pool) (eduide_pool_instances{`+ns+`,state="idle_ready"})`, 6*hour, 15*time.Minute)
 		var free []AdminPoolFree
 		for _, sr := range res {
 			pf := AdminPoolFree{Pool: sr.Labels["pool"], Points: []TimePoint{}}

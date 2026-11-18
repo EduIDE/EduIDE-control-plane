@@ -129,6 +129,9 @@ func run() error {
 			return err
 		}
 	}
+	if cfg.OIDC.Admin != nil && len(salt) == 0 {
+		return errors.New("the admin API needs a non-empty telemetry.userSaltFile")
+	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
 	go api.RunSignInCheck(ctx)
 	// No WriteTimeout: SSE streams stay open.

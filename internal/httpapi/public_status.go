@@ -172,20 +172,18 @@ func (s *Server) GetPublicStatus(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, problem(CodeRateLimited, "too many requests, retry shortly"))
 		return
 	}
-	s.mu.Lock()
-	cached, at := s.pubBody, s.pubAt
-	s.mu.Unlock()
-	if cached == nil || s.now().Sub(at) >= publicCacheTTL {
+	s.pubMu.Lock()
+	if s.pubBody == nil || s.now().Sub(s.pubAt) >= publicCacheTTL {
 		b, perr := s.publicStatus(r.Context())
 		if perr != nil {
+			s.pubMu.Unlock()
 			writeProblem(w, perr)
 			return
 		}
-		s.mu.Lock()
 		s.pubBody, s.pubAt = b, s.now()
-		s.mu.Unlock()
-		cached = b
 	}
+	cached := s.pubBody
+	s.pubMu.Unlock()
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
 	h.Set("Cache-Control", "public, max-age=15")

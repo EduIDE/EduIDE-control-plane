@@ -191,8 +191,8 @@ func (s *Server) adminSessionAPI(sess *v1alpha1.IDESession, t *v1alpha1.IDETempl
 	out := AdminSession{
 		Name: base.Name, Template: base.Template, Workspace: base.Workspace, Phase: base.Phase,
 		Persistence: PersistenceMode(v1alpha1.PersistenceNone), ErrorCode: base.ErrorCode, Message: base.Message,
-		Title:     emptyToNil(titleOf(sess.Spec.Display, s.titleStrip)),
-		OwnerHash: v1alpha1.OwnerHash(sess.Spec.Owner), CreatedAt: base.CreatedAt, ReadyAt: base.ReadyAt, LastActivity: base.LastActivity,
+		Title:     s.adminTitle(sess.Spec.Display, sess.Spec.Owner),
+		OwnerHash: s.userID(sess.Spec.Owner), CreatedAt: base.CreatedAt, ReadyAt: base.ReadyAt, LastActivity: base.LastActivity,
 		StopsAt: base.StopsAt, TraceId: emptyToNil(traceID), TraceUrl: s.traceURL(traceID),
 	}
 	if sess.Spec.WorkspaceRef != "" {
@@ -205,6 +205,16 @@ func (s *Server) adminSessionAPI(sess *v1alpha1.IDESession, t *v1alpha1.IDETempl
 		out.StopReason = ptr(string(*base.StopReason))
 	}
 	return out
+}
+
+// adminTitle is the title without the owner's user name: repository names often end in the user name, and the
+// strip pattern may be unset or miss it.
+func (s *Server) adminTitle(d v1alpha1.Display, owner string) *string {
+	t := titleOf(d, s.titleStrip)
+	if owner != "" && strings.Contains(strings.ToLower(t), strings.ToLower(owner)) {
+		t = regexp.MustCompile("(?i)"+regexp.QuoteMeta(owner)).ReplaceAllLiteralString(t, "***")
+	}
+	return emptyToNil(t)
 }
 
 func (s *Server) templateMap(ctx context.Context) (map[string]*v1alpha1.IDETemplate, *apiError) {
@@ -357,7 +367,7 @@ func (s *Server) adminWorkspaceAPI(ws *v1alpha1.IDEWorkspace, tpls map[string]*v
 	}
 	out := AdminWorkspace{
 		Name: ws.Name, Template: ws.Spec.TemplateRef, Phase: base.Phase, State: AdminWorkspaceStateActive,
-		Title: emptyToNil(titleOf(ws.Spec.Display, s.titleStrip)), OwnerHash: v1alpha1.OwnerHash(ws.Spec.Owner),
+		Title: s.adminTitle(ws.Spec.Display, ws.Spec.Owner), OwnerHash: s.userID(ws.Spec.Owner),
 		CreatedAt: base.CreatedAt, LastUsed: base.LastUsed, ExpiresAt: base.ExpiresAt, DeletesAt: base.DeletesAt,
 	}
 	if size != nil {
@@ -377,8 +387,8 @@ func (s *Server) adminWorkspaceAPI(ws *v1alpha1.IDEWorkspace, tpls map[string]*v
 // storageQuota is the requests.storage quota of the namespace, nil when there is none. It reads the API
 // directly (a cache would need a watch) and keeps the answer for 30 s.
 func (s *Server) storageQuota(ctx context.Context) *StorageQuota {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.quotaMu.Lock()
+	defer s.quotaMu.Unlock()
 	if s.quotaAt.IsZero() || s.now().Sub(s.quotaAt) > 30*time.Second {
 		s.quotaAt, s.quota = s.now(), nil
 		var l corev1.ResourceQuotaList

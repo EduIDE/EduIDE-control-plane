@@ -677,9 +677,9 @@ export interface components {
             startStrategy?: string;
             errorCode?: string;
             message?: string;
-            /** @description From display.title, else derived from display.source (G15). */
+            /** @description From display.title, else derived from display.source (G15). The owner's user name is replaced by ***. */
             title?: string;
-            /** @description Pseudonymous owner id (G17): the label-safe hash of the owner name. */
+            /** @description Pseudonymous owner id (G17): HMAC of the owner name with the deployment salt, the same value as the user id in spans and logs. Not the unkeyed hash of the owner-hash label. */
             ownerHash: string;
             /** Format: date-time */
             createdAt: string;

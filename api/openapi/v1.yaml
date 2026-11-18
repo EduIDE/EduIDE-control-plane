@@ -665,8 +665,8 @@ components:
         startStrategy: {type: string, description: "warm-ready, warm-starting or cold, see Session.startStrategy."}
         errorCode: {type: string}
         message: {type: string}
-        title: {type: string, description: "From display.title, else derived from display.source (G15)."}
-        ownerHash: {type: string, description: "Pseudonymous owner id (G17): the label-safe hash of the owner name."}
+        title: {type: string, description: "From display.title, else derived from display.source (G15). The owner's user name is replaced by ***."}
+        ownerHash: {type: string, description: "Pseudonymous owner id (G17): HMAC of the owner name with the deployment salt, the same value as the user id in spans and logs. Not the unkeyed hash of the owner-hash label."}
         createdAt: {type: string, format: date-time}
         readyAt: {type: string, format: date-time}
         lastActivity: {type: string, format: date-time}

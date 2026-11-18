@@ -61,7 +61,7 @@ config:
   #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials
   #   links: {grafana: "", jaeger: "", traceUrlTemplate: "https://jaeger.example.org/trace/{traceId}"}
   #   rateLimitPerMinute: 60                                      # per admin user
-  #   scalerInterval: 30s                                         # set by the chart from poolScaler.config.interval
+  #   scalerInterval: 30s                                         # set by the chart from poolScaler.config.interval; with prometheusURL it drives the scaler-silent warning
 
 oidc:
   # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID

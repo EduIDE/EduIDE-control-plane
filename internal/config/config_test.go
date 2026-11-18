@@ -56,24 +56,28 @@ func TestParseOverview(t *testing.T) {
 }
 
 func TestAdminConfig(t *testing.T) {
+	const salt = "telemetry: {userSaltFile: /etc/eduide/secrets/user-salt}\n"
 	ok := map[string]string{
 		"realm":  "oidc: {issuerURL: https://kc.example.org/realms/r, clientIDs: [landing], gatewayClientID: gw-client, admin: {rolePath: realm_access.roles, role: eduide-admin}}",
 		"client": "oidc: {issuerURL: https://kc.example.org/realms/r, clientIDs: [landing], gatewayClientID: gw-client, admin: {rolePath: resource_access.eduide-landing.roles, role: eduide-admin}}",
+		"dotted": "oidc: {issuerURL: https://kc.example.org/realms/r, clientIDs: [landing], gatewayClientID: gw-client, admin: {rolePath: resource_access.eduide.landing.roles, role: eduide-admin}}",
 	}
 	for name, oidc := range ok {
-		c, err := Parse([]byte(strings.Replace(minimal, minimal[strings.Index(minimal, "oidc:"):strings.Index(minimal, "agent:")], oidc+"\n", 1)))
+		c, err := Parse([]byte(strings.Replace(minimal, minimal[strings.Index(minimal, "oidc:"):strings.Index(minimal, "agent:")], oidc+"\n", 1) + salt))
 		if err != nil || c.OIDC.Admin == nil || c.Admin.RateLimitPerMinute != 60 {
 			t.Errorf("%s: %v %+v", name, err, c)
 		}
 	}
-	base := func(oidcAdmin, admin string) string {
-		return strings.Replace(minimal, "gatewayClientID: gw-client}", "gatewayClientID: gw-client, "+oidcAdmin+"}", 1) + admin
+	withRole := func(oidcAdmin string) string {
+		return strings.Replace(minimal, "gatewayClientID: gw-client}", "gatewayClientID: gw-client, "+oidcAdmin+"}", 1)
 	}
+	base := func(oidcAdmin, admin string) string { return withRole(oidcAdmin) + salt + admin }
 	for name, in := range map[string]string{
 		"groups":          base("admin: {rolePath: groups, role: x}", ""),
 		"nested":          base("admin: {rolePath: realm_access.roles.extra, role: x}", ""),
 		"client-no-name":  base("admin: {rolePath: resource_access..roles, role: x}", ""),
-		"client-dot":      base("admin: {rolePath: resource_access.a.b.roles, role: x}", ""),
+		"client-blank":    base("admin: {rolePath: 'resource_access.a b.roles', role: x}", ""),
+		"no-salt":         withRole("admin: {rolePath: realm_access.roles, role: x}"),
 		"realm-wrong":     base("admin: {rolePath: realm_access.groups, role: x}", ""),
 		"no-role":         base("admin: {rolePath: realm_access.roles, role: ''}", ""),
 		"prom-userinfo":   minimal + "admin: {prometheusURL: 'http://u:p@prom:9090'}\n",

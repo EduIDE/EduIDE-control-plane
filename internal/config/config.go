@@ -49,8 +49,8 @@ type Admin struct {
 	Links         AdminLinks `json:"links,omitempty"`
 	// RateLimitPerMinute per admin user over all admin routes. Default 60.
 	RateLimitPerMinute int `json:"rateLimitPerMinute,omitempty"`
-	// ScalerInterval is the decision interval of the pool scaler. Set it when a scaler runs; the status then
-	// warns when the scaler wrote no Event for twice this time.
+	// ScalerInterval is the decision interval of the pool scaler. Set it when a scaler runs; with PrometheusURL the
+	// status then warns when the scaler's heartbeat metric is older than twice this time or missing.
 	ScalerInterval *metav1.Duration `json:"scalerInterval,omitempty"`
 }
 
@@ -112,7 +112,8 @@ type AdminRole struct {
 	Role string `json:"role"`
 }
 
-var rolePathRE = regexp.MustCompile(`^(realm_access\.roles|resource_access\.[A-Za-z0-9_-]+\.roles)$`)
+// A Keycloak client id may contain dots and URL characters, so the client part is any non-blank text.
+var rolePathRE = regexp.MustCompile(`^(realm_access\.roles|resource_access\.\S+\.roles)$`)
 
 type Workspaces struct {
 	StorageClassName string             `json:"storageClassName,omitempty"`
@@ -270,6 +271,10 @@ func (c *Config) validateAdmin() []error {
 		}
 		if strings.TrimSpace(a.Role) == "" {
 			errs = append(errs, errors.New("config: oidc.admin.role is required"))
+		}
+		// The admin API shows owners as a keyed hash; without a salt the hash of a user name is easy to reverse.
+		if c.Telemetry.UserSaltFile == "" {
+			errs = append(errs, errors.New("config: oidc.admin needs telemetry.userSaltFile (the key of the owner hash)"))
 		}
 	}
 	if u := c.Admin.PrometheusURL; u != "" {

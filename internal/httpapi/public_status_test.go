@@ -3,11 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -212,6 +215,40 @@ func TestPublicStatusCache(t *testing.T) {
 	now = now.Add(6 * time.Second)
 	if later, _ := publicGet(t, e); !later.UpdatedAt.After(first.UpdatedAt) {
 		t.Fatal("not refreshed after 15 s")
+	}
+}
+
+type countingReader struct {
+	client.Reader
+	workspaceLists atomic.Int32
+}
+
+func (c *countingReader) List(ctx context.Context, l client.ObjectList, opts ...client.ListOption) error {
+	if _, ok := l.(*v1alpha1.IDEWorkspaceList); ok {
+		c.workspaceLists.Add(1)
+		time.Sleep(20 * time.Millisecond) // a slow build, so the requests overlap
+	}
+	return c.Reader.List(ctx, l, opts...)
+}
+
+// Many requests at the moment the cache expires build the answer once.
+func TestPublicStatusNoStampede(t *testing.T) {
+	e := newAdminEnv(t, nil)
+	r := &countingReader{Reader: e.srv.r}
+	e.srv.r = r
+	var wg sync.WaitGroup
+	for i := range 20 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if rec := rawDoHdr(e, fmt.Sprintf("192.0.2.%d:1", i), ""); rec.Code != 200 {
+				t.Errorf("%d", rec.Code)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := r.workspaceLists.Load(); n != 1 {
+		t.Fatalf("built %d times", n)
 	}
 }
 

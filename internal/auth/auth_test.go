@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -143,8 +144,13 @@ func TestAdminRoles(t *testing.T) {
 	is := newIssuer(t)
 	claims := map[string]any{
 		"preferred_username": "alice", "aud": "landing", "groups": []string{"eduide-admin"},
-		"realm_access":    map[string]any{"roles": []string{"eduide-admin", "offline_access"}},
-		"resource_access": map[string]any{"landing": map[string]any{"roles": []string{"client-admin"}}},
+		"realm_access": map[string]any{"roles": []string{"eduide-admin", "offline_access"}},
+		"resource_access": map[string]any{
+			"landing":        map[string]any{"roles": []string{"client-admin"}},
+			"eduide.landing": map[string]any{"roles": []string{"dotted-admin"}},
+			"eduide":         map[string]any{"landing": map[string]any{"roles": []string{"nested"}}},
+			"stringy":        map[string]any{"roles": "eduide-admin"},
+		},
 	}
 	for name, tt := range map[string]struct {
 		admin *config.AdminRole
@@ -155,6 +161,8 @@ func TestAdminRoles(t *testing.T) {
 		"client role":                  {&config.AdminRole{RolePath: "resource_access.landing.roles", Role: "client-admin"}, []string{"client-admin"}},
 		"client not in token":          {&config.AdminRole{RolePath: "resource_access.other.roles", Role: "x"}, nil},
 		"groups claim is no role path": {&config.AdminRole{RolePath: "groups", Role: "eduide-admin"}, nil},
+		"client id with a dot":         {&config.AdminRole{RolePath: "resource_access.eduide.landing.roles", Role: "dotted-admin"}, []string{"dotted-admin"}},
+		"roles as a string":            {&config.AdminRole{RolePath: "resource_access.stringy.roles", Role: "eduide-admin"}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			v := NewOIDC(config.OIDC{IssuerURL: is.srv.URL, ClientIDs: []string{"landing"}, UserClaim: "preferred_username", Admin: tt.admin})
@@ -162,9 +170,21 @@ func TestAdminRoles(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(u.Roles) != len(tt.want) {
+			if !slices.Equal(u.Roles, tt.want) {
 				t.Fatalf("roles %v, want %v", u.Roles, tt.want)
 			}
 		})
+	}
+}
+
+// A token another client of the realm obtained carries the role but is not ours.
+func TestAdminRoleFromOtherClient(t *testing.T) {
+	is := newIssuer(t)
+	v := NewOIDC(config.OIDC{IssuerURL: is.srv.URL, ClientIDs: []string{"landing"}, UserClaim: "preferred_username",
+		Admin: &config.AdminRole{RolePath: "realm_access.roles", Role: "eduide-admin"}})
+	claims := map[string]any{"preferred_username": "alice", "aud": []string{"landing"}, "azp": "other-app",
+		"realm_access": map[string]any{"roles": []string{"eduide-admin"}}}
+	if _, err := v.Verify(context.Background(), is.token(t, is.srv.URL, claims)); err == nil {
+		t.Fatal("token of another client accepted")
 	}
 }

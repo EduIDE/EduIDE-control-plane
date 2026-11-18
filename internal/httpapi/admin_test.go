@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 const (
@@ -184,12 +187,32 @@ func TestAdminPrivacy(t *testing.T) {
 			}
 		}
 	}
-	// the owner appears as the hash only
+	// the owner appears as the keyed hash only, not as the unkeyed label hash anybody can compute from a user name
 	list := decode[AdminSessionList](t, e.do("GET", "/admin/sessions", "root", nil))
-	for _, s := range list.Items {
-		if len(s.OwnerHash) != 40 {
-			t.Errorf("owner hash %q", s.OwnerHash)
-		}
+	if a := list.Items[0]; a.OwnerHash != telemetry.UserID([]byte("salt"), "alice") || a.OwnerHash == v1alpha1.OwnerHash("alice") {
+		t.Errorf("owner hash %q", a.OwnerHash)
+	}
+	ws := decode[AdminWorkspaceList](t, e.do("GET", "/admin/workspaces", "root", nil))
+	if ws.Items[0].OwnerHash != list.Items[0].OwnerHash {
+		t.Errorf("workspace and session hash of alice differ: %q %q", ws.Items[0].OwnerHash, list.Items[0].OwnerHash)
+	}
+}
+
+// Repository names often end in the user name; the strip pattern may miss it, the admin title never shows it.
+func TestAdminTitleHidesOwner(t *testing.T) {
+	a := session("s-aaaaaaaaaa", "ab12cde", "java", "Ready")
+	a.Spec.Display = v1alpha1.Display{Source: "https://git.example.org/course/ex01-AB12CDE-v2.git"}
+	b := session("s-bbbbbbbbbb", "ab12cde", "java", "Ready")
+	b.Spec.Display = v1alpha1.Display{Title: "Lab of ab12cde"}
+	w := workspace("ws-w1", "ab12cde", "java")
+	w.Spec.Display = v1alpha1.Display{Title: "ab12cde"}
+	e := newAdminEnv(t, func(c *config.Config) { c.Overview.TitleStripPattern = "" }, a, b, w)
+	list := decode[AdminSessionList](t, e.do("GET", "/admin/sessions", "root", nil))
+	if deref(list.Items[0].Title) != "ex01-***-v2" || deref(list.Items[1].Title) != "Lab of ***" {
+		t.Fatalf("%q %q", deref(list.Items[0].Title), deref(list.Items[1].Title))
+	}
+	if ws := decode[AdminWorkspaceList](t, e.do("GET", "/admin/workspaces", "root", nil)); deref(ws.Items[0].Title) != "***" {
+		t.Fatalf("%q", deref(ws.Items[0].Title))
 	}
 }
 
@@ -326,31 +349,57 @@ func TestAdminPoolsAndStatus(t *testing.T) {
 	}
 }
 
+// scaler-silent comes from the scaler's heartbeat in Prometheus, never from missing events: a steady pool writes none.
 func TestAdminScalerSilent(t *testing.T) {
-	cfg := func(c *config.Config) { c.Admin.ScalerInterval = &metav1.Duration{Duration: time.Minute} }
-	silent := func(e *env) bool {
-		for _, w := range decode[AdminStatus](t, e.do("GET", "/admin/status", "root", nil)).Warnings {
-			if w.Code == ScalerSilent {
-				return true
+	interval := func(c *config.Config) { c.Admin.ScalerInterval = &metav1.Duration{Duration: time.Minute} }
+	silent := func(age string, mutate ...func(*config.Config)) *AdminWarning {
+		t.Helper()
+		f := newFakeProm(t, func(_, q string) (int, string) {
+			if !strings.Contains(q, "pool_scaler_last_decision_timestamp_seconds") {
+				return 400, `{"status":"error","error":"unexpected query"}`
+			}
+			if !strings.Contains(q, `namespace="`+testNS+`"`) {
+				t.Errorf("heartbeat query of all namespaces: %s", q)
+			}
+			res := ""
+			if age != "" {
+				res = vec(age)
+			}
+			return 200, `{"status":"success","data":{"resultType":"vector","result":[` + res + `]}}`
+		})
+		cfg := func(c *config.Config) {
+			c.Admin.PrometheusURL = f.srv.URL
+			for _, m := range mutate {
+				m(c)
 			}
 		}
-		return false
+		// no scaler event at all: a steady pool
+		e := newAdminEnv(t, cfg, adminPool("p", 0, 0, 4, 0, false))
+		for _, w := range decode[AdminStatus](t, e.do("GET", "/admin/status", "root", nil)).Warnings {
+			if w.Code == ScalerSilent {
+				return &w
+			}
+		}
+		return nil
 	}
-	pool := adminPool("p", 0, 0, 4, 0, false)
-	// last scaler event 3 minutes ago, interval 1 minute
-	if !silent(newAdminEnv(t, cfg, pool, event("e", "IDEPool", "p", scalerController, "Normal", "ScaledUp", "x", adminNow.Add(-3*time.Minute)))) {
-		t.Error("no warning for a silent scaler")
+	if w := silent("30", interval); w != nil {
+		t.Errorf("warning for a scaler that decided 30 s ago without writing events: %+v", w)
 	}
-	if silent(newAdminEnv(t, cfg, pool, event("e", "IDEPool", "p", scalerController, "Normal", "Held", "x", adminNow.Add(-90*time.Second)))) {
-		t.Error("warning within 2 intervals")
+	if w := silent("180", interval); w == nil || w.Since == nil || !w.Since.Equal(adminNow.Add(-3*time.Minute)) {
+		t.Errorf("no warning for a heartbeat 3 min old, interval 1 min: %+v", w)
 	}
-	// events of the operator do not count as scaler events
-	if !silent(newAdminEnv(t, cfg, pool, event("e", "IDEPool", "p", "eduide-operator", "Normal", "ScaledUp", "x", adminNow))) {
-		t.Error("operator event counted")
+	if w := silent("", interval); w == nil || w.Since != nil {
+		t.Errorf("no warning without scaler metrics: %+v", w)
 	}
-	// without a configured scaler there is nothing to warn about
-	if silent(newAdminEnv(t, nil, pool)) {
-		t.Error("warning without a scaler")
+	if w := silent("", func(*config.Config) {}); w != nil {
+		t.Errorf("warning without a configured scaler: %+v", w)
+	}
+	// without Prometheus there is no way to tell, so there is no warning, events or not
+	e := newAdminEnv(t, interval, adminPool("p", 0, 0, 4, 0, false), event("e", "IDEPool", "p", scalerController, "Normal", "ScaledUp", "x", adminNow.Add(-time.Hour)))
+	for _, w := range decode[AdminStatus](t, e.do("GET", "/admin/status", "root", nil)).Warnings {
+		if w.Code == ScalerSilent {
+			t.Errorf("warning without Prometheus: %+v", w)
+		}
 	}
 }
 
@@ -361,7 +410,7 @@ func TestAdminProblems(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 	ev := p.Events[0]
-	if deref(ev.Code) != "start-failed" || ev.Message != "image pull back-off" || deref(ev.Session) != "s-bbbbbbbbbb" || deref(ev.Template) != "java" || len(deref(ev.OwnerHash)) != 40 {
+	if deref(ev.Code) != "start-failed" || ev.Message != "image pull back-off" || deref(ev.Session) != "s-bbbbbbbbbb" || deref(ev.Template) != "java" || deref(ev.OwnerHash) != telemetry.UserID([]byte("salt"), "bob") {
 		t.Fatalf("%+v", ev)
 	}
 	if rec := e.do("GET", "/admin/problems?since=7d", "root", nil); rec.Code != 400 {
@@ -534,6 +583,14 @@ type fakeProm struct {
 	srv   *httptest.Server
 	calls atomic.Int32
 	auth  atomic.Value
+	mu    sync.Mutex
+	qs    []string
+}
+
+func (f *fakeProm) queries() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.qs)
 }
 
 func newFakeProm(t *testing.T, answer func(path, query string) (int, string)) *fakeProm {
@@ -542,6 +599,9 @@ func newFakeProm(t *testing.T, answer func(path, query string) (int, string)) *f
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.calls.Add(1)
 		f.auth.Store(r.Header.Get("Authorization") + r.Header.Get("Cookie"))
+		f.mu.Lock()
+		f.qs = append(f.qs, r.URL.Query().Get("query"))
+		f.mu.Unlock()
 		code, body := answer(r.URL.Path, r.URL.Query().Get("query"))
 		w.WriteHeader(code)
 		_, _ = w.Write([]byte(body))
@@ -633,6 +693,12 @@ func TestAdminWithPrometheus(t *testing.T) {
 	p := decode[AdminProblems](t, e.do("GET", "/admin/problems?since=1h", "root", nil))
 	if p.Codes == nil || len(*p.Codes) != 2 || (*p.Codes)[0].Code != "capacity-exhausted" || (*p.Codes)[0].Count != 9 || (*p.Codes)[1].Count != 4 {
 		t.Fatalf("codes %+v", p.Codes)
+	}
+	// every query of eduide_ series is limited to this deployment
+	for _, q := range f.queries() {
+		if strings.Contains(q, "eduide_") && strings.Count(q, `namespace="`+testNS+`"`) != strings.Count(q, "eduide_") {
+			t.Errorf("query not limited to the namespace: %s", q)
+		}
 	}
 	// no credentials, and a second request within the cache time asks nothing new
 	if a, _ := f.auth.Load().(string); a != "" {
