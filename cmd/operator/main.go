@@ -10,6 +10,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/discovery"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -46,15 +47,27 @@ func run(cfgPath string) error {
 	defer func() { _ = shutdown(context.Background()) }()
 	metrics.Registry.MustRegister(telemetry.OperatorMetrics...)
 
+	restCfg := ctrl.GetConfigOrDie()
+	dc, err := discovery.NewDiscoveryClientForConfig(restCfg)
+	if err != nil {
+		return err
+	}
+	if err := controller.CheckCRDs(dc); err != nil {
+		return err
+	}
 	managed := cache.ByObject{Label: labels.SelectorFromSet(labels.Set{v1.LabelManagedBy: v1.LabelManagedByValue})}
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(restCfg, ctrl.Options{
 		Scheme:                  controller.NewScheme(),
 		Metrics:                 metricsserver.Options{BindAddress: ":9464"},
 		HealthProbeBindAddress:  ":8081",
 		LeaderElection:          true,
 		LeaderElectionID:        "eduide-operator",
 		LeaderElectionNamespace: cfg.Namespace,
+		// The process exits right after the manager stops, so the next replica takes over at once on a rollout.
+		LeaderElectionReleaseOnCancel: true,
 		Cache: cache.Options{
+			// Managed fields are a large part of every pod and are never read.
+			DefaultTransform:  cache.TransformStripManagedFields(),
 			DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}},
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Pod{}:                   managed,

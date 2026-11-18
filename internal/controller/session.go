@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -38,9 +39,23 @@ const (
 	activityStep    = 5 * time.Minute
 	agentWaitLimit  = 2 * time.Minute
 	agentCallBudget = 5 * time.Second
+	// pollBudget is shorter than the claim budget, so unreachable agents hold workers only briefly.
+	pollBudget = 2 * time.Second
+	// startLimit fails a session whose pod does not become ready, for example on an image pull error.
+	startLimit = 10 * time.Minute
+	// failedRetention keeps a failed session so the landing page can read the error.
+	failedRetention = 10 * time.Minute
 )
 
-type sessionReconciler struct{ *deps }
+// lowPriority puts timeout polls and cleanups behind claims in the work queue.
+var lowPriority = new(handler.LowPriority)
+
+type sessionReconciler struct {
+	*deps
+	// readyWritten holds sessions whose Ready status this operator wrote but the cache does not show yet.
+	// A reconcile on the stale copy would claim the agent a second time.
+	readyWritten sync.Map
+}
 
 func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
 	// The service creates the data Secret right after the session, so its arrival wakes the session.
@@ -82,7 +97,15 @@ func startSpan(ctx context.Context, s *v1.IDESession, name string) (context.Cont
 func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	s := &v1.IDESession{}
 	if err := r.Get(ctx, req.NamespacedName, s); err != nil {
+		r.readyWritten.Delete(req.NamespacedName)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if _, ok := r.readyWritten.Load(req.NamespacedName); ok {
+		if s.Status.Phase == "" || s.Status.Phase == v1.SessionPending || s.Status.Phase == v1.SessionStarting {
+			// The status event follows in a moment and reconciles the session again.
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		r.readyWritten.Delete(req.NamespacedName)
 	}
 	ctx, span := startSpan(ctx, s, "session.reconcile")
 	defer span.End()
@@ -97,7 +120,7 @@ func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 	if s.Status.Phase == v1.SessionFailed {
-		return ctrl.Result{}, nil
+		return r.expire(ctx, s)
 	}
 	tmpl := &v1.IDETemplate{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.TemplateRef}, tmpl); err != nil {
@@ -160,12 +183,13 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 			return nil, ctrl.Result{}, r.patchStatus(ctx, orig, s)
 		}
 		claimName = ws.Status.ClaimName
-	} else if pod, err := r.tryClaim(ctx, s, tmpl, np); pod != nil || err != nil {
-		return pod, ctrl.Result{}, err
+	} else if pod, retry, err := r.tryClaim(ctx, s, tmpl, np); pod != nil || retry || err != nil {
+		// After a conflict the cache is behind; look again instead of starting cold.
+		return pod, ctrl.Result{Requeue: retry}, err //nolint:staticcheck // rate limited retry, no fixed delay
 	}
 
 	pod, err := r.createInstance(ctx, tmpl, s, r.sessionLabels(s, nil), claimName)
-	if apierrors.IsForbidden(err) {
+	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
 		// Quota is capacity pressure like an unschedulable pod (G8).
 		res, err := r.capacity(ctx, s, tmpl)
 		return nil, res, err
@@ -182,13 +206,15 @@ func (r *sessionReconciler) sessionLabels(s *v1.IDESession, extra map[string]str
 }
 
 // tryClaim takes an idle pool pod with one merge patch guarded by the resourceVersion (ADR 0009).
-func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, nodePool string) (*corev1.Pod, error) {
+// retry is true when a candidate was in conflict: the cache is behind and may still hold an idle pod.
+func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, nodePool string) (*corev1.Pod, bool, error) {
 	var pods corev1.PodList
 	err := r.List(ctx, &pods, client.InNamespace(s.Namespace), client.HasLabels{v1.LabelPool},
 		client.MatchingLabels{v1.LabelTemplate: tmpl.Name, v1.LabelState: v1.StateIdle, v1.LabelComponent: v1.ComponentSession})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	conflict := false
 	// Under pressure the claim does not wait for pods that are still starting.
 	for _, c := range claim.Candidates(pods.Items, !r.pressure.Active(nodePool)) {
 		pod, before := c.DeepCopy(), c.DeepCopy()
@@ -197,21 +223,27 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 		}
 		pod.OwnerReferences = nil
 		if err := controllerutil.SetControllerReference(s, pod, r.scheme); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		err := r.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.FieldOwner(fieldManager))
 		switch {
-		case apierrors.IsConflict(err) || apierrors.IsNotFound(err):
+		case apierrors.IsConflict(err):
+			conflict = true
+			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
+		case apierrors.IsNotFound(err):
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
 		case err != nil:
-			return nil, err
+			return nil, false, err
 		default:
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "claimed").Inc()
-			return pod, nil
+			return pod, false, nil
 		}
 	}
+	if conflict {
+		return nil, true, nil
+	}
 	telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
-	return nil, nil
+	return nil, false, nil
 }
 
 // progress moves a session with a pod through Starting to Ready.
@@ -252,9 +284,16 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	if c := meta.FindStatusCondition(st.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
 	}
+	// Also on a ready pod: a create that failed half way leaves the instance without its route.
+	if err := r.ensureChildren(ctx, pod); err != nil {
+		return ctrl.Result{}, err
+	}
 	if !claim.Ready(pod) {
-		if err := r.ensureChildren(ctx, pod); err != nil {
-			return ctrl.Result{}, err
+		switch {
+		case !claim.Usable(pod):
+			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance stopped")
+		case now.Sub(st.Timestamps.Claimed.Time) > startLimit:
+			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance did not become ready in time")
 		}
 		return ctrl.Result{RequeueAfter: time.Minute}, r.patchStatus(ctx, orig, s)
 	}
@@ -306,15 +345,18 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	if err := r.patchStatus(ctx, orig, s); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})
 	strategy := string(st.StartStrategy)
 	telemetry.SessionPhase.WithLabelValues("claim", strategy).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
 	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready").Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
 	if s.Spec.WorkspaceRef != "" {
-		r.touchWorkspace(ctx, s)
+		if err := r.touchWorkspace(ctx, s); err != nil {
+			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
+		}
 	}
-	return ctrl.Result{RequeueAfter: r.jitter()}, nil
+	return ctrl.Result{RequeueAfter: r.jitter(), Priority: lowPriority}, nil
 }
 
 func readyTime(p *corev1.Pod) metav1.Time {
@@ -373,10 +415,12 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 	if st.LastActivity != nil {
 		last = st.LastActivity.Time
 	}
+	polled := false
 	if terr == nil {
-		cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
+		cctx, cancel := context.WithTimeout(ctx, pollBudget)
 		as, err := r.agent.Status(cctx, url, token)
 		cancel()
+		polled = err == nil
 		if err == nil && as.LastActivity != nil {
 			if as.LastActivity.Sub(last) > activityStep || st.LastActivity == nil {
 				t := metav1.NewTime(*as.LastActivity)
@@ -388,9 +432,19 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 	if last.After(base) {
 		base = last
 	}
+	if !polled {
+		// Missing data alone never ends a session for idleness (ADR 0016); the maximum lifetime still applies.
+		base = now
+	}
+	to := resolveTimeouts(tmpl)
 	idleWarned := meta.IsStatusConditionTrue(st.Conditions, condIdleWarned)
+	if idleWarned && now.Before(base.Add(to.warning)) {
+		// The user came back, so the next idle period gets its own warning.
+		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condIdleWarned, Status: metav1.ConditionFalse, Reason: "Active", LastTransitionTime: metav1.NewTime(now)})
+		idleWarned = false
+	}
 	maxWarned := meta.IsStatusConditionTrue(st.Conditions, condMaxWarned)
-	d := decide(now, s.CreationTimestamp.Time, base, resolveTimeouts(tmpl), idleWarned, maxWarned)
+	d := decide(now, s.CreationTimestamp.Time, base, to, idleWarned, maxWarned)
 
 	switch d.act {
 	case actEnd:
@@ -401,7 +455,7 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 			kind, cond, msg = agentapi.MaxWarning, condMaxWarned, "This session reaches its maximum lifetime soon."
 		}
 		if terr == nil {
-			cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
+			cctx, cancel := context.WithTimeout(ctx, pollBudget)
 			err := r.agent.Notify(cctx, url, token, agentapi.Notice{Kind: kind, Message: msg, At: &d.at})
 			cancel()
 			if err == nil {
@@ -416,7 +470,7 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 	if d.act != actNone {
 		wait = min(wait, 5*time.Second)
 	}
-	return ctrl.Result{RequeueAfter: max(wait, time.Second)}, nil
+	return ctrl.Result{RequeueAfter: max(wait, time.Second), Priority: lowPriority}, nil
 }
 
 // capacity handles a session pod that cannot be placed (G8): evict the oldest idle pod of the node pool and fail after exhaustedAfter.
@@ -470,17 +524,31 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 		strategy = "none"
 	}
 	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed").Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	return r.expire(ctx, s)
+}
 
+// expire discards the pods of a failed session and deletes the session after failedRetention.
+func (r *sessionReconciler) expire(ctx context.Context, s *v1.IDESession) (ctrl.Result, error) {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods, client.InNamespace(s.Namespace), client.MatchingLabels{v1.LabelSession: s.Name}); err != nil {
 		return ctrl.Result{}, err
 	}
 	for i := range pods.Items {
+		if pods.Items[i].DeletionTimestamp != nil {
+			continue
+		}
 		if err := r.Delete(ctx, &pods.Items[i]); client.IgnoreNotFound(err) != nil {
 			return ctrl.Result{}, err
 		}
 	}
-	return ctrl.Result{}, nil
+	failedAt := s.CreationTimestamp.Time
+	if c := meta.FindStatusCondition(s.Status.Conditions, v1.ConditionReady); c != nil && c.Status == metav1.ConditionFalse {
+		failedAt = c.LastTransitionTime.Time
+	}
+	if left := failedAt.Add(failedRetention).Sub(r.clock.Now()); left > 0 {
+		return ctrl.Result{RequeueAfter: left, Priority: lowPriority}, nil
+	}
+	return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, s))
 }
 
 // finalize records the workspace use. The pod goes through garbage collection.
@@ -489,7 +557,9 @@ func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctr
 		return ctrl.Result{}, nil
 	}
 	if s.Spec.WorkspaceRef != "" {
-		r.touchWorkspace(ctx, s)
+		if err := r.touchWorkspace(ctx, s); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	orig := s.DeepCopy()
 	controllerutil.RemoveFinalizer(s, v1.SessionFinalizer)
@@ -497,17 +567,15 @@ func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctr
 }
 
 // touchWorkspace sets lastUsed to now (G19). A missing workspace is not an error.
-func (r *sessionReconciler) touchWorkspace(ctx context.Context, s *v1.IDESession) {
+func (r *sessionReconciler) touchWorkspace(ctx context.Context, s *v1.IDESession) error {
 	ws := &v1.IDEWorkspace{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.WorkspaceRef}, ws); err != nil {
-		return
+		return client.IgnoreNotFound(err)
 	}
 	orig := ws.DeepCopy()
 	t := metav1.NewTime(r.clock.Now())
 	ws.Status.LastUsed = &t
-	if err := r.patchStatus(ctx, orig, ws); err != nil {
-		slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", ws.Name, "error", err.Error())
-	}
+	return client.IgnoreNotFound(r.patchStatus(ctx, orig, ws))
 }
 
 // camel turns an error code such as capacity-exhausted into a condition reason such as CapacityExhausted.

@@ -38,9 +38,10 @@ const (
 )
 
 var (
-	k8s   client.Client
-	clk   = &offsetClock{}
-	agent = &fakeAgent{}
+	k8s     client.Client
+	restCfg *rest.Config
+	clk     = &offsetClock{}
+	agent   = &fakeAgent{}
 )
 
 // offsetClock is the wall clock plus an offset that tests move.
@@ -67,6 +68,15 @@ type fakeAgent struct {
 	claims  []agentapi.ClaimRequest
 	notices []agentapi.Notice
 	tokens  []string
+	// activity is the lastActivity /v1/status reports; down makes /v1/status fail.
+	activity *time.Time
+	down     bool
+}
+
+func (a *fakeAgent) set(f func(*fakeAgent)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	f(a)
 }
 
 func (a *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -79,7 +89,11 @@ func (a *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&c)
 		a.claims = append(a.claims, c)
 	case "/v1/status":
-		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: true, Ready: true})
+		if a.down {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: true, Ready: true, LastActivity: a.activity})
 	case "/v1/notify":
 		var n agentapi.Notice
 		_ = json.NewDecoder(r.Body).Decode(&n)
@@ -97,6 +111,18 @@ func (a *fakeAgent) claimFor(session string) *agentapi.ClaimRequest {
 		}
 	}
 	return nil
+}
+
+func (a *fakeAgent) claimCount(session string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for i := range a.claims {
+		if a.claims[i].Session == session {
+			n++
+		}
+	}
+	return n
 }
 
 func (a *fakeAgent) noticeCount() int {
@@ -130,7 +156,8 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-func runSuite(restCfg *rest.Config, m *testing.M) int {
+func runSuite(c *rest.Config, m *testing.M) int {
+	restCfg = c
 	cfg, err := config.Parse([]byte(`
 deployment: test
 namespace: ` + testNS + `

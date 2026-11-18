@@ -102,12 +102,19 @@ func Surplus(idle []corev1.Pod, n int) []corev1.Pod {
 	return s[:min(n, len(s))]
 }
 
-// OldestIdle is the oldest usable idle pod of a node pool (label value, "" for none), or nil.
+// OldestIdle is the idle pod of a node pool (label value, "" for none) to evict, or nil:
+// the oldest one on a node, because only that frees node capacity, else the oldest pending one (quota).
 func OldestIdle(pods []corev1.Pod, nodePool string) *corev1.Pod {
 	var best *corev1.Pod
 	idle := Idle(pods)
+	better := func(a, b *corev1.Pod) bool {
+		if (a.Spec.NodeName != "") != (b.Spec.NodeName != "") {
+			return a.Spec.NodeName != ""
+		}
+		return older(a, b)
+	}
 	for i := range idle {
-		if idle[i].Labels[v1.LabelNodePool] == nodePool && (best == nil || older(&idle[i], best)) {
+		if idle[i].Labels[v1.LabelNodePool] == nodePool && (best == nil || better(&idle[i], best)) {
 			best = &idle[i]
 		}
 	}

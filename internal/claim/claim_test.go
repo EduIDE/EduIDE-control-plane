@@ -123,6 +123,16 @@ func TestOldestIdle(t *testing.T) {
 	if p := OldestIdle(pods, "z"); p != nil {
 		t.Errorf("z: %v", p)
 	}
+	// A pod on a node goes before an older pending one: only it frees node capacity.
+	pending, placed := pod("pending", 0, false, v1.StateIdle), pod("placed", 5, true, v1.StateIdle)
+	pending.Labels[v1.LabelNodePool], placed.Labels[v1.LabelNodePool] = "x", "x"
+	placed.Spec.NodeName = "node-1"
+	if p := OldestIdle([]corev1.Pod{pending, placed}, "x"); p == nil || p.Name != "placed" {
+		t.Errorf("placed first: %v", p)
+	}
+	if p := OldestIdle([]corev1.Pod{pending}, "x"); p == nil || p.Name != "pending" {
+		t.Errorf("pending only: %v", p)
+	}
 }
 
 func TestNewInstanceID(t *testing.T) {

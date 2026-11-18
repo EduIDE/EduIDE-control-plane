@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
@@ -264,10 +265,26 @@ func TestWarmClaimAndConflict(t *testing.T) {
 		st := sessionStatus(name)
 		return st.Phase == v1.SessionReady && st.Timestamps.Claimed != nil
 	})
+	// The agent gets the launch data once, also when later reconciles read a cache that lags behind.
+	time.Sleep(500 * time.Millisecond)
+	winnerName := "s-w1"
+	if winner.Instance == s2.Instance {
+		winnerName = "s-w2"
+	}
+	if n := agent.claimCount(winnerName); n != 1 {
+		t.Errorf("agent claimed %d times, want once", n)
+	}
 	// The pool refills its idle pod and counts the claimed one.
+	// The loser either starts cold or claims the refill pod while it starts.
+	fromPool := int32(0)
+	for _, s := range []v1.IDESessionStatus{s1, s2} {
+		if s.StartStrategy != v1.StartCold {
+			fromPool++
+		}
+	}
 	eventually(t, "pool refilled", func() bool {
 		_ = get(pool)
-		return pool.Status.Claimed == 1 && pool.Status.IdleStarting+pool.Status.IdleReady >= 1
+		return pool.Status.Claimed == fromPool && pool.Status.IdleStarting+pool.Status.IdleReady >= 1
 	})
 }
 
@@ -446,17 +463,116 @@ func TestIdleWarningAndTimeout(t *testing.T) {
 }
 
 // poke changes an annotation so the controller reconciles now: requeue timers do not follow the test clock.
-func poke(ws *v1.IDEWorkspace) {
+func poke(o client.Object) {
 	for {
-		if get(ws) != nil {
+		if get(o) != nil {
 			return
 		}
-		if ws.Annotations == nil {
-			ws.Annotations = map[string]string{}
+		a := o.GetAnnotations()
+		if a == nil {
+			a = map[string]string{}
 		}
-		ws.Annotations["test/poke"] = time.Now().String()
-		if k8s.Update(context.Background(), ws) == nil {
+		a["test/poke"] = time.Now().String()
+		o.SetAnnotations(a)
+		if k8s.Update(context.Background(), o) == nil {
 			return
 		}
+	}
+}
+
+func TestFailedSessionIsDeletedAfterRetention(t *testing.T) {
+	requireEnv(t)
+	createSession(t, "s-gone", "no-such-template")
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-gone", Namespace: testNS}}
+	eventually(t, "failed", func() bool { return sessionStatus("s-gone").Phase == v1.SessionFailed })
+	poke(s)
+	time.Sleep(300 * time.Millisecond)
+	if notFound(s) {
+		t.Fatal("the failed session is gone before the landing page could read the error")
+	}
+	clk.Step(failedRetention + time.Second)
+	defer clk.Step(-failedRetention - time.Second)
+	poke(s)
+	eventually(t, "failed session deleted", func() bool { return notFound(s) })
+}
+
+func TestStoppedPodFailsSession(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-stop"))
+	createSession(t, "s-stop", "tpl-stop")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-stop"); return st.PodName != "" })
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Status.Phase = corev1.PodFailed
+	if err := k8s.Status().Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "start-failed", func() bool {
+		st = sessionStatus("s-stop")
+		return st.Phase == v1.SessionFailed && st.ErrorCode == v1.ErrorStartFailed
+	})
+}
+
+func TestIdleWarningRearmsAfterActivity(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-rearm")
+	tm.Spec.Timeouts = v1.Timeouts{Idle: &metav1.Duration{Duration: 3 * time.Second}, Warning: &metav1.Duration{Duration: time.Second}}
+	mustCreate(t, tm)
+	createSession(t, "s-rearm", "tpl-rearm")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-rearm"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-rearm").Phase == v1.SessionReady })
+	before := agent.noticeCount()
+	eventually(t, "first warning", func() bool { return agent.noticeCount() > before })
+	defer agent.set(func(a *fakeAgent) { a.activity = nil })
+	eventually(t, "warning re-armed", func() bool {
+		at := clk.Now()
+		agent.set(func(a *fakeAgent) { a.activity = &at })
+		return meta.IsStatusConditionFalse(sessionStatus("s-rearm").Conditions, condIdleWarned)
+	})
+	eventually(t, "second warning", func() bool { return agent.noticeCount() >= before+2 })
+	eventually(t, "session ended", func() bool {
+		return notFound(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-rearm", Namespace: testNS}})
+	})
+}
+
+func TestUnreachableAgentDoesNotEndIdleSession(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-down")
+	tm.Spec.Timeouts = v1.Timeouts{Idle: &metav1.Duration{Duration: 2 * time.Second}, Warning: &metav1.Duration{Duration: time.Second}}
+	mustCreate(t, tm)
+	createSession(t, "s-down", "tpl-down")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-down"); return st.PodName != "" })
+	agent.set(func(a *fakeAgent) { a.down = true })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-down").Phase == v1.SessionReady })
+	time.Sleep(3 * time.Second)
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-down", Namespace: testNS}}
+	if notFound(s) {
+		t.Fatal("the session ended on missing activity data")
+	}
+	agent.set(func(a *fakeAgent) { a.down = false })
+	eventually(t, "session ended once the agent answers", func() bool { return notFound(s) })
+}
+
+func TestPoolExpectations(t *testing.T) {
+	r := &poolReconciler{}
+	key := types.NamespacedName{Namespace: testNS, Name: "p"}
+	now := time.Now()
+	r.expect(key, "a", now)
+	r.expect(key, "b", now)
+	if n := r.unseen(key, nil, now); n != 2 {
+		t.Fatalf("before the cache shows them: %d", n)
+	}
+	if n := r.unseen(key, []corev1.Pod{{ObjectMeta: metav1.ObjectMeta{Name: "a"}}}, now); n != 1 {
+		t.Fatalf("after the cache shows a: %d", n)
+	}
+	if n := r.unseen(key, nil, now.Add(expectTTL+time.Second)); n != 0 {
+		t.Fatalf("after the TTL: %d", n)
 	}
 }

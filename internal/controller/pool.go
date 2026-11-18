@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,7 +25,44 @@ import (
 // maxCreatesPerPass bounds the burst of one pool reconcile; the pool is requeued for the rest.
 const maxCreatesPerPass = 50
 
-type poolReconciler struct{ *deps }
+// expectTTL bounds how long a created pod counts as idle before the cache shows it.
+const expectTTL = 30 * time.Second
+
+type poolReconciler struct {
+	*deps
+	mu sync.Mutex
+	// created holds pods this reconciler created per pool, until the cache shows them.
+	// Without it a reconcile on a cache that lags behind its own creates fills the pool twice.
+	created map[types.NamespacedName]map[string]time.Time
+}
+
+// unseen forgets the created pods the cache shows and returns how many it does not show yet.
+func (r *poolReconciler) unseen(pool types.NamespacedName, pods []corev1.Pod, now time.Time) int32 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	m := r.created[pool]
+	for i := range pods {
+		delete(m, pods[i].Name)
+	}
+	for name, t := range m {
+		if now.Sub(t) > expectTTL {
+			delete(m, name)
+		}
+	}
+	return int32(len(m)) //nolint:gosec // bounded by maxCreatesPerPass
+}
+
+func (r *poolReconciler) expect(pool types.NamespacedName, pod string, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.created == nil {
+		r.created = map[types.NamespacedName]map[string]time.Time{}
+	}
+	if r.created[pool] == nil {
+		r.created[pool] = map[string]time.Time{}
+	}
+	r.created[pool][pod] = now
+}
 
 func (r *poolReconciler) setup(mgr ctrl.Manager) error {
 	// Pods are mapped by label, not by owner: a claimed pod is owned by its session but still counts for the pool.
@@ -97,8 +135,9 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	target := claim.EffectiveIdle(pool.Spec.MinIdle, pool.Spec.TargetIdle, pool.Spec.MaxInstances, claimed, underPressure)
 	res := ctrl.Result{}
 	fresh := map[string]bool{}
+	pending := r.unseen(req.NamespacedName, all.Items, r.clock.Now())
 
-	switch have := int32(len(idle)); { //nolint:gosec // bounded by maxInstances
+	switch have := int32(len(idle)) + pending; { //nolint:gosec // bounded by maxInstances
 	case have < target:
 		n := min(int(target-have), maxCreatesPerPass)
 		for range n {
@@ -106,6 +145,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			r.expect(req.NamespacedName, pod.Name, r.clock.Now())
 			idle = append(idle, *pod)
 			fresh[pod.Name] = true
 		}
@@ -129,7 +169,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		idle = kept
 	}
 
-	var ready, starting int32
+	ready, starting := int32(0), pending
 	for _, p := range idle {
 		if claim.Ready(&p) {
 			ready++

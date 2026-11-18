@@ -102,6 +102,10 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			st.ExpiredAt = &t
 		}
 		if gone := st.ExpiredAt.Add(r.cfg.Workspaces.Grace.Duration); !now.Before(gone) {
+			// The cache can miss a session created a moment ago, so ask the API server before deleting.
+			if used, err := r.usedLive(ctx, ws); err != nil || used {
+				return ctrl.Result{RequeueAfter: time.Second}, err
+			}
 			// The PVC follows through its owner reference.
 			return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, ws))
 		} else {
@@ -109,6 +113,20 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 	}
 	return res, r.patchStatus(ctx, orig, ws)
+}
+
+// usedLive reports whether a session that has not failed uses the workspace, read from the API server.
+func (r *workspaceReconciler) usedLive(ctx context.Context, ws *v1.IDEWorkspace) (bool, error) {
+	var l v1.IDESessionList
+	if err := r.reader.List(ctx, &l, client.InNamespace(ws.Namespace)); err != nil {
+		return false, err
+	}
+	for _, s := range l.Items {
+		if s.Spec.WorkspaceRef == ws.Name && s.Status.Phase != v1.SessionFailed {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (r *workspaceReconciler) retention(ws *v1.IDEWorkspace, t *v1.IDETemplate) time.Duration {
