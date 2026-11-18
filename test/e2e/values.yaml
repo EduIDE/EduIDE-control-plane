@@ -1,0 +1,78 @@
+# Values of the eduide-control-plane chart for the e2e cluster.
+# Hosts, issuer and client match test/e2e/realm.json and test/e2e/manifests/gateway.yaml.
+image:
+  registry: ghcr.io/eduide/eduide-control-plane
+  tag: e2e
+  pullPolicy: Never
+config:
+  deployment: e2e
+  hosts:
+    service: ide.e2e.test
+    instance: instance.ide.e2e.test
+    webview: webview.instance.ide.e2e.test
+  gateway:
+    name: eduide
+    namespace: eduide-e2e
+  oidc:
+    issuerURL: https://keycloak.e2e.test/realms/eduide
+    clientIDs: [eduide-landing]
+    gatewayClientID: eduide-gateway
+  sessionsPerUser: 3
+  allowedHosts: [git.example.org, artemis.example.org]
+  placement:
+    nodePoolLabel: e2e.eduide.test/node-pool
+  capacity:
+    exhaustedAfter: 20s
+  rateLimit:
+    launchesPerMinute: 1000
+oidc:
+  clientSecretName: e2e-gateway-client
+# Session pods are the fake IDE. Names are used by the tests:
+#   plain      no pool                       (matrix: none and volume without pool, idempotency, limit, gateway auth)
+#   warm       pool of 2                     (matrix: none with pool, volume with pool)
+#   short      short timeouts, no pool       (idle timeout)
+#   cap-a/b    pool of 2 in node pool a/b    (capacity pressure)
+#   cap-a-big  cannot be scheduled in a      (capacity pressure)
+templates:
+  - name: plain
+    spec: &tpl
+      displayName: Plain
+      image: ghcr.io/eduide/eduide-control-plane/fake-ide:e2e
+      imagePullPolicy: Never
+      port: 3000
+      resources:
+        requests: {cpu: 10m, memory: 16Mi}
+        limits: {memory: 64Mi}
+      injectableKeys:
+        - {name: GIT_URI, source: Request, format: HTTPSURL}
+        - {name: ARTEMIS_URL, source: Request, format: HTTPSURL}
+        - {name: ARTEMIS_TOKEN, source: Request, format: Token}
+        - {name: GIT_USER, source: UserName}
+        - {name: GIT_MAIL, source: UserEmail}
+      persistence:
+        allowed: [none, volume]
+        default: none
+        mountPath: /home/project
+  - name: warm
+    spec: *tpl
+    pool: {minIdle: 2, targetIdle: 2, maxInstances: 6}
+  - name: short
+    spec:
+      <<: *tpl
+      timeouts: {idle: 30s, warning: 15s, max: 10m}
+  - name: cap-a
+    spec:
+      <<: *tpl
+      placement: {nodeSelector: {e2e.eduide.test/node-pool: pool-a}}
+    pool: {minIdle: 2, targetIdle: 2, maxInstances: 4}
+  - name: cap-b
+    spec:
+      <<: *tpl
+      placement: {nodeSelector: {e2e.eduide.test/node-pool: pool-b}}
+    pool: {minIdle: 2, targetIdle: 2, maxInstances: 4}
+  - name: cap-a-big
+    spec:
+      <<: *tpl
+      resources:
+        requests: {cpu: "1000", memory: 16Mi}
+      placement: {nodeSelector: {e2e.eduide.test/node-pool: pool-a}}

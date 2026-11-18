@@ -1,0 +1,38 @@
+# Keycloak in dev mode with an imported realm. State is lost with the pod.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: keycloak, namespace: eduide-e2e}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: keycloak}}
+  template:
+    metadata: {labels: {app: keycloak}}
+    spec:
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.4
+          args: [start-dev, --import-realm]
+          env:
+            - {name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin}
+            - {name: KC_BOOTSTRAP_ADMIN_PASSWORD, value: admin}
+            - {name: KC_HOSTNAME, value: "https://keycloak.e2e.test"}
+            - {name: KC_HTTP_ENABLED, value: "true"}
+            - {name: KC_PROXY_HEADERS, value: xforwarded}
+            - {name: KC_HEALTH_ENABLED, value: "true"}
+          ports: [{containerPort: 8080, name: http}]
+          readinessProbe:
+            httpGet: {path: /health/ready, port: 9000}
+            periodSeconds: 5
+            failureThreshold: 60
+          resources: {requests: {cpu: 100m, memory: 512Mi}}
+          volumeMounts: [{name: realm, mountPath: /opt/keycloak/data/import}]
+      volumes:
+        - name: realm
+          configMap: {name: keycloak-realm}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: keycloak, namespace: eduide-e2e}
+spec:
+  selector: {app: keycloak}
+  ports: [{name: http, port: 8080, targetPort: 8080}]
