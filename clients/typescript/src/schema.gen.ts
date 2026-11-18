@@ -91,6 +91,11 @@ export interface paths {
         };
         get: operations["listWorkspaces"];
         put?: never;
+        /**
+         * @description Get-or-create: the workspace name is derived from user, template and `display.source`, so a repeated
+         *     request returns the existing workspace (also with 201). Fails with `persistence-not-allowed` when the
+         *     template does not allow persistence `volume`, and with `template-not-found` for an unknown template.
+         */
         post: operations["createWorkspace"];
         delete?: never;
         options?: never;
@@ -396,6 +401,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description No session of the calling user has this name (`not-found`). Sessions of other users are not found either. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             default: components["responses"]["Problem"];
         };
     };
@@ -456,7 +470,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description New workspace. */
+            /** @description The new or existing workspace. */
             201: {
                 headers: {
                     [name: string]: unknown;

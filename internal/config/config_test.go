@@ -32,9 +32,10 @@ func TestParseDefaults(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	for name, in := range map[string]string{
-		"missing":  "deployment: x\n",
-		"unknown":  minimal + "bogus: 1\n",
-		"no-limit": minimal + "sessionsPerUser: -1\n",
+		"missing":   "deployment: x\n",
+		"unknown":   minimal + "bogus: 1\n",
+		"no-limit":  minimal + "sessionsPerUser: -1\n",
+		"bad-strip": minimal + "overview: {titleStripPattern: '(['}\n",
 	} {
 		if _, err := Parse([]byte(in)); err == nil {
 			t.Errorf("%s: want error", name)
@@ -43,5 +44,12 @@ func TestParseRejects(t *testing.T) {
 	_, err := Parse([]byte("deployment: x\n"))
 	if !strings.Contains(err.Error(), "hosts.instance") {
 		t.Errorf("error should name missing field: %v", err)
+	}
+}
+
+func TestParseOverview(t *testing.T) {
+	c, err := Parse([]byte(minimal + "overview: {titleStripPattern: '-[a-z]{2}[0-9]{2}[a-z]{3}$'}\n"))
+	if err != nil || c.Overview.TitleStripPattern != "-[a-z]{2}[0-9]{2}[a-z]{3}$" {
+		t.Fatalf("%v %+v", err, c.Overview)
 	}
 }

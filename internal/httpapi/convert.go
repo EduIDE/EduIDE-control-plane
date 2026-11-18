@@ -91,26 +91,25 @@ func templateToAPI(t *v1alpha1.IDETemplate, warm bool) Template {
 	return out
 }
 
-// userSuffix matches the user abbreviation some Git hosts append to repository names, e.g. "-ab12cde".
-var userSuffix = regexp.MustCompile(`-[a-z]{2}[0-9]{2}[a-z]{3}$`)
-
 // deriveTitle is the overview title for a display source (G15): the last path segment
-// without ".git" and without a user suffix.
-func deriveTitle(source string) string {
+// without ".git" and without matches of strip (config overview.titleStripPattern, may be nil).
+func deriveTitle(source string, strip *regexp.Regexp) string {
 	s := strings.TrimRight(source, "/")
 	if i := strings.LastIndexAny(s, "/:"); i >= 0 {
 		s = s[i+1:]
 	}
 	s = strings.TrimSuffix(s, ".git")
-	if t := userSuffix.ReplaceAllString(s, ""); t != "" {
-		s = t
+	if strip != nil {
+		if t := strip.ReplaceAllString(s, ""); t != "" {
+			s = t
+		}
 	}
 	return s
 }
 
-func titleOf(d v1alpha1.Display) string {
+func titleOf(d v1alpha1.Display, strip *regexp.Regexp) string {
 	if d.Title != "" {
 		return d.Title
 	}
-	return deriveTitle(d.Source)
+	return deriveTitle(d.Source, strip)
 }

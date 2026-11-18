@@ -165,8 +165,11 @@ func validateDisplay(d *Display) *apiError {
 		if len(*d.Source) > 2048 {
 			return problem(CodeInvalidInput, "display.source is longer than 2048 characters")
 		}
-		if u, err := url.Parse(*d.Source); err == nil && (u.User != nil || u.RawQuery != "" || u.Fragment != "") {
-			return problem(CodeInvalidInput, "display.source must not carry credentials, query or fragment")
+		// Clients may render the source as a link, so only plain http(s) URLs (no javascript: or data:).
+		u, err := url.Parse(*d.Source)
+		if *d.Source != "" && (err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" ||
+			u.User != nil || u.RawQuery != "" || u.Fragment != "") {
+			return problem(CodeInvalidInput, "display.source must be an http(s) URL without credentials, query or fragment")
 		}
 	}
 	return nil

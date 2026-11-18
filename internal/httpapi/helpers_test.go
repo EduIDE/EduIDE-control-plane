@@ -45,6 +45,7 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Namespace: testNS, SessionsPerUser: 3, AllowedHosts: []string{"git.example.org"},
 		RateLimit: config.RateLimit{LaunchesPerMinute: 100},
+		Overview:  config.Overview{TitleStripPattern: `-[a-z]{2}[0-9]{2}[a-z]{3}$`},
 	}
 }
 
@@ -82,7 +83,7 @@ type env struct {
 func newEnv(t *testing.T, objs ...client.Object) *env {
 	t.Helper()
 	k := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(append([]client.Object{javaTemplate()}, objs...)...).Build()
-	srv := NewServer(testConfig(), k, k, NewHub())
+	srv := NewServer(testConfig(), k, k, NewHub(), []byte("salt"))
 	return &env{t: t, srv: srv, handler: srv.Handler(verifier), k: k}
 }
 

@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
 
@@ -58,11 +59,14 @@ func (o *OIDC) init(ctx context.Context) (*oidc.IDTokenVerifier, error) {
 	if o.verifier != nil {
 		return o.verifier, nil
 	}
+	// The lock is held during discovery; a bound keeps a slow issuer from queueing every request.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	p, err := oidc.NewProvider(ctx, o.cfg.IssuerURL)
 	if err != nil {
 		return nil, err
 	}
-	// The audience is checked below: accept azp or any aud.
+	// The audience is checked below: the azp, or without azp any aud, must be one of ours.
 	o.verifier = p.Verifier(&oidc.Config{SkipClientIDCheck: true})
 	return o.verifier, nil
 }
@@ -80,10 +84,12 @@ func (o *OIDC) Verify(ctx context.Context, raw string) (User, error) {
 	if err := tok.Claims(&claims); err != nil {
 		return User{}, err
 	}
-	azp, _ := claims["azp"].(string)
-	if !slices.ContainsFunc(append([]string{azp}, tok.Audience...), func(a string) bool {
-		return a != "" && slices.Contains(o.cfg.ClientIDs, a)
-	}) {
+	// A token another client of the realm obtained (its azp) is never ours, even if it lists our client in aud.
+	accepted := tok.Audience
+	if azp, _ := claims["azp"].(string); azp != "" {
+		accepted = []string{azp}
+	}
+	if !slices.ContainsFunc(accepted, func(a string) bool { return slices.Contains(o.cfg.ClientIDs, a) }) {
 		return User{}, errors.New("token audience not accepted")
 	}
 	str := func(k string) string { s, _ := claims[k].(string); return s }

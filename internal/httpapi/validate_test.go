@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -65,6 +66,10 @@ func TestValidatePattern(t *testing.T) {
 }
 
 func TestDeriveTitle(t *testing.T) {
+	strip := regexp.MustCompile(`-[a-z]{2}[0-9]{2}[a-z]{3}$`)
+	if got := deriveTitle("https://git.example.org/course/ex01-ab12cde.git", nil); got != "ex01-ab12cde" {
+		t.Errorf("without a strip pattern got %q", got)
+	}
 	tests := map[string]string{
 		"https://git.example.org/course/ex01-ab12cde.git": "ex01",
 		"https://git.example.org/course/project":          "project",
@@ -74,7 +79,7 @@ func TestDeriveTitle(t *testing.T) {
 		"":                                                "",
 	}
 	for in, want := range tests {
-		if got := deriveTitle(in); got != want {
+		if got := deriveTitle(in, strip); got != want {
 			t.Errorf("deriveTitle(%q) = %q, want %q", in, got, want)
 		}
 	}

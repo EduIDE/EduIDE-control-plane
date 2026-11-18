@@ -6,25 +6,37 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
-	"regexp"
 	"slices"
 	"strings"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
-var traceparentRE = regexp.MustCompile(`^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
-
-func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, params LaunchSessionParams) {
+// LaunchSession continues the trace of the incoming traceparent header (params.Traceparent) with a span
+// "launch"; the session carries the trace context of that span so operator and agent join it.
+func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchSessionParams) {
+	ctx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("github.com/EduIDE/EduIDE-control-plane/internal/httpapi").Start(ctx, "launch")
+	defer span.End()
 	u := user(r)
+	if len(s.salt) > 0 {
+		span.SetAttributes(attribute.String("eduide.user_id", telemetry.UserID(s.salt, u.Owner)))
+	}
 	if !s.allowLaunch(u.Owner) {
+		span.SetStatus(codes.Error, string(CodeRateLimited))
 		writeProblem(w, problem(CodeRateLimited, "too many launches, retry shortly"))
 		return
 	}
@@ -34,12 +46,13 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, params La
 		template = req.Template
 		var sess *v1alpha1.IDESession
 		var created bool
-		sess, created, perr = s.launch(r.Context(), u, req, params)
+		sess, created, perr = s.launch(ctx, u, req)
 		if perr == nil {
 			res, status := "existing", http.StatusOK
 			if created {
 				res, status = "created", http.StatusCreated
 			}
+			span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.session", sess.Name), attribute.String("eduide.launch_result", res))
 			telemetry.Launches.WithLabelValues(template, res).Inc()
 			writeJSON(w, status, sessionToAPI(sess))
 			return
@@ -48,6 +61,8 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, params La
 			template = "unknown" // keeps the label bounded
 		}
 	}
+	span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.launch_result", "rejected"))
+	span.SetStatus(codes.Error, string(perr.code)) // the code only: details may name launch data keys
 	telemetry.Launches.WithLabelValues(template, "rejected").Inc()
 	writeProblem(w, perr)
 }
@@ -56,7 +71,7 @@ func isActive(s *v1alpha1.IDESession) bool {
 	return s.DeletionTimestamp == nil && s.Status.Phase != v1alpha1.SessionFailed
 }
 
-func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest, params LaunchSessionParams) (*v1alpha1.IDESession, bool, *apiError) {
+func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*v1alpha1.IDESession, bool, *apiError) {
 	var tpl v1alpha1.IDETemplate
 	if err := s.r.Get(ctx, types.NamespacedName{Namespace: s.cfg.Namespace, Name: req.Template}, &tpl); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -91,7 +106,8 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest, pa
 	}
 
 	key := launchKey(u.Owner, tpl.Name, wsName, data)
-	sessions, err := s.ownedSessions(ctx, u.Owner)
+	// Live read: the cache may not hold a session a launch created a moment ago.
+	sessions, err := s.ownedSessions(ctx, s.w, u.Owner)
 	if err != nil {
 		return nil, false, internalError(err)
 	}
@@ -120,7 +136,7 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest, pa
 			return nil, false, perr
 		}
 	}
-	return s.createSession(ctx, u.Owner, &tpl, wsName, key, data, display, params)
+	return s.createSession(ctx, u.Owner, &tpl, wsName, key, data, display)
 }
 
 // resolvePersistence returns the workspace name for volume sessions and whether it still has to be created.
@@ -226,7 +242,10 @@ func (s *Server) ensureWorkspace(ctx context.Context, name, owner, template stri
 	return &ws, nil
 }
 
-func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.IDETemplate, wsName, key string, data map[string]string, display v1alpha1.Display, params LaunchSessionParams) (*v1alpha1.IDESession, bool, *apiError) {
+// createSession names the session after the launch key, so two concurrent launches with the same key
+// create one session: the loser gets AlreadyExists and returns the winner. A Failed or deleting session
+// with that name must not block a relaunch, so the next attempts use random names.
+func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.IDETemplate, wsName, key string, data map[string]string, display v1alpha1.Display) (*v1alpha1.IDESession, bool, *apiError) {
 	extra := map[string]string{v1alpha1.LabelTemplate: tpl.Name, v1alpha1.LabelLaunchKey: key}
 	if wsName != "" {
 		extra[v1alpha1.LabelWorkspace] = wsName
@@ -235,15 +254,22 @@ func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.
 		ObjectMeta: metav1.ObjectMeta{Namespace: s.cfg.Namespace, Labels: managedLabels(owner, extra)},
 		Spec:       v1alpha1.IDESessionSpec{Owner: owner, TemplateRef: tpl.Name, WorkspaceRef: wsName, Display: display},
 	}
-	if params.Traceparent != nil && traceparentRE.MatchString(*params.Traceparent) {
-		sess.Annotations = map[string]string{v1alpha1.AnnotationTraceparent: *params.Traceparent}
+	tc := propagation.MapCarrier{}
+	propagation.TraceContext{}.Inject(ctx, tc)
+	if tp := tc.Get("traceparent"); tp != "" {
+		sess.Annotations = map[string]string{v1alpha1.AnnotationTraceparent: tp}
 	}
 	var err error
-	for range 3 {
-		sess.Name = "s-" + strings.ToLower(rand.Text()[:10])
+	for i, name := range []string{"s-" + key[:10], randomName(), randomName()} {
+		sess.Name = name
 		sess.Spec.DataSecretRef = sess.Name + "-data"
 		if err = s.w.Create(ctx, sess); !apierrors.IsAlreadyExists(err) {
 			break
+		}
+		var cur v1alpha1.IDESession
+		if i == 0 && s.w.Get(ctx, types.NamespacedName{Namespace: s.cfg.Namespace, Name: name}, &cur) == nil &&
+			cur.Spec.Owner == owner && cur.Labels[v1alpha1.LabelLaunchKey] == key && isActive(&cur) {
+			return &cur, false, nil
 		}
 	}
 	if err != nil {
@@ -262,9 +288,18 @@ func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.
 	for k, v := range data {
 		secret.Data[k] = []byte(v)
 	}
-	if err := s.w.Create(ctx, secret); err != nil {
+	err = s.w.Create(ctx, secret)
+	if apierrors.IsAlreadyExists(err) { // left over from an earlier session of this name that the GC has not removed yet
+		stale := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secret.Name, Namespace: secret.Namespace}}
+		if err = client.IgnoreNotFound(s.w.Delete(ctx, stale)); err == nil {
+			err = s.w.Create(ctx, secret)
+		}
+	}
+	if err != nil {
 		_ = s.w.Delete(ctx, sess) // no session without its data
 		return nil, false, internalError(err)
 	}
 	return sess, true, nil
 }
+
+func randomName() string { return "s-" + strings.ToLower(rand.Text()[:10]) }

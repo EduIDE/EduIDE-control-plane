@@ -123,6 +123,8 @@ func TestLaunchErrors(t *testing.T) {
 		{"extra field", launchBody(map[string]any{"fromSecrets": []string{"x"}}), 400, CodeInvalidInput},
 		{"missing workspace", launchBody(map[string]any{"workspace": "w-none"}), 404, CodeWorkspaceNotFound},
 		{"credentials in display", launchBody(map[string]any{"display": map[string]string{"source": "https://u:p@git.example.org/a"}}), 400, CodeInvalidInput},
+		{"script in display", launchBody(map[string]any{"display": map[string]string{"source": "javascript:alert(1)"}}), 400, CodeInvalidInput},
+		{"padded script in display", launchBody(map[string]any{"display": map[string]string{"source": " javascript:alert(1)"}}), 400, CodeInvalidInput},
 	}
 	e := newEnv(t)
 	for _, tt := range tests {
@@ -273,6 +275,13 @@ func TestCreateWorkspace(t *testing.T) {
 		t.Fatal("create is not get-or-create")
 	}
 	if p := problemCode(t, e, "POST", "/workspaces", "alice", map[string]any{"template": "nope"}, 404); p.Code != CodeTemplateNotFound {
+		t.Fatalf("code %s", p.Code)
+	}
+	// Workspace creation shares the launch rate limit.
+	e.srv.cfg.RateLimit.LaunchesPerMinute = 1
+	e.srv.limiters = map[string]*rate.Limiter{}
+	e.do("POST", "/workspaces", "bob", body)
+	if p := problemCode(t, e, "POST", "/workspaces", "bob", body, 429); p.Code != CodeRateLimited {
 		t.Fatalf("code %s", p.Code)
 	}
 }

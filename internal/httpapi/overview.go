@@ -14,7 +14,7 @@ import (
 )
 
 func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiError) {
-	sessions, err := s.ownedSessions(ctx, owner)
+	sessions, err := s.ownedSessions(ctx, s.r, owner)
 	if err != nil {
 		return nil, internalError(err)
 	}
@@ -37,7 +37,7 @@ func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiErr
 		}
 	}
 	item := func(kind OverviewItemKind, d v1alpha1.Display, template string, running bool) OverviewItem {
-		it := OverviewItem{Kind: kind, Title: titleOf(d), Source: emptyToNil(d.Source), Template: template, Running: running}
+		it := OverviewItem{Kind: kind, Title: titleOf(d, s.titleStrip), Source: emptyToNil(d.Source), Template: template, Running: running}
 		if t := tpls[template]; t != nil {
 			it.TemplateDisplayName = ptr(cmp.Or(t.Spec.DisplayName, t.Name))
 			it.TemplateLogoUrl = emptyToNil(t.Spec.LogoURL)
@@ -62,7 +62,7 @@ func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiErr
 			it.Workspace = &wsAPI
 			it.ExpiresAt = wsAPI.ExpiresAt
 			if it.Title == "" {
-				it.Title = titleOf(ws.Spec.Display)
+				it.Title = titleOf(ws.Spec.Display, s.titleStrip)
 			}
 		}
 		items = append(items, it)

@@ -81,6 +81,8 @@ func TestOIDCVerify(t *testing.T) {
 		{"azp accepted", is.srv.URL, with(map[string]any{"aud": "account", "azp": "cli"}), true},
 		{"one of many aud", is.srv.URL, with(map[string]any{"aud": []string{"x", "landing"}}), true},
 		{"foreign audience", is.srv.URL, with(map[string]any{"aud": "other", "azp": "other"}), false},
+		{"other client with our aud", is.srv.URL, with(map[string]any{"aud": []string{"landing"}, "azp": "other"}), false},
+		{"expired", is.srv.URL, with(map[string]any{"aud": "landing", "exp": time.Now().Add(-time.Minute).Unix()}), false},
 		{"no audience", is.srv.URL, user, false},
 		{"wrong issuer", "https://evil.example.com", with(map[string]any{"aud": "landing"}), false},
 		{"no user claim", is.srv.URL, map[string]any{"aud": "landing", "name": "x"}, false},

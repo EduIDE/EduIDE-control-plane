@@ -116,7 +116,13 @@ func run() error {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	api := httpapi.NewServer(cfg, c, writer, hub)
+	var salt []byte
+	if cfg.Telemetry.UserSaltFile != "" {
+		if salt, err = os.ReadFile(cfg.Telemetry.UserSaltFile); err != nil {
+			return err
+		}
+	}
+	api := httpapi.NewServer(cfg, c, writer, hub, salt)
 	// No WriteTimeout: SSE streams stay open.
 	servers := []*http.Server{
 		{Addr: ":8080", Handler: api.Handler(auth.NewOIDC(cfg.OIDC)), ReadHeaderTimeout: 10 * time.Second,

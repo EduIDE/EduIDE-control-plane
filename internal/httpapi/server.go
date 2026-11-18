@@ -5,6 +5,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -26,14 +27,21 @@ type Server struct {
 	w    client.Client
 	hub  *Hub
 	ping time.Duration
+	// salt keys the pseudonymous user id of spans (telemetry.userSaltFile); nil leaves the id out.
+	salt       []byte
+	titleStrip *regexp.Regexp
 
 	mu       sync.Mutex
 	limiters map[string]*rate.Limiter // shortcut: one entry per user is never evicted, fine for thousands of users
 }
 
-// NewServer reads through r (the cache) and writes through w.
-func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub) *Server {
-	return &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, limiters: map[string]*rate.Limiter{}}
+// NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
+func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, salt: salt, limiters: map[string]*rate.Limiter{}}
+	if cfg.Overview.TitleStripPattern != "" {
+		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
+	}
+	return s
 }
 
 // Handler serves the API under /api/v1; every route needs a valid bearer token.
@@ -64,16 +72,18 @@ func (s *Server) allowLaunch(owner string) bool {
 	return l.Allow()
 }
 
-func (s *Server) ownedSessions(ctx context.Context, owner string) ([]v1alpha1.IDESession, error) {
+// ownedSessions lists through rd: the cache, or s.w where a decision must not miss a session created just now.
+func (s *Server) ownedSessions(ctx context.Context, rd client.Reader, owner string) ([]v1alpha1.IDESession, error) {
 	var l v1alpha1.IDESessionList
-	err := s.r.List(ctx, &l, client.InNamespace(s.cfg.Namespace), client.MatchingLabels{v1alpha1.LabelOwnerHash: v1alpha1.OwnerHash(owner)})
+	err := rd.List(ctx, &l, client.InNamespace(s.cfg.Namespace), client.MatchingLabels{v1alpha1.LabelOwnerHash: v1alpha1.OwnerHash(owner)})
 	return slices.DeleteFunc(l.Items, func(x v1alpha1.IDESession) bool { return x.Spec.Owner != owner }), err
 }
 
 func (s *Server) ownedWorkspaces(ctx context.Context, owner string) ([]v1alpha1.IDEWorkspace, error) {
 	// shortcut: scans all workspaces of the cache, so workspaces imported without owner-hash label are found too
+	// No deep copy of every workspace per call (the overview stream runs this on each change); results are only read.
 	var l v1alpha1.IDEWorkspaceList
-	err := s.r.List(ctx, &l, client.InNamespace(s.cfg.Namespace))
+	err := s.r.List(ctx, &l, client.InNamespace(s.cfg.Namespace), client.UnsafeDisableDeepCopy)
 	return slices.DeleteFunc(l.Items, func(x v1alpha1.IDEWorkspace) bool { return x.Spec.Owner != owner }), err
 }
 
@@ -127,7 +137,7 @@ func (s *Server) ListTemplates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
-	items, err := s.ownedSessions(r.Context(), user(r).Owner)
+	items, err := s.ownedSessions(r.Context(), s.r, user(r).Owner)
 	if err != nil {
 		writeProblem(w, internalError(err))
 		return
@@ -194,6 +204,11 @@ func (s *Server) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	u := user(r)
+	// Each workspace is a volume: share the launch budget so a client cannot create them without bound.
+	if !s.allowLaunch(u.Owner) {
+		writeProblem(w, problem(CodeRateLimited, "too many requests, retry shortly"))
+		return
+	}
 	var req WorkspaceRequest
 	if perr := decodeJSON(r.Body, &req); perr != nil {
 		writeProblem(w, perr)
@@ -242,7 +257,7 @@ func (s *Server) DeleteWorkspace(w http.ResponseWriter, r *http.Request, name Na
 		writeProblem(w, perr)
 		return
 	}
-	sessions, err := s.ownedSessions(r.Context(), owner)
+	sessions, err := s.ownedSessions(r.Context(), s.w, owner)
 	if err != nil {
 		writeProblem(w, internalError(err))
 		return
