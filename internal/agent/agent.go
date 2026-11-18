@@ -16,6 +16,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
 )
@@ -52,11 +53,18 @@ type Agent struct {
 
 // New returns an agent that guards and proxies to 127.0.0.1:idePort.
 func New(token, idePort string, log *slog.Logger) *Agent {
-	return &Agent{token: []byte(token), idePort: idePort, log: log, changed: make(chan struct{})}
+	// the version starts at the start time so it never goes back when the agent container restarts
+	return &Agent{token: []byte(token), idePort: idePort, log: log, changed: make(chan struct{}), version: int(time.Now().UnixMilli())}
 }
 
 func (a *Agent) tokenOK(got string) bool {
 	return subtle.ConstantTimeCompare([]byte(got), a.token) == 1
+}
+
+// headerTokenOK requires exactly one token header value so duplicates cannot confuse the check.
+func (a *Agent) headerTokenOK(h http.Header) bool {
+	v := h.Values(TokenHeader)
+	return len(v) == 1 && a.tokenOK(v[0])
 }
 
 // bump must be called with a.mu held.
@@ -143,7 +151,8 @@ func (a *Agent) claim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.session == "" {
-		a.session, a.data = req.Session, req.Data
+		// heartbeats before the claim do not count as session activity
+		a.session, a.data, a.lastActivity = req.Session, req.Data, time.Time{}
 		if a.data == nil {
 			a.data = map[string]string{}
 		}
@@ -171,7 +180,7 @@ func (a *Agent) status(w http.ResponseWriter, _ *http.Request) {
 func (a *Agent) notify(w http.ResponseWriter, r *http.Request) {
 	var n agentapi.Notice
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxClaimBytes)).Decode(&n); err != nil ||
-		!n.Kind.Valid() || len(n.Message) > 1024 {
+		!n.Kind.Valid() || utf8.RuneCountInString(n.Message) > 1024 {
 		http.Error(w, "invalid notice", http.StatusBadRequest)
 		return
 	}

@@ -66,7 +66,7 @@ type Status struct {
 	// Connections Open proxied WebSocket connections. 0 after the claim counts as no browser (G7).
 	Connections int `json:"connections"`
 
-	// LastActivity Latest of extension heartbeat and proxied request. Absent without any activity since the claim.
+	// LastActivity Latest extension heartbeat since the claim (proxied requests do not count). Absent without any heartbeat since the claim.
 	LastActivity *time.Time `json:"lastActivity,omitempty"`
 
 	// Ready Claimed and launch data stored.

@@ -18,13 +18,19 @@ func (a *Agent) ProxyHandler() http.Handler {
 			pr.SetURL(target)
 			pr.Out.Header.Del(TokenHeader)
 			pr.Out.Host = pr.In.Host
+			// Rewrite drops X-Forwarded-*; keep what the gateway set so the IDE sees the public scheme and host
+			for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"} {
+				if v, ok := pr.In.Header[h]; ok {
+					pr.Out.Header[h] = v
+				}
+			}
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(w, "ide unavailable", http.StatusBadGateway)
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !a.tokenOK(r.Header.Get(TokenHeader)) {
+		if !a.headerTokenOK(r.Header) {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}

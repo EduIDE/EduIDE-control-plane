@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -31,6 +32,15 @@ func env(key, def string) string {
 	return def
 }
 
+// idleTimeout bounds idle keep-alive connections; without it they stay open forever.
+const idleTimeout = 5 * time.Minute
+
+func loopback(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	ip := net.ParseIP(host)
+	return err == nil && ip != nil && ip.IsLoopback()
+}
+
 func run(log *slog.Logger) error {
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(8 << 20)
@@ -43,12 +53,16 @@ func run(log *slog.Logger) error {
 	if token == "" {
 		return errors.New("token file is empty")
 	}
+	localAddr := env("AGENT_LOCAL_ADDR", "127.0.0.1:8082")
+	if !loopback(localAddr) {
+		return errors.New("AGENT_LOCAL_ADDR must be a loopback address")
+	}
 	a := agent.New(token, env("AGENT_IDE_PORT", "3000"), log)
 
 	servers := []*http.Server{
-		{Addr: env("AGENT_PROXY_ADDR", "0.0.0.0:8080"), Handler: a.ProxyHandler(), ReadHeaderTimeout: 10 * time.Second},
-		{Addr: env("AGENT_CONTROL_ADDR", "0.0.0.0:8081"), Handler: a.ControlHandler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second},
-		{Addr: env("AGENT_LOCAL_ADDR", "127.0.0.1:8082"), Handler: a.LocalHandler(), ReadHeaderTimeout: 10 * time.Second},
+		{Addr: env("AGENT_PROXY_ADDR", "0.0.0.0:8080"), Handler: a.ProxyHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: idleTimeout},
+		{Addr: env("AGENT_CONTROL_ADDR", "0.0.0.0:8081"), Handler: a.ControlHandler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: idleTimeout},
+		{Addr: localAddr, Handler: a.LocalHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: idleTimeout},
 	}
 	errc := make(chan error, len(servers))
 	for _, s := range servers {

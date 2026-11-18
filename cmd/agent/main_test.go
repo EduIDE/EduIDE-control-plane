@@ -86,3 +86,19 @@ func TestRSSUnderLoad(t *testing.T) {
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
 }
+
+func TestLoopback(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"127.0.0.1:8082": true,
+		"[::1]:8082":     true,
+		"0.0.0.0:8082":   false,
+		":8082":          false,
+		"localhost:8082": false,
+		"10.0.0.1:8082":  false,
+		"127.0.0.1":      false,
+	} {
+		if got := loopback(addr); got != want {
+			t.Errorf("%s: got %v want %v", addr, got, want)
+		}
+	}
+}
