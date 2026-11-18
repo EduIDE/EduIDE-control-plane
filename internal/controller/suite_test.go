@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,6 +72,8 @@ type fakeAgent struct {
 	// activity is the lastActivity /v1/status reports; down makes /v1/status fail.
 	activity *time.Time
 	down     bool
+	// unclaimed makes /v1/status report claimed=false, as an agent that restarted does.
+	unclaimed bool
 }
 
 func (a *fakeAgent) set(f func(*fakeAgent)) {
@@ -93,7 +96,7 @@ func (a *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: true, Ready: true, LastActivity: a.activity})
+		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: !a.unclaimed, Ready: !a.unclaimed, LastActivity: a.activity})
 	case "/v1/notify":
 		var n agentapi.Notice
 		_ = json.NewDecoder(r.Body).Decode(&n)
@@ -129,6 +132,50 @@ func (a *fakeAgent) noticeCount() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.notices)
+}
+
+// logCapture records the slog lines of the operator, so tests can check what it logs.
+type logCapture struct {
+	mu   sync.Mutex
+	recs []map[string]any
+}
+
+var logs = &logCapture{}
+
+func (c *logCapture) Enabled(context.Context, slog.Level) bool { return true }
+func (c *logCapture) WithAttrs([]slog.Attr) slog.Handler       { return c }
+func (c *logCapture) WithGroup(string) slog.Handler            { return c }
+func (c *logCapture) Handle(_ context.Context, r slog.Record) error {
+	m := map[string]any{"msg": r.Message, "level": r.Level.String()}
+	r.Attrs(func(a slog.Attr) bool { m[a.Key] = a.Value.Any(); return true })
+	c.mu.Lock()
+	c.recs = append(c.recs, m)
+	c.mu.Unlock()
+	return nil
+}
+
+// find returns the lines with this message whose session attribute matches.
+func (c *logCapture) find(msg, session string) []map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []map[string]any
+	for _, m := range c.recs {
+		if m["msg"] == msg && m["session"] == session {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func (c *logCapture) has(msg, key, val string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, m := range c.recs {
+		if m["msg"] == msg && m[key] == val {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMain(m *testing.M) {
@@ -172,6 +219,7 @@ capacity: {exhaustedAfter: 1s}
 	if err != nil {
 		panic(err)
 	}
+	slog.SetDefault(slog.New(logs))
 	ctrl.SetLogger(funcr.New(func(p, a string) {
 		if strings.Contains(a, `"error"`) {
 			fmt.Println(p, a)
@@ -221,7 +269,8 @@ func newTemplate(name string) *v1.IDETemplate {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
 		Spec: v1.IDETemplateSpec{
 			Image: "example.org/ide:1", Port: 3000,
-			Env: []v1.EnvVar{{Name: "THEIA", Value: "1"}},
+			Env:            []v1.EnvVar{{Name: "THEIA", Value: "1"}},
+			InjectableKeys: []v1.InjectableKey{{Name: "GIT_URI", Format: v1.FormatPattern, Pattern: ".*"}},
 			Persistence: v1.TemplatePersistence{
 				Allowed: []v1.PersistenceMode{v1.PersistenceNone, v1.PersistenceVolume}, Default: v1.PersistenceNone, MountPath: "/home/project",
 			},

@@ -20,7 +20,7 @@ helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-cont
 | Secret `<release>-user-salt` | Generated once with `lookup`, kept on upgrade |
 | IDETemplate and IDEPool | From `templates` |
 | SecurityPolicy | OIDC login plus ext_authz (gRPC, `failOpen: false`) on all HTTPRoutes labelled `eduide.github.io/route: session` |
-| HTTPRoutes | `/api/` on `config.hosts.service`, `/oauth2/` on `config.hosts.instance` |
+| HTTPRoutes | `/api/` on `config.hosts.service`; a catch-all `/` with label `eduide.github.io/route=session` on the instance and webview host (unknown ids and the OIDC callback, ADR 0005) |
 | NetworkPolicies | Session pods: default deny, :8080 from Envoy, :8081 from the operator (ADR 0019) |
 | Pool scaler (optional) | Deployment, config, RBAC for `idepools` and `idepools/scale` |
 | PodMonitor, PrometheusRule, dashboard (optional) | Based on `docs/contracts/metrics.md` |
@@ -48,11 +48,13 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `networkPolicy.enabled` | `true` | Needs a CNI that enforces policies |
 | `networkPolicy.envoy.namespaceSelector`, `.podSelector` | `envoy-gateway-system`, `app.kubernetes.io/name: envoy` | Pods allowed to reach sessions, service and authz |
 | `networkPolicy.monitoringNamespace` | `monitoring` | Namespace allowed to scrape the metrics ports |
-| `networkPolicy.sessionEgress` | `[]` | Egress rules for session pods; empty keeps egress open |
+| `networkPolicy.sessionEgress` | `[]` | Egress rules for session pods; when set, it replaces the default |
+| `networkPolicy.sessionEgressDeny`, `.sessionEgressExtraDeny` | RFC 1918, link-local, 100.64.0.0/10, `fc00::/7`, `fe80::/10`; none | Default egress is DNS plus the internet without these ranges. Add the pod CIDR and the node network of the cluster to `sessionEgressExtraDeny` |
+| `networkPolicy.dnsNamespaceSelector` | `kube-system` | Namespace session pods resolve names in |
 | `userSalt.secretName` | generated | Use an own Secret with key `salt` instead |
 | `poolScaler.enabled`, `.mode`, `.config`, `.env`, `.resources`, `.image` | disabled, `shadow` | Config is rendered into `/etc/pool-scaler/config.yaml`, see `pool-scaler/examples/config.yaml` |
-| `monitoring.podMonitor`, `.rules`, `.dashboard` | disabled | `enabled` and extra `labels` (dashboard default label `grafana_dashboard: "1"`) |
+| `monitoring.podMonitor`, `.rules`, `.dashboard` | disabled | `enabled` and extra `labels` (dashboard default label `grafana_dashboard: "1"`). Alerts carry `eduide_namespace` and select metrics by the release namespace (the PodMonitor sets the `namespace` label); the dashboard has a namespace variable |
 
 ## Tests
 
-`charts/test.sh` lints and renders the charts and checks: SecurityPolicy fail closed, NetworkPolicies present, no Ingress, resources and securityContext on every container, operator Role equals the generated RBAC, memory requests below 150 MiB.
+`charts/test.sh` lints and renders the charts and checks: SecurityPolicy fail closed, NetworkPolicies present, no Ingress, resources and securityContext on every container, operator Role equals the generated RBAC, no Role grants `pods/exec` or wildcards, default session egress, the fallback route, alerts and dashboard per namespace, memory requests below 150 MiB.

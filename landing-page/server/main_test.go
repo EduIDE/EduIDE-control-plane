@@ -64,6 +64,9 @@ func TestHandler(t *testing.T) {
 			if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
 				t.Error("security headers missing")
 			}
+			if rec.Header().Get("Strict-Transport-Security") != "max-age=31536000" {
+				t.Error("HSTS missing")
+			}
 			if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "connect-src 'self' https://kc.example.org;") {
 				t.Errorf("CSP lacks keycloak origin: %s", rec.Header().Get("Content-Security-Policy"))
 			}

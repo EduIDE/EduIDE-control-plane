@@ -17,21 +17,23 @@ spec:
     backendRefs:
     - {name: {{ $full }}-service, port: 8080}
 ---
-# Gives the OIDC callback a route; the service answers 404 for it.
+# Catch-all for the instance and webview host. Session routes match longer prefixes and win. Every other path,
+# such as an unknown instance id or the OIDC callback, passes the SecurityPolicy like a session path does (login redirect
+# when anonymous, 403 when logged in) and only then reaches the service, which answers 404.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: {{ $full }}-oauth2
+  name: {{ $full }}-session-fallback
   labels:
     {{- include "ecp.labels" . | nindent 4 }}
     eduide.github.io/route: session
 spec:
   parentRefs:
     {{- include "ecp.parentRef" . | nindent 4 }}
-  hostnames: [{{ $host | quote }}]
+  hostnames: [{{ $host | quote }}, {{ .Values.config.hosts.webview | default (printf "webview.%s" $host) | quote }}]
   rules:
   - matches:
-    - path: {type: PathPrefix, value: /oauth2/}
+    - path: {type: PathPrefix, value: /}
     backendRefs:
     - {name: {{ $full }}-service, port: 8080}
 ---

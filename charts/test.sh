@@ -49,6 +49,48 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$want" = "$got" ] || fail "operator Role rules differ from config/rbac/role.yaml"
   ok "operator Role equals config/rbac/role.yaml"
 
+  # No role grants pods/exec or wildcards (the operator never execs into pods).
+  badrules=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role") | .rules[] | (.resources[], .verbs[], .apiGroups[])' | grep -cE '^"(\*|pods/exec|pods/attach|pods/portforward)"$' || true)
+  [ "$badrules" -eq 0 ] || fail "a Role grants pods/exec, attach, portforward or a wildcard ($v)"
+  ok "no exec or wildcard rules"
+
+  # Session egress: DNS plus the internet without private ranges, by default.
+  egress=$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-session-egress")')
+  [ -n "$egress" ] || fail "session egress policy missing by default ($v)"
+  for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10; do
+    echo "$egress" | grep -q "\"$cidr\"" || fail "session egress does not deny $cidr"
+  done
+  [ "$(echo "$egress" | yq -p=json '.spec.egress[1].to[0].ipBlock.cidr')" = "0.0.0.0/0" ] || fail "session egress lacks 0.0.0.0/0"
+  [ "$(echo "$egress" | yq -p=json '.spec.egress[1].to[1].ipBlock.cidr')" = "::/0" ] || fail "session egress lacks ::/0"
+  [ "$(echo "$egress" | yq -p=json '.spec.egress[0].ports[0].port')" = "53" ] || fail "session egress lacks DNS"
+  ok "default session egress ($v)"
+
+  extra=$(helm template r "$cp" -f "$v" -n ns --set 'networkPolicy.sessionEgressExtraDeny={198.51.100.0/24}' | yq -o=json -I=0 'select(.metadata.name == "r-eduide-control-plane-session-egress")')
+  echo "$extra" | grep -q '198.51.100.0/24' || fail "sessionEgressExtraDeny is not rendered"
+  custom=$(helm template r "$cp" -f "$v" -n ns --set 'networkPolicy.sessionEgress[0].to[0].ipBlock.cidr=203.0.113.0/24' | yq -o=json -I=0 'select(.metadata.name == "r-eduide-control-plane-session-egress")')
+  echo "$custom" | grep -q '203.0.113.0/24' && ! echo "$custom" | grep -q '10.0.0.0/8' || fail "sessionEgress does not replace the default"
+  ok "session egress extra deny and override"
+
+  # Unknown instance ids pass the SecurityPolicy like existing ones: catch-all route on both hosts.
+  fb=$(echo "$out" | yq -o=json -I=0 'select(.kind == "HTTPRoute" and .metadata.name == "r-eduide-control-plane-session-fallback")')
+  [ "$(echo "$fb" | yq -p=json '.metadata.labels["eduide.github.io/route"]')" = "session" ] || fail "fallback route lacks the session label"
+  [ "$(echo "$fb" | yq -p=json '.spec.rules[0].matches[0].path.value')" = "/" ] || fail "fallback route is not a catch-all"
+  [ "$(echo "$fb" | yq -p=json '.spec.hostnames | length')" = "2" ] || fail "fallback route must cover instance and webview host"
+  ok "fallback route ($v)"
+
+  # Alerts and dashboard are scoped to the namespace of the release.
+  mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.dashboard.enabled=true)
+  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[]')
+  [ "$(echo "$rules" | grep -c .)" -ge 10 ] || fail "alerts missing"
+  [ "$(echo "$rules" | yq -p=json 'select(.labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "an alert lacks eduide_namespace"
+  for a in EduIDEOperatorDown EduIDEServiceDown EduIDEAuthzDown EduIDEAgentRequestErrors; do
+    echo "$rules" | grep -q "\"$a\"" || fail "alert $a missing"
+  done
+  ! echo "$mon" | grep -q '__NAMESPACE__\|__FULLNAME__' || fail "alert or dashboard placeholder left"
+  ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
+  echo "$mon" | grep -q 'label_values(eduide_sessions, namespace)' || fail "dashboard lacks the namespace variable"
+  ok "alerts and dashboard per namespace ($v)"
+
   # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
   total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
   [ "$total" -lt 150 ] || fail "memory requests are ${total}Mi, limit is 150Mi"

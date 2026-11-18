@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -66,6 +68,40 @@ func TestCRDValidation(t *testing.T) {
 	bad.Name, bad.ResourceVersion = "bad-timeouts", ""
 	bad.Spec.Timeouts.Warning = &metav1.Duration{Duration: 7200e9}
 	mustReject(t, c, ctx, bad, "warning must be shorter")
+
+	bad = tmpl.DeepCopy()
+	bad.Name, bad.ResourceVersion = "bad-max", ""
+	bad.Spec.Timeouts.Max = &metav1.Duration{Duration: 60e9}
+	mustReject(t, c, ctx, bad, "max must not be shorter than idle")
+
+	// The API server must refuse what the operator cannot decode, such as "2d".
+	rawTemplate := func(name string, spec map[string]any) *unstructured.Unstructured {
+		base := map[string]any{"image": "example.org/ide:1", "persistence": map[string]any{"allowed": []any{"none"}, "default": "none"}}
+		for k, v := range spec {
+			base[k] = v
+		}
+		u := &unstructured.Unstructured{Object: map[string]any{"spec": base}}
+		u.SetGroupVersionKind(v1.GroupVersion.WithKind("IDETemplate"))
+		u.SetName(name)
+		u.SetNamespace("default")
+		return u
+	}
+	for i, spec := range []map[string]any{
+		{"timeouts": map[string]any{"idle": "2d"}},
+		{"timeouts": map[string]any{"warning": "14"}},
+		{"timeouts": map[string]any{"max": "soon"}},
+		{"retention": "2d"},
+	} {
+		mustReject(t, c, ctx, rawTemplate("bad-duration-"+strconv.Itoa(i), spec), "should match")
+	}
+	mustCreate(t, c, ctx, rawTemplate("good-duration", map[string]any{"retention": "48h30m", "timeouts": map[string]any{"idle": "1.5h", "max": "36h"}}))
+
+	rawWorkspace := &unstructured.Unstructured{Object: map[string]any{"spec": map[string]any{
+		"owner": "alice", "templateRef": "java", "persistence": map[string]any{"mode": "volume"}, "retention": "2d"}}}
+	rawWorkspace.SetGroupVersionKind(v1.GroupVersion.WithKind("IDEWorkspace"))
+	rawWorkspace.SetName("bad-retention")
+	rawWorkspace.SetNamespace("default")
+	mustReject(t, c, ctx, rawWorkspace, "should match")
 
 	mustCreate(t, c, ctx, &v1.IDEPool{ObjectMeta: meta("java"), Spec: v1.IDEPoolSpec{TemplateRef: "java", MinIdle: 1, TargetIdle: 2, MaxInstances: 10}})
 	mustReject(t, c, ctx, &v1.IDEPool{ObjectMeta: meta("p2"), Spec: v1.IDEPoolSpec{TemplateRef: "java", MinIdle: 5, MaxInstances: 2}}, "minIdle must not exceed")

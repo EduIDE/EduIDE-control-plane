@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -89,11 +91,12 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: mount}},
 	}
 	podSec := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
+	yes, no := true, false
+	ide.SecurityContext = &corev1.SecurityContext{AllowPrivilegeEscalation: &no, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 	if u := t.Spec.RunAsUser; u != nil {
-		ide.SecurityContext = &corev1.SecurityContext{RunAsUser: u, RunAsNonRoot: new(*u != 0)}
+		ide.SecurityContext.RunAsUser, ide.SecurityContext.RunAsNonRoot = u, new(*u != 0)
 		podSec.FSGroup = u
 	}
-	yes, no := true, false
 	agent := corev1.Container{
 		Name: "agent", Image: d.cfg.Agent.Image, Resources: d.cfg.Agent.Resources,
 		Ports: []corev1.ContainerPort{{Name: "proxy", ContainerPort: 8080}, {Name: "control", ContainerPort: 8081}},
@@ -120,7 +123,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		SecretName: tokenName(instance), DefaultMode: &mode,
 		Items: []corev1.KeyToPath{{Key: v1.InstanceTokenKey, Path: v1.InstanceTokenKey}},
 	}}}
-	ann := map[string]string{}
+	ann := map[string]string{v1.AnnotationSpecHash: d.specHash(t)}
 	if b := t.Spec.Bandwidth; b != nil {
 		if b.Ingress != nil {
 			ann["kubernetes.io/ingress-bandwidth"] = b.Ingress.String()
@@ -142,12 +145,45 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 	}
 }
 
+// specHash identifies what a pod is built from: the template spec, the agent image and the deployment placement.
+// A pool replaces idle pods with another hash.
+func (d *deps) specHash(t *v1.IDETemplate) string {
+	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// repairChildren makes sure token Secret, Service and HTTPRoute of an existing instance exist. gone is true when
+// the token Secret is missing and the token cannot come back: the pod has read it already or its route carries it.
+// The caller discards such an instance. A pod that has not started yet, after a create that failed half way, gets a new token.
+func (d *deps) repairChildren(ctx context.Context, pod *corev1.Pod) (gone bool, err error) {
+	instance := pod.Labels[v1.LabelInstance]
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: tokenName(instance)}
+	if err := d.Get(ctx, key, &corev1.Secret{}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, err
+		}
+		// The cache can lag behind a Secret created a moment ago.
+		if err := d.reader.Get(ctx, key, &corev1.Secret{}); err != nil {
+			if !apierrors.IsNotFound(err) {
+				return false, err
+			}
+			routeKey := client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}
+			if claim.Started(pod) || d.Get(ctx, routeKey, &gatewayv1.HTTPRoute{}) == nil {
+				return true, nil
+			}
+		}
+	}
+	return false, d.ensureChildren(ctx, pod)
+}
+
 // ensureChildren creates token Secret, Service and HTTPRoute of an instance, owned by the pod.
 // Existing objects stay as they are. The route is created last, so its presence marks the set complete.
 func (d *deps) ensureChildren(ctx context.Context, pod *corev1.Pod) error {
 	instance := pod.Labels[v1.LabelInstance]
 	route := &gatewayv1.HTTPRoute{}
-	if err := d.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}, route); err == nil {
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}
+	if d.Get(ctx, key, route) == nil && d.Get(ctx, key, &corev1.Service{}) == nil {
 		return nil
 	}
 	own := func(o client.Object) error { return controllerutil.SetOwnerReference(pod, o, d.scheme) }
@@ -234,6 +270,9 @@ func (d *deps) buildRoute(meta metav1.ObjectMeta, instance, token string) *gatew
 					Set: []gatewayv1.HTTPHeader{{Name: v1.InstanceTokenHeader, Value: token}}}},
 				{Type: gatewayv1.HTTPRouteFilterURLRewrite, URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
 					Path: &gatewayv1.HTTPPathModifier{Type: gatewayv1.PrefixMatchHTTPPathModifier, ReplacePrefixMatch: &root}}},
+				// Only HSTS: the IDE sets its own CSP and frame options.
+				{Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier, ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+					Set: []gatewayv1.HTTPHeader{{Name: "Strict-Transport-Security", Value: "max-age=31536000"}}}},
 			},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 				Name: gatewayv1.ObjectName(podName(instance)), Port: &port}}}},

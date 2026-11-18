@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 type workspaceReconciler struct{ *deps }
@@ -100,6 +102,7 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if st.ExpiredAt == nil {
 			t := metav1.NewTime(now)
 			st.ExpiredAt = &t
+			slog.InfoContext(ctx, "workspace expired", "workspace", ws.Name, "user", telemetry.UserID(r.salt, ws.Spec.Owner), "grace", r.cfg.Workspaces.Grace.Duration.String())
 		}
 		if gone := st.ExpiredAt.Add(r.cfg.Workspaces.Grace.Duration); !now.Before(gone) {
 			// The cache can miss a session created a moment ago, so ask the API server before deleting.
@@ -107,6 +110,7 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 				return ctrl.Result{RequeueAfter: time.Second}, err
 			}
 			// The PVC follows through its owner reference.
+			slog.InfoContext(ctx, "workspace deleted after its grace period", "workspace", ws.Name, "user", telemetry.UserID(r.salt, ws.Spec.Owner))
 			return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, ws))
 		} else {
 			res.RequeueAfter = gone.Sub(now) + time.Second
@@ -150,6 +154,10 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 			}
 			return "", "", err
 		}
+		// Adopt the claim, so the retention deletes it like one the operator created.
+		if err := r.adopt(ctx, ws, pvc); err != nil {
+			return "", "", err
+		}
 		return name, "", nil
 	}
 	key := client.ObjectKey{Namespace: ws.Namespace, Name: ws.Name}
@@ -186,4 +194,20 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 		return "", "", err
 	}
 	return ws.Name, "", nil
+}
+
+// adopt makes the workspace the controller of an imported claim. A claim that another controller owns stays as it is.
+func (r *workspaceReconciler) adopt(ctx context.Context, ws *v1.IDEWorkspace, pvc *corev1.PersistentVolumeClaim) error {
+	if c := metav1.GetControllerOf(pvc); c != nil {
+		return nil
+	}
+	orig := pvc.DeepCopy()
+	if err := controllerutil.SetControllerReference(ws, pvc, r.scheme); err != nil {
+		return err
+	}
+	if err := r.Patch(ctx, pvc, client.MergeFrom(orig), client.FieldOwner(fieldManager)); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	slog.InfoContext(ctx, "adopted the imported claim", "workspace", ws.Name)
+	return nil
 }

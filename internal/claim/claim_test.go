@@ -146,3 +146,80 @@ func TestNewInstanceID(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestStuckWaiting(t *testing.T) {
+	waiting := func(reason string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}
+	}
+	tests := []struct {
+		name         string
+		p            corev1.Pod
+		wantContName string
+		want         string
+	}{
+		{"pulling is fine", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("ContainerCreating")}}}, "", ""},
+		{"image pull backoff", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("ImagePullBackOff")}}}, "ide", "ImagePullBackOff"},
+		{"init container", corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{waiting("ErrImagePull")}}}, "ide", "ErrImagePull"},
+		{"config error", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("CreateContainerConfigError")}}}, "ide", "CreateContainerConfigError"},
+		{"no status", corev1.Pod{}, "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if c, r := StuckWaiting(&tc.p); c != tc.wantContName || r != tc.want {
+				t.Errorf("got %q %q", c, r)
+			}
+		})
+	}
+}
+
+func TestBrokenPodsAreNeverCandidates(t *testing.T) {
+	ok := pod("ok", 1, true, v1.StateIdle)
+	crash := pod("crash", 0, false, v1.StateIdle)
+	crash.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}
+	restarted := pod("restarted", 0, true, v1.StateIdle)
+	restarted.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "agent", RestartCount: 1}}
+	got := Candidates([]corev1.Pod{crash, restarted, ok}, true)
+	if len(got) != 1 || got[0].Name != "ok" {
+		t.Fatalf("candidates: %v", got)
+	}
+	if Broken(&crash) != "CrashLoopBackOff" || Broken(&restarted) != "restarted" || Broken(&ok) != "" {
+		t.Error("Broken reasons")
+	}
+}
+
+func TestHopelessSparesPullsThatCanHeal(t *testing.T) {
+	w := func(reason, msg string) *corev1.Pod {
+		return &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "ide",
+			State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason, Message: msg}}}}}}
+	}
+	for _, tc := range []struct {
+		p    *corev1.Pod
+		want string
+	}{
+		{w("ErrImagePull", "rpc error: code = NotFound desc = failed to pull and unpack image: not found"), "ErrImagePull"},
+		{w("ImagePullBackOff", `Back-off pulling image "x": ErrImagePull: pull access denied`), "ImagePullBackOff"},
+		{w("ErrImagePull", "401 Unauthorized"), "ErrImagePull"},
+		{w("ErrImagePull", "dial tcp 1.2.3.4:443: i/o timeout"), ""},
+		{w("ErrImagePull", "429 Too Many Requests"), ""},
+		{w("ImagePullBackOff", `Back-off pulling image "x"`), ""},
+		{w("InvalidImageName", ""), "InvalidImageName"},
+		{w("CreateContainerConfigError", "secret not found"), "CreateContainerConfigError"},
+		{w("ContainerCreating", ""), ""},
+	} {
+		if _, got := Hopeless(tc.p); got != tc.want {
+			t.Errorf("%+v: got %q, want %q", tc.p.Status.ContainerStatuses[0].State.Waiting, got, tc.want)
+		}
+	}
+}
+
+func TestStarted(t *testing.T) {
+	st := func(cs ...corev1.ContainerStatus) *corev1.Pod {
+		return &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: cs}}
+	}
+	creating := corev1.ContainerStatus{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ContainerCreating"}}}
+	running := corev1.ContainerStatus{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}
+	backoff := corev1.ContainerStatus{RestartCount: 2, State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}
+	if Started(st()) || Started(st(creating)) || !Started(st(creating, running)) || !Started(st(backoff)) {
+		t.Error("Started")
+	}
+}

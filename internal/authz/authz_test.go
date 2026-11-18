@@ -19,6 +19,11 @@ import (
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/go-jose/go-jose/v4"
 	"github.com/go-jose/go-jose/v4/jwt"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -391,5 +396,38 @@ func TestGRPCRoundTrip(t *testing.T) {
 	resp, err = c.Check(ctx, req("/"+instanceA+"/", idCookie+"=junk"))
 	if err != nil || resp.GetDeniedResponse().GetStatus().GetCode() != typev3.StatusCode_Found {
 		t.Fatalf("login: %v %v", resp, err)
+	}
+}
+
+func TestCheckSpanOnlyForSampledParent(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(noop.NewTracerProvider())
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	iss := newIssuer(t)
+	s := newServer(t, iss, fakeSessions{})
+
+	for name, tc := range map[string]struct {
+		traceparent string
+		want        int
+	}{
+		"none":      {"", 0},
+		"unsampled": {"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-00", 0},
+		"sampled":   {"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", 1},
+	} {
+		before := len(rec.Ended())
+		r := req("/abcdefghij0123456789/", "")
+		if tc.traceparent != "" {
+			r.Attributes.Request.Http.Headers["traceparent"] = tc.traceparent
+		}
+		s.mustCheck(t, r)
+		ended := rec.Ended()[before:]
+		if len(ended) != tc.want {
+			t.Fatalf("%s: %d spans, want %d", name, len(ended), tc.want)
+		}
+		if tc.want == 1 && ended[0].Name() != "authz.check" {
+			t.Errorf("span name %q", ended[0].Name())
+		}
 	}
 }

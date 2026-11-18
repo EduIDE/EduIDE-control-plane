@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +45,8 @@ const (
 	pollBudget = 2 * time.Second
 	// startLimit fails a session whose pod does not become ready, for example on an image pull error.
 	startLimit = 10 * time.Minute
+	// stuckLimit fails a session earlier when a container waits for a reason that does not heal (image pull errors).
+	stuckLimit = 60 * time.Second
 	// failedRetention keeps a failed session so the landing page can read the error.
 	failedRetention = 10 * time.Minute
 )
@@ -133,15 +137,21 @@ func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.expire(ctx, s)
 	}
 	tmpl := &v1.IDETemplate{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.TemplateRef}, tmpl); err != nil {
-		if apierrors.IsNotFound(err) {
-			return r.fail(ctx, s, v1.ErrorTemplateNotFound, fmt.Sprintf("template %s not found", s.Spec.TemplateRef))
-		}
-		return ctrl.Result{}, err
+	tmplErr := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.TemplateRef}, tmpl)
+	if tmplErr != nil && !apierrors.IsNotFound(tmplErr) {
+		return ctrl.Result{}, tmplErr
 	}
 	pod, err := r.findPod(ctx, s)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if tmplErr != nil {
+		if pod == nil && s.Status.Instance == "" {
+			return r.fail(ctx, s, v1.ErrorTemplateNotFound, fmt.Sprintf("template %s not found", s.Spec.TemplateRef))
+		}
+		// A session with an instance keeps running when its template is deleted, for example by a chart upgrade.
+		// It ends by the default timeouts.
+		tmpl = &v1.IDETemplate{ObjectMeta: metav1.ObjectMeta{Name: s.Spec.TemplateRef, Namespace: s.Namespace}}
 	}
 	if pod == nil {
 		if s.Status.Instance != "" {
@@ -190,6 +200,12 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 			}
 			return nil, ctrl.Result{}, err
 		}
+		if other, err := r.workspaceHolder(ctx, s); err != nil {
+			return nil, ctrl.Result{}, err
+		} else if other != "" {
+			res, err := r.fail(ctx, s, v1.ErrorWorkspaceInUse, "the workspace is used by another running session")
+			return nil, res, err
+		}
 		if ws.Status.Phase != v1.WorkspaceReady || ws.Status.ClaimName == "" {
 			// The workspace watch wakes the session when the volume is there.
 			orig := s.DeepCopy()
@@ -205,6 +221,9 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 	cctx, cspan := otel.Tracer("eduide-operator").Start(ctx, "instance.create")
 	pod, err := r.createInstance(cctx, tmpl, s, r.sessionLabels(s, nil), claimName)
 	cspan.End()
+	if err == nil {
+		r.note(ctx, s, corev1.EventTypeNormal, "Created", "created a new instance (cold start)")
+	}
 	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
 		// Quota is capacity pressure like an unschedulable pod (G8).
 		res, err := r.capacity(ctx, s, tmpl)
@@ -252,13 +271,21 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 			return nil, false, err
 		default:
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "claimed").Inc()
+			r.note(ctx, s, corev1.EventTypeNormal, "Claimed", "claimed an idle instance")
 			return pod, false, nil
 		}
 	}
 	if conflict {
 		return nil, true, nil
 	}
-	telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+	// Templates without a pool never have an idle pod: that is no signal.
+	var pools v1.IDEPoolList
+	if err := r.List(ctx, &pools, client.InNamespace(s.Namespace)); err != nil {
+		return nil, false, err
+	}
+	if slices.ContainsFunc(pools.Items, func(p v1.IDEPool) bool { return p.Spec.TemplateRef == tmpl.Name }) {
+		telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+	}
 	return nil, false, nil
 }
 
@@ -301,8 +328,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
 	}
 	// Also on a ready pod: a create that failed half way leaves the instance without its route.
-	if err := r.ensureChildren(ctx, pod); err != nil {
+	if gone, err := r.repairChildren(ctx, pod); err != nil {
 		return ctrl.Result{}, err
+	} else if gone {
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the access token Secret of the instance is missing")
 	}
 	if !claim.Ready(pod) {
 		switch {
@@ -311,7 +340,15 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 		case now.Sub(st.Timestamps.Claimed.Time) > startLimit:
 			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance did not become ready in time")
 		}
-		return ctrl.Result{RequeueAfter: time.Minute}, r.patchStatus(ctx, orig, s)
+		wait := time.Minute
+		if c, reason := claim.Hopeless(pod); reason != "" {
+			left := stuckLimit - now.Sub(st.Timestamps.Claimed.Time)
+			if left <= 0 {
+				return r.fail(ctx, s, v1.ErrorStartFailed, fmt.Sprintf("the instance cannot start: container %s waits with %s", c, reason))
+			}
+			wait = left + time.Second
+		}
+		return ctrl.Result{RequeueAfter: wait}, r.patchStatus(ctx, orig, s)
 	}
 
 	if st.Timestamps.PodReady == nil {
@@ -334,21 +371,13 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 		return ctrl.Result{}, err
 	}
 	if !ok {
-		return wait("launch data is missing")
+		return wait(fmt.Sprintf("launch data Secret %s missing or not labelled %s=%s", s.Spec.DataSecretRef, v1.LabelManagedBy, v1.LabelManagedByValue))
 	}
 	base, token, err := r.agentTarget(ctx, pod)
 	if err != nil {
 		return wait("the agent is not reachable")
 	}
-	cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
-	defer cancel()
-	req := agentapi.ClaimRequest{Session: s.Name, Data: data}
-	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
-		req.Traceparent = &tp
-	}
-	actx, aspan := otel.Tracer("eduide-operator").Start(cctx, "agent.claim")
-	err = r.agent.Claim(actx, base, token, req)
-	aspan.End()
+	err = r.pushClaim(ctx, s, tmpl, base, token, data)
 	switch {
 	case errors.Is(err, agentclient.ErrConflict):
 		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance belongs to another session")
@@ -369,6 +398,8 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	}
 	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})
 	strategy := string(st.StartStrategy)
+	r.note(ctx, s, corev1.EventTypeNormal, "Ready", fmt.Sprintf("ready after %.1fs (%s)", now.Sub(s.CreationTimestamp.Time).Seconds(), strategy),
+		"result", "ready", "strategy", strategy, "duration_s", now.Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("claim", strategy).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
@@ -443,6 +474,10 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 		as, err := r.agent.Status(cctx, url, token)
 		cancel()
 		polled = err == nil
+		if polled && !as.Claimed {
+			// The agent container restarted and lost the launch data: push it again.
+			r.reclaim(ctx, s, tmpl, url, token)
+		}
 		if err == nil && as.LastActivity != nil {
 			if as.LastActivity.Sub(last) > activityStep || st.LastActivity == nil {
 				t := metav1.NewTime(*as.LastActivity)
@@ -470,6 +505,11 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 
 	switch d.act {
 	case actEnd:
+		why := "idle"
+		if !now.Before(s.CreationTimestamp.Add(to.max)) {
+			why = "max"
+		}
+		r.note(ctx, s, corev1.EventTypeNormal, "Ended", "ended by the "+why+" timeout", "reason", why)
 		return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, s))
 	case actWarnIdle, actWarnMax:
 		kind, cond, msg := agentapi.IdleWarning, condIdleWarned, "This session ends soon because it is idle."
@@ -523,6 +563,7 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 			return ctrl.Result{}, err
 		}
 		telemetry.CapacityEvictions.WithLabelValues(gaugeName(np)).Inc()
+		slog.InfoContext(ctx, "evicted the oldest idle instance for capacity", "session", s.Name, "node_pool", gaugeName(np))
 	}
 
 	left := r.cfg.Capacity.ExhaustedAfter.Duration - now.Sub(since)
@@ -546,6 +587,7 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 		strategy = "none"
 	}
 	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed").Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	r.note(ctx, s, corev1.EventTypeWarning, "Failed", code+": "+msg, "result", "failed", "code", code, "message", msg, "strategy", strategy)
 	return r.expire(ctx, s)
 }
 
@@ -607,4 +649,93 @@ func camel(code string) string {
 		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
 	}
 	return b.String()
+}
+
+// note logs one line about the session and emits a Kubernetes Event on it. The line carries the pseudonymous user id only.
+func (r *sessionReconciler) note(ctx context.Context, s *v1.IDESession, eventType, reason, msg string, attrs ...any) {
+	args := append([]any{"session", s.Name, "template", s.Spec.TemplateRef, "user", telemetry.UserID(r.salt, s.Spec.Owner)}, attrs...)
+	if eventType == corev1.EventTypeWarning {
+		slog.WarnContext(ctx, "session "+strings.ToLower(reason), args...)
+	} else {
+		slog.InfoContext(ctx, "session "+strings.ToLower(reason), args...)
+	}
+	r.events.Eventf(s, nil, eventType, reason, reason, "%s", msg)
+}
+
+// workspaceHolder returns the name of another session that holds the workspace of s, or "".
+// The older session wins, so two sessions created at once do not both fail. Sessions that are deleting or failed hold nothing.
+func (r *sessionReconciler) workspaceHolder(ctx context.Context, s *v1.IDESession) (string, error) {
+	var l v1.IDESessionList
+	if err := r.List(ctx, &l, client.InNamespace(s.Namespace), client.MatchingFields{indexWorkspaceRef: s.Spec.WorkspaceRef}); err != nil {
+		return "", err
+	}
+	for i := range l.Items {
+		o := &l.Items[i]
+		if o.Name == s.Name || o.DeletionTimestamp != nil || o.Status.Phase == v1.SessionFailed {
+			continue
+		}
+		if o.CreationTimestamp.Before(&s.CreationTimestamp) || o.CreationTimestamp.Equal(&s.CreationTimestamp) && o.Name < s.Name {
+			return o.Name, nil
+		}
+	}
+	return "", nil
+}
+
+// pushClaim sends the launch data to the agent. Keys the template does not allow are dropped and long values are cut (ADR 0012).
+func (r *sessionReconciler) pushClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, base, token string, data map[string]string) error {
+	cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
+	defer cancel()
+	req := agentapi.ClaimRequest{Session: s.Name, Data: r.allowedData(ctx, s, tmpl, data)}
+	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
+		req.Traceparent = &tp
+	}
+	actx, aspan := otel.Tracer("eduide-operator").Start(cctx, "agent.claim")
+	defer aspan.End()
+	return r.agent.Claim(actx, base, token, req)
+}
+
+// reclaim pushes the claim again to an agent that reports claimed=false for a Ready session.
+func (r *sessionReconciler) reclaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, base, token string) {
+	data, ok, err := r.launchData(ctx, s)
+	if err != nil || !ok {
+		slog.WarnContext(ctx, "cannot re-claim: launch data unavailable", "session", s.Name)
+		return
+	}
+	if err := r.pushClaim(ctx, s, tmpl, base, token, data); err != nil {
+		slog.WarnContext(ctx, "re-claim after agent restart failed", "session", s.Name, "error", err.Error())
+		return
+	}
+	r.note(ctx, s, corev1.EventTypeNormal, "Reclaimed", "pushed the launch data again after an agent restart")
+}
+
+// allowedData keeps the keys of the template allowlist and cuts values to their maxLength. Only key names are logged.
+// A template that is gone leaves no allowlist to apply, so the data passes as the service validated it.
+func (r *sessionReconciler) allowedData(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, data map[string]string) map[string]string {
+	if tmpl.UID == "" {
+		return data
+	}
+	limit := map[string]int{}
+	for _, k := range tmpl.Spec.InjectableKeys {
+		limit[k.Name] = cmp.Or(int(k.MaxLength), 2048)
+	}
+	out := make(map[string]string, len(data))
+	var dropped, cut []string
+	for k, v := range data {
+		n, ok := limit[k]
+		switch {
+		case !ok:
+			dropped = append(dropped, k)
+		case len(v) > n:
+			cut = append(cut, k)
+			out[k] = strings.ToValidUTF8(v[:n], "") // no half rune at the cut
+		default:
+			out[k] = v
+		}
+	}
+	if len(dropped)+len(cut) > 0 {
+		slices.Sort(dropped)
+		slices.Sort(cut)
+		slog.WarnContext(ctx, "launch data does not match the template allowlist", "session", s.Name, "dropped_keys", dropped, "truncated_keys", cut)
+	}
+	return out
 }

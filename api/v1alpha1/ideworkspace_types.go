@@ -35,6 +35,8 @@ type IDEWorkspaceSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self.mode == oldSelf.mode",message="mode is immutable"
 	Persistence WorkspacePersistence `json:"persistence"`
 	// Retention after last use; overrides template and deployment (G19).
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Pattern=`^([0-9]+(\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$`
 	// +optional
 	Retention *metav1.Duration `json:"retention,omitempty"`
 	// +optional

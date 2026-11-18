@@ -2,12 +2,15 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -16,6 +19,8 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/claim"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 func TestTemplatePrepullAndValidation(t *testing.T) {
@@ -139,6 +144,14 @@ func TestColdStartCreatesInstance(t *testing.T) {
 	}
 	if p := rule.Filters[1].URLRewrite.Path; p.Type != gatewayv1.PrefixMatchHTTPPathModifier || *p.ReplacePrefixMatch != "/" {
 		t.Errorf("rewrite: %+v", p)
+	}
+	if len(rule.Filters) != 3 || rule.Filters[2].Type != gatewayv1.HTTPRouteFilterResponseHeaderModifier ||
+		rule.Filters[2].ResponseHeaderModifier.Set[0].Name != "Strict-Transport-Security" || len(rule.Filters[2].ResponseHeaderModifier.Set) != 1 {
+		t.Errorf("response filter: %+v", rule.Filters)
+	}
+	ide := pod.Spec.Containers[0].SecurityContext
+	if ide == nil || ide.AllowPrivilegeEscalation == nil || *ide.AllowPrivilegeEscalation || ide.Capabilities == nil || len(ide.Capabilities.Drop) != 1 || ide.Capabilities.Drop[0] != "ALL" {
+		t.Errorf("ide securityContext: %+v", ide)
 	}
 	if b := rule.BackendRefs[0]; string(b.Name) != pod.Name || *b.Port != 8080 {
 		t.Errorf("backend: %+v", b)
@@ -394,6 +407,9 @@ func TestWorkspaceSessionAndExpiry(t *testing.T) {
 	if ws.Status.ExpiredAt == nil {
 		t.Error("expiredAt is not set")
 	}
+	if !logs.has("workspace expired", "workspace", "w-test") {
+		t.Error("the expiry is not logged")
+	}
 
 	// The retain annotation cancels the expiry.
 	setRetain := func(v string) {
@@ -418,6 +434,9 @@ func TestWorkspaceSessionAndExpiry(t *testing.T) {
 	defer clk.Step(-testGrace - time.Second)
 	poke(ws)
 	eventually(t, "workspace deleted", func() bool { return notFound(ws) })
+	if !logs.has("workspace deleted after its grace period", "workspace", "w-test") {
+		t.Error("the deletion is not logged")
+	}
 }
 
 func TestWorkspaceImport(t *testing.T) {
@@ -435,6 +454,13 @@ func TestWorkspaceImport(t *testing.T) {
 	if ws.Status.ClaimName != "legacy-claim" || ws.Status.LastUsed.Time.Before(before) {
 		t.Errorf("status: %+v", ws.Status)
 	}
+	// The workspace adopts the imported claim, so the retention deletes it like a created one.
+	legacy := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "legacy-claim", Namespace: testNS}}
+	eventually(t, "claim adopted", func() bool {
+		_ = get(legacy)
+		c := metav1.GetControllerOf(legacy)
+		return c != nil && c.Kind == "IDEWorkspace" && c.Name == "w-import"
+	})
 	if err := get(&corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "w-import", Namespace: testNS}}); err == nil {
 		t.Error("an imported workspace must not create a new claim")
 	}
@@ -590,4 +616,527 @@ func TestSessionWaitsForLateWorkspace(t *testing.T) {
 	mustCreate(t, &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-late", Namespace: testNS},
 		Spec: v1.IDEWorkspaceSpec{Owner: "alice", TemplateRef: "tpl-late", Persistence: v1.WorkspacePersistence{Mode: v1.WorkspaceVolume}}})
 	eventually(t, "session pod with the late workspace", func() bool { return sessionStatus("s-late").PodName != "" })
+}
+
+func sessionEvents(name string) map[string]string {
+	var l eventsv1.EventList
+	_ = k8s.List(context.Background(), &l, client.InNamespace(testNS))
+	out := map[string]string{}
+	for _, e := range l.Items {
+		if e.Regarding.Kind == "IDESession" && e.Regarding.Name == name {
+			out[e.Reason] = e.Type + ": " + e.Note
+		}
+	}
+	return out
+}
+
+func TestEventsAndLogsOfASession(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-obs"))
+	createSession(t, "s-obs", "tpl-obs")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-obs"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-obs").Phase == v1.SessionReady })
+	eventually(t, "events", func() bool {
+		ev := sessionEvents("s-obs")
+		return strings.HasPrefix(ev["Created"], "Normal") && strings.HasPrefix(ev["Ready"], "Normal")
+	})
+	for _, msg := range []string{"session created", "session ready"} {
+		recs := logs.find(msg, "s-obs")
+		if len(recs) != 1 {
+			t.Fatalf("%q logged %d times", msg, len(recs))
+		}
+		if u, _ := recs[0]["user"].(string); len(u) != 16 || u == "alice" {
+			t.Errorf("%q: user %v is not a pseudonym", msg, recs[0]["user"])
+		}
+		if recs[0]["template"] != "tpl-obs" {
+			t.Errorf("%q: template %v", msg, recs[0]["template"])
+		}
+	}
+	if r := logs.find("session ready", "s-obs")[0]; r["strategy"] != "cold" || r["duration_s"] == nil {
+		t.Errorf("ready line: %v", r)
+	}
+	logs.mu.Lock()
+	defer logs.mu.Unlock()
+	for _, m := range logs.recs {
+		if strings.Contains(fmt.Sprint(m), "git.example.org") {
+			t.Errorf("launch data in a log line: %v", m)
+		}
+	}
+}
+
+func TestFailureEmitsWarningEventAndLog(t *testing.T) {
+	requireEnv(t)
+	createSession(t, "s-fail-obs", "no-such-template-obs")
+	eventually(t, "warning event", func() bool {
+		return strings.Contains(sessionEvents("s-fail-obs")["Failed"], "Warning: template-not-found")
+	})
+	recs := logs.find("session failed", "s-fail-obs")
+	if len(recs) != 1 || recs[0]["code"] != v1.ErrorTemplateNotFound || recs[0]["level"] != "WARN" {
+		t.Errorf("failure line: %v", recs)
+	}
+}
+
+func TestIdleEndIsLogged(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-endlog")
+	tm.Spec.Timeouts = v1.Timeouts{Idle: &metav1.Duration{Duration: 2 * time.Second}, Warning: &metav1.Duration{Duration: time.Second}}
+	mustCreate(t, tm)
+	createSession(t, "s-endlog", "tpl-endlog")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-endlog"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ended", func() bool {
+		return notFound(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-endlog", Namespace: testNS}})
+	})
+	if recs := logs.find("session ended", "s-endlog"); len(recs) != 1 || recs[0]["reason"] != "idle" {
+		t.Errorf("end line: %v", recs)
+	}
+}
+
+func TestRunningSessionSurvivesTemplateDeletion(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-orphan")
+	mustCreate(t, tm)
+	createSession(t, "s-orphan", "tpl-orphan")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-orphan"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-orphan").Phase == v1.SessionReady })
+	if err := k8s.Delete(context.Background(), tm); err != nil {
+		t.Fatal(err)
+	}
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-orphan", Namespace: testNS}}
+	for range 3 {
+		poke(s)
+		time.Sleep(400 * time.Millisecond)
+	}
+	if st = sessionStatus("s-orphan"); st.Phase != v1.SessionReady {
+		t.Fatalf("session ended with its template: %+v", st)
+	}
+	if len(podsWith(client.MatchingLabels{v1.LabelSession: "s-orphan"})) != 1 {
+		t.Error("the pod is gone")
+	}
+}
+
+func TestImagePullErrorFailsFast(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-pull"))
+	createSession(t, "s-pull", "tpl-pull")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-pull"); return st.PodName != "" })
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(p); err != nil {
+		t.Fatal(err)
+	}
+	setWaiting := func(msg string) {
+		if err := get(p); err != nil {
+			t.Fatal(err)
+		}
+		p.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ide", State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff", Message: msg}}}}
+		if err := k8s.Status().Update(context.Background(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setWaiting(`Back-off pulling image "r.example.org/secret-registry-detail/ide:1": ErrImagePull: manifest unknown`)
+	time.Sleep(500 * time.Millisecond)
+	if st = sessionStatus("s-pull"); st.Phase == v1.SessionFailed {
+		t.Fatalf("failed before the grace period: %+v", st)
+	}
+	clk.Step(stuckLimit + time.Second)
+	defer clk.Step(-stuckLimit - time.Second)
+	// A pull that can heal, such as a timeout of a large image, is not given up after the grace period.
+	setWaiting(`Back-off pulling image "r.example.org/ide:1": ErrImagePull: dial tcp: i/o timeout`)
+	time.Sleep(500 * time.Millisecond)
+	if st = sessionStatus("s-pull"); st.Phase == v1.SessionFailed {
+		t.Fatalf("a transient pull error failed the session: %+v", st)
+	}
+	setWaiting(`Back-off pulling image "r.example.org/secret-registry-detail/ide:1": ErrImagePull: manifest unknown`)
+	eventually(t, "start-failed", func() bool { st = sessionStatus("s-pull"); return st.Phase == v1.SessionFailed })
+	if st.ErrorCode != v1.ErrorStartFailed || !strings.Contains(st.Message, "ImagePullBackOff") || strings.Contains(st.Message, "secret-registry-detail") {
+		t.Errorf("status: %+v", st)
+	}
+}
+
+func TestSecondSessionOnABusyWorkspaceFailsAtOnce(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-busy"))
+	mustCreate(t, &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-busy", Namespace: testNS},
+		Spec: v1.IDEWorkspaceSpec{Owner: "alice", TemplateRef: "tpl-busy", Persistence: v1.WorkspacePersistence{Mode: v1.WorkspaceVolume}}})
+	createSession(t, "s-busy1", "tpl-busy", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-busy" })
+	eventually(t, "first session has a pod", func() bool { return sessionStatus("s-busy1").PodName != "" })
+	createSession(t, "s-busy2", "tpl-busy", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-busy" })
+	var st v1.IDESessionStatus
+	eventually(t, "workspace-in-use", func() bool { st = sessionStatus("s-busy2"); return st.Phase == v1.SessionFailed })
+	if st.ErrorCode != v1.ErrorWorkspaceInUse || st.PodName != "" {
+		t.Errorf("status: %+v", st)
+	}
+	if p := sessionStatus("s-busy1").Phase; p == v1.SessionFailed {
+		t.Error("the running session was disturbed")
+	}
+}
+
+func TestMissingDataSecretMessage(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-nosecret"))
+	mustCreate(t, newSession("s-nosecret", "tpl-nosecret", "alice"))
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-nosecret"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	time.Sleep(500 * time.Millisecond)
+	clk.Step(agentWaitLimit + time.Minute)
+	defer clk.Step(-agentWaitLimit - time.Minute)
+	poke(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-nosecret", Namespace: testNS}})
+	eventually(t, "failed", func() bool { st = sessionStatus("s-nosecret"); return st.Phase == v1.SessionFailed })
+	want := "launch data Secret s-nosecret-data missing or not labelled app.kubernetes.io/managed-by=eduide"
+	if st.Message != want {
+		t.Errorf("message %q, want %q", st.Message, want)
+	}
+}
+
+func TestAgentRestartIsReclaimed(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-reclaim"))
+	createSession(t, "s-reclaim", "tpl-reclaim")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-reclaim"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-reclaim").Phase == v1.SessionReady })
+	if n := agent.claimCount("s-reclaim"); n != 1 {
+		t.Fatalf("claims before the restart: %d", n)
+	}
+	agent.set(func(a *fakeAgent) { a.unclaimed = true })
+	defer agent.set(func(a *fakeAgent) { a.unclaimed = false })
+	eventually(t, "second claim", func() bool { return agent.claimCount("s-reclaim") >= 2 })
+	if c := agent.claimFor("s-reclaim"); c == nil || c.Data["GIT_URI"] != "https://git.example.org/r.git" {
+		t.Errorf("claim: %+v", c)
+	}
+	eventually(t, "reclaim event", func() bool { return strings.Contains(sessionEvents("s-reclaim")["Reclaimed"], "Normal") })
+}
+
+func TestAllowlistIsEnforcedBeforeTheClaim(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-allow")
+	tm.Spec.InjectableKeys = []v1.InjectableKey{{Name: "GIT_URI", Format: v1.FormatPattern, Pattern: ".*", MaxLength: 12}}
+	mustCreate(t, tm)
+	mustCreate(t, &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "s-allow-data", Namespace: testNS, Labels: map[string]string{v1.LabelManagedBy: v1.LabelManagedByValue}},
+		StringData: map[string]string{"GIT_URI": "https://git.example.org/r.git", "EVIL": "top-secret-value"},
+	})
+	mustCreate(t, newSession("s-allow", "tpl-allow", "alice"))
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-allow"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-allow").Phase == v1.SessionReady })
+	c := agent.claimFor("s-allow")
+	if c == nil || len(c.Data) != 1 || c.Data["GIT_URI"] != "https://git." {
+		t.Fatalf("claim data: %+v", c)
+	}
+	recs := logs.find("launch data does not match the template allowlist", "s-allow")
+	if len(recs) == 0 || fmt.Sprint(recs[0]["dropped_keys"]) != "[EVIL]" || strings.Contains(fmt.Sprint(recs[0]), "top-secret-value") {
+		t.Errorf("log: %v", recs)
+	}
+}
+
+func poolPods(pool string) []corev1.Pod { return podsWith(client.MatchingLabels{v1.LabelPool: pool}) }
+
+func TestTemplateChangeRollsIdlePods(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-roll")
+	mustCreate(t, tm)
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-roll", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-roll", MinIdle: 2, TargetIdle: 2, MaxInstances: 10}})
+	eventually(t, "2 idle pods", func() bool { return len(poolPods("pool-roll")) == 2 })
+	for _, p := range poolPods("pool-roll") {
+		setReady(t, p.Name)
+	}
+	old := map[string]bool{}
+	for _, p := range poolPods("pool-roll") {
+		old[p.Name] = true
+		if p.Annotations[v1.AnnotationSpecHash] == "" {
+			t.Fatal("pod has no spec hash")
+		}
+	}
+	for {
+		_ = get(tm)
+		tm.Spec.Image = "example.org/ide:2"
+		if k8s.Update(context.Background(), tm) == nil {
+			break
+		}
+	}
+	// A replacement starts above the target; no old pod goes before a replacement is ready.
+	var surge string
+	eventually(t, "a replacement exists", func() bool {
+		for _, p := range poolPods("pool-roll") {
+			if !old[p.Name] {
+				surge = p.Name
+				return true
+			}
+		}
+		return false
+	})
+	time.Sleep(time.Second)
+	readyIdle := func(ps []corev1.Pod) (n int) {
+		for _, p := range ps {
+			if claim.Ready(&p) {
+				n++
+			}
+		}
+		return n
+	}
+	if ps := poolPods("pool-roll"); readyIdle(ps) != 2 || len(ps) != 3 {
+		t.Fatalf("before the replacement is ready: %d ready of %d", readyIdle(ps), len(ps))
+	}
+	setReady(t, surge)
+	eventually(t, "all pods replaced", func() bool {
+		ps := poolPods("pool-roll")
+		if n := readyIdle(ps); n < 2 {
+			t.Errorf("only %d ready idle pods during the roll", n)
+		}
+		done := len(ps) == 2
+		for _, p := range ps {
+			if old[p.Name] {
+				done = false
+				continue
+			}
+			if p.Spec.Containers[0].Image != "example.org/ide:2" {
+				t.Errorf("image %s", p.Spec.Containers[0].Image)
+			}
+			if !claim.Ready(&p) {
+				setReady(t, p.Name)
+			}
+		}
+		return done
+	})
+}
+
+func TestClaimedPodIsNotRolled(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-keep")
+	mustCreate(t, tm)
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-keep", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-keep", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}})
+	eventually(t, "idle", func() bool { return len(poolPods("pool-keep")) == 1 })
+	setReady(t, poolPods("pool-keep")[0].Name)
+	createSession(t, "s-keep", "tpl-keep")
+	var st v1.IDESessionStatus
+	eventually(t, "claimed", func() bool { st = sessionStatus("s-keep"); return st.PodName != "" })
+	for {
+		_ = get(tm)
+		tm.Spec.Image = "example.org/ide:3"
+		if k8s.Update(context.Background(), tm) == nil {
+			break
+		}
+	}
+	time.Sleep(2 * time.Second)
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(p); err != nil || p.DeletionTimestamp != nil {
+		t.Fatalf("claimed pod touched: %v", err)
+	}
+}
+
+func TestOrphanedClaimIsDeleted(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-orphan2"))
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-orphan", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-orphan2", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}})
+	eventually(t, "idle", func() bool { return len(poolPods("pool-orphan")) == 1 })
+	p := poolPods("pool-orphan")[0]
+	for {
+		_ = get(&p)
+		p.Labels[v1.LabelState], p.Labels[v1.LabelSession] = v1.StateClaimed, "ghost"
+		if k8s.Update(context.Background(), &p) == nil {
+			break
+		}
+	}
+	time.Sleep(time.Second)
+	if p.DeletionTimestamp != nil || notFound(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: testNS}}) {
+		t.Fatal("deleted before the grace period")
+	}
+	clk.Step(orphanGrace + time.Second)
+	defer clk.Step(-orphanGrace - time.Second)
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-orphan", Namespace: testNS}})
+	eventually(t, "orphan deleted", func() bool {
+		q := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: testNS}}
+		return notFound(q) || get(q) == nil && q.DeletionTimestamp != nil
+	})
+}
+
+func TestBrokenIdlePodsAreReplaced(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-broken"))
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-broken", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-broken", MinIdle: 2, TargetIdle: 2, MaxInstances: 10}})
+	eventually(t, "2 idle", func() bool { return len(poolPods("pool-broken")) == 2 })
+	pods := poolPods("pool-broken")
+	setStatus := func(name string, cs corev1.ContainerStatus) {
+		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+		if err := get(p); err != nil {
+			t.Fatal(err)
+		}
+		p.Status.ContainerStatuses = []corev1.ContainerStatus{cs}
+		if err := k8s.Status().Update(context.Background(), p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A restarted container: replaced at once.
+	setStatus(pods[0].Name, corev1.ContainerStatus{Name: "agent", RestartCount: 1})
+	eventually(t, "restarted pod replaced", func() bool {
+		ps := poolPods("pool-broken")
+		for _, p := range ps {
+			if p.Name == pods[0].Name {
+				return false
+			}
+		}
+		return len(ps) == 2
+	})
+	// A pull error: replaced after the grace period, and a claim skips it meanwhile. A pull that can heal stays.
+	pull := func(msg string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ErrImagePull", Message: msg}}}
+	}
+	setStatus(pods[1].Name, pull("429 Too Many Requests"))
+	clk.Step(stuckLimit + time.Second)
+	defer clk.Step(-stuckLimit - time.Second)
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-broken", Namespace: testNS}})
+	time.Sleep(500 * time.Millisecond)
+	if notFound(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: pods[1].Name, Namespace: testNS}}) {
+		t.Fatal("a pod with a pull error that can heal was replaced")
+	}
+	setStatus(pods[1].Name, pull("failed to resolve reference: not found"))
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-broken", Namespace: testNS}})
+	eventually(t, "pull error pod replaced", func() bool {
+		for _, p := range poolPods("pool-broken") {
+			if p.Name == pods[1].Name {
+				return false
+			}
+		}
+		return true
+	})
+}
+
+func TestIdleInstanceIsRepaired(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-repair"))
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-repair", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-repair", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}})
+	eventually(t, "idle", func() bool { return len(poolPods("pool-repair")) == 1 })
+	p := poolPods("pool-repair")[0]
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: testNS}}
+	route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: p.Name, Namespace: testNS}}
+	eventually(t, "children", func() bool { return get(svc) == nil && get(route) == nil })
+	if err := k8s.Delete(context.Background(), svc); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8s.Delete(context.Background(), route); err != nil {
+		t.Fatal(err)
+	}
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-repair", Namespace: testNS}})
+	eventually(t, "service and route recreated", func() bool { return get(svc) == nil && get(route) == nil })
+
+	// Without its token Secret the pod is discarded and replaced.
+	if err := k8s.Delete(context.Background(), &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: p.Name + "-token", Namespace: testNS}}); err != nil {
+		t.Fatal(err)
+	}
+	poke(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-repair", Namespace: testNS}})
+	eventually(t, "pod without token replaced", func() bool {
+		ps := poolPods("pool-repair")
+		return len(ps) == 1 && ps[0].Name != p.Name
+	})
+}
+
+func TestSessionFailsWhenTheTokenSecretIsGone(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-notoken"))
+	createSession(t, "s-notoken", "tpl-notoken")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-notoken"); return st.PodName != "" })
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: st.PodName + "-token", Namespace: testNS}}
+	eventually(t, "token", func() bool { return get(sec) == nil })
+	if err := k8s.Delete(context.Background(), sec); err != nil {
+		t.Fatal(err)
+	}
+	poke(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-notoken", Namespace: testNS}})
+	eventually(t, "failed", func() bool { st = sessionStatus("s-notoken"); return st.Phase == v1.SessionFailed })
+	if st.ErrorCode != v1.ErrorStartFailed || !strings.Contains(st.Message, "token Secret") {
+		t.Errorf("status: %+v", st)
+	}
+}
+
+// A create that failed after the pod leaves it without children; a pod that has not started gets new ones.
+func TestHalfCreatedInstanceIsCompleted(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-half"))
+	createSession(t, "s-half", "tpl-half")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-half"); return st.PodName != "" })
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: st.PodName + "-token", Namespace: testNS}}
+	route := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	eventually(t, "children", func() bool { return get(sec) == nil && get(route) == nil && get(svc) == nil })
+	for _, o := range []client.Object{route, svc, sec} {
+		if err := k8s.Delete(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	eventually(t, "children gone", func() bool { return notFound(sec) && notFound(route) })
+	poke(&v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-half", Namespace: testNS}})
+	eventually(t, "children recreated", func() bool { return get(sec) == nil && get(route) == nil && get(svc) == nil })
+	if st = sessionStatus("s-half"); st.Phase == v1.SessionFailed {
+		t.Fatalf("session failed: %+v", st)
+	}
+}
+
+func TestOnlyTheOldestPoolOfATemplateIsActive(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-dup"))
+	mk := func(name string) *v1.IDEPool {
+		p := &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS},
+			Spec: v1.IDEPoolSpec{TemplateRef: "tpl-dup", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}}
+		mustCreate(t, p)
+		return p
+	}
+	first := mk("pool-dup-a")
+	eventually(t, "first pool fills", func() bool { return len(poolPods("pool-dup-a")) == 1 })
+	time.Sleep(1100 * time.Millisecond) // creation timestamps have second resolution
+	second := mk("pool-dup-b")
+	eventually(t, "duplicate condition", func() bool {
+		_ = get(second)
+		c := meta.FindStatusCondition(second.Status.Conditions, v1.ConditionReady)
+		return c != nil && c.Status == metav1.ConditionFalse && c.Reason == "DuplicateTemplate"
+	})
+	if n := len(poolPods("pool-dup-b")); n != 0 {
+		t.Errorf("duplicate pool keeps %d pods", n)
+	}
+	// When the older pool goes, the other one takes over.
+	if err := k8s.Delete(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "second pool takes over", func() bool {
+		_ = get(second)
+		return meta.IsStatusConditionTrue(second.Status.Conditions, v1.ConditionReady) && len(poolPods("pool-dup-b")) == 1
+	})
+}
+
+func TestEmptyClaimCountsOnlyForTemplatesWithAPool(t *testing.T) {
+	requireEnv(t)
+	count := func(tpl string) float64 {
+		return testutil.ToFloat64(telemetry.ClaimTotal.WithLabelValues(tpl, "empty"))
+	}
+	mustCreate(t, newTemplate("tpl-nopool"))
+	createSession(t, "s-nopool", "tpl-nopool")
+	eventually(t, "cold pod", func() bool { return sessionStatus("s-nopool").PodName != "" })
+	if n := count("tpl-nopool"); n != 0 {
+		t.Errorf("template without a pool counted %v empty claims", n)
+	}
+	mustCreate(t, newTemplate("tpl-emptypool"))
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-emptypool", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-emptypool", MinIdle: 0, TargetIdle: 0, MaxInstances: 5}})
+	eventually(t, "pool exists in the cache", func() bool {
+		return get(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-emptypool", Namespace: testNS}}) == nil
+	})
+	time.Sleep(300 * time.Millisecond)
+	createSession(t, "s-emptypool", "tpl-emptypool")
+	eventually(t, "empty claim counted", func() bool { return count("tpl-emptypool") >= 1 })
 }

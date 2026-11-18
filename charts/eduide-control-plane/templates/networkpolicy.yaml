@@ -53,8 +53,14 @@ spec:
           {{- include "ecp.selector" (dict "ctx" . "component" "operator") | nindent 10 }}
     ports:
     - {protocol: TCP, port: 8081}
-{{- with $np.sessionEgress }}
+{{- $deny := concat $np.sessionEgressDeny $np.sessionEgressExtraDeny }}
+{{- $deny4 := list }}
+{{- $deny6 := list }}
+{{- range $deny }}
+{{- if contains ":" . }}{{ $deny6 = append $deny6 . }}{{ else }}{{ $deny4 = append $deny4 . }}{{ end }}
+{{- end }}
 ---
+# Session pods may resolve names and reach the internet, but not the private ranges around them.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -67,8 +73,29 @@ spec:
       {{- toYaml $session | nindent 6 }}
   policyTypes: [Egress]
   egress:
-  {{- toYaml . | nindent 2 }}
-{{- end }}
+  {{- if $np.sessionEgress }}
+  {{- toYaml $np.sessionEgress | nindent 2 }}
+  {{- else }}
+  - to:
+    - namespaceSelector:
+        {{- toYaml $np.dnsNamespaceSelector | nindent 8 }}
+    ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        {{- with $deny4 }}
+        except:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+    - ipBlock:
+        cidr: ::/0
+        {{- with $deny6 }}
+        except:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+  {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

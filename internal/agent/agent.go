@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -201,6 +202,11 @@ func (a *Agent) LocalHandler() http.Handler {
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		a.mu.Lock()
 		a.lastActivity = time.Now()
+		// Activity cancels pending idle warnings, so a reloaded IDE does not show a stale one.
+		if kept := slices.DeleteFunc(a.notices, func(n agentapi.Notice) bool { return n.Kind == agentapi.IdleWarning }); len(kept) != len(a.notices) {
+			a.notices = kept
+			a.bump()
+		}
 		a.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 	})

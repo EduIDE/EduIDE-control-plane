@@ -54,7 +54,8 @@ The decision, per request:
 | (b) ID token present but invalid or expired | 302 to the same URL and expire the auth cookies, so oauth2 starts a fresh login, silent through Keycloak SSO |
 | (c) Valid token | allow only if the first path segment is the instance id of a session in phase `Ready` whose `spec.owner` equals the configured user claim (`oidc.userClaim`); otherwise 403 |
 
-- Unknown, free, foreign and released instances get 403.
+- Unknown, free, foreign and released instances get 403 for a logged-in user and the login redirect for an anonymous one.
+  An id without a session route does not break this: the chart adds a catch-all HTTPRoute (`PathPrefix /`, label `eduide.github.io/route=session`) on the instance and the webview host. Session routes have longer prefixes and win. Every other path passes the SecurityPolicy and authz first and only then reaches the service, which answers 404.
 - The instance id is random and unguessable (label `eduide.github.io/instance`, `status.instance` of the IDESession), so answer (a) leaks nothing about sessions.
 - `authz` reads sessions from an own informer only, with no API call per request. WebSockets are checked at the upgrade.
 - Results are counted in `eduide_authz_decisions_total` as `allow`, `deny` or `login`.

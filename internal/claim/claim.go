@@ -5,6 +5,7 @@ package claim
 import (
 	"crypto/rand"
 	"encoding/base32"
+	"slices"
 	"sort"
 	"strings"
 
@@ -29,6 +30,67 @@ func Ready(p *corev1.Pod) bool {
 // Usable reports whether an idle pod can still serve: not deleting and not terminated.
 func Usable(p *corev1.Pod) bool {
 	return p.DeletionTimestamp == nil && p.Status.Phase != corev1.PodFailed && p.Status.Phase != corev1.PodSucceeded
+}
+
+// stuckWaiting are container waiting reasons of a pod that does not start: a failed image pull, a wrong image name, a broken container config, a crash loop.
+var stuckWaiting = map[string]bool{"ErrImagePull": true, "ImagePullBackOff": true, "InvalidImageName": true, "CreateContainerConfigError": true, "CrashLoopBackOff": true}
+
+// pullGone are registry answers to a pull that waiting does not change. Timeouts, rate limits and
+// broken connections are not among them: the kubelet retries those, and a large image may still arrive.
+var pullGone = []string{"not found", "manifest unknown", "unauthorized", "denied", "forbidden", "insufficient_scope"}
+
+// StuckWaiting returns the container and the waiting reason of a container that waits for one of stuckWaiting, or "".
+func StuckWaiting(p *corev1.Pod) (container, reason string) {
+	return waiting(p, func(*corev1.ContainerStateWaiting) bool { return true })
+}
+
+// Hopeless is StuckWaiting without the pull errors that can heal, so a slow or flaky pull is not given up early.
+func Hopeless(p *corev1.Pod) (container, reason string) {
+	return waiting(p, func(w *corev1.ContainerStateWaiting) bool {
+		if w.Reason != "ErrImagePull" && w.Reason != "ImagePullBackOff" {
+			return true
+		}
+		msg := strings.ToLower(w.Message)
+		return slices.ContainsFunc(pullGone, func(s string) bool { return strings.Contains(msg, s) })
+	})
+}
+
+func waiting(p *corev1.Pod, match func(*corev1.ContainerStateWaiting) bool) (container, reason string) {
+	for _, list := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, cs := range list {
+			if w := cs.State.Waiting; w != nil && stuckWaiting[w.Reason] && match(w) {
+				return cs.Name, w.Reason
+			}
+		}
+	}
+	return "", ""
+}
+
+// Started reports whether a container of the pod has run, so it has read its mounted token.
+func Started(p *corev1.Pod) bool {
+	for _, list := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, cs := range list {
+			if cs.State.Waiting == nil || cs.RestartCount > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Broken returns why an idle pod must not be handed out: a container waits for a reason that does not heal, or has restarted. "" for a sound pod.
+func Broken(p *corev1.Pod) string {
+	if _, reason := StuckWaiting(p); reason != "" {
+		return reason
+	}
+	for _, list := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, cs := range list {
+			if cs.RestartCount > 0 {
+				return "restarted"
+			}
+		}
+	}
+	return ""
 }
 
 // Unschedulable reports whether the scheduler could not place the pod.
@@ -64,6 +126,9 @@ func Idle(pods []corev1.Pod) []corev1.Pod {
 func Candidates(pods []corev1.Pod, includeStarting bool) []corev1.Pod {
 	var ready, starting []corev1.Pod
 	for _, p := range Idle(pods) {
+		if Broken(&p) != "" {
+			continue
+		}
 		if Ready(&p) {
 			ready = append(ready, p)
 		} else if includeStarting {
