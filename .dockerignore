@@ -1,0 +1,11 @@
+.git
+bin
+.e2e
+**/node_modules
+landing-page
+pool-scaler
+clients
+extensions
+docs
+charts
+test

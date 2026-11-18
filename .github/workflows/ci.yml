@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.f.outputs.go }}
+      api: ${{ steps.f.outputs.api }}
+      scaler: ${{ steps.f.outputs.scaler }}
+      ts: ${{ steps.f.outputs.ts }}
+      landing: ${{ steps.f.outputs.landing }}
+      charts: ${{ steps.f.outputs.charts }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: dorny/paths-filter@v4.0.3
+        id: f
+        with:
+          filters: |
+            go: [go.mod, go.sum, 'api/**', 'cmd/**', 'internal/**', 'config/**', Makefile, .golangci.yml, 'build/**']
+            api: ['api/**', 'config/crd/**']
+            scaler: ['pool-scaler/**']
+            ts: ['clients/**', 'extensions/**', 'api/openapi/**']
+            landing: ['landing-page/**']
+            charts: ['charts/**', 'config/crd/**']
+
+  go:
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
+        with: {go-version-file: go.mod}
+      - uses: actions/setup-node@v7.1.0
+        with: {node-version: 22}
+      - name: go.mod is tidy
+        run: go mod tidy && git diff --exit-code -- go.mod go.sum
+      - name: make generate without diff
+        run: make verify-generate
+      - name: Test (unit and envtest)
+        run: make test-go
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with: {version: v2.15.0}
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  api:
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with: {fetch-depth: 0}
+      - uses: actions/setup-go@v7.1.0
+        with: {go-version-file: go.mod}
+      - name: OpenAPI lint
+        run: |
+          go run github.com/daveshanley/vacuum@v0.41.0 lint -d -r .github/vacuum.yaml api/openapi/v1.yaml
+          go run github.com/daveshanley/vacuum@v0.41.0 lint -d -r .github/vacuum.yaml api/agent/v1.yaml
+      - name: Breaking changes (oasdiff) and CRD schema diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          mkdir -p /tmp/base
+          for f in api/openapi/v1.yaml api/agent/v1.yaml; do
+            if git cat-file -e "$BASE:$f" 2>/dev/null; then
+              git show "$BASE:$f" > /tmp/base/spec.yaml
+              go run github.com/oasdiff/oasdiff@v1.39.0 breaking /tmp/base/spec.yaml "$f" --fail-on ERR
+            fi
+          done
+          go run ./hack/crddiff "$BASE"
+
+  pool-scaler:
+    needs: changes
+    if: needs.changes.outputs.scaler == 'true'
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: pool-scaler}}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-go@v7.1.0
+        with: {go-version-file: pool-scaler/go.mod}
+      - run: go mod tidy && git diff --exit-code -- go.mod go.sum
+      - run: go test -race -count=1 ./...
+      - uses: golangci/golangci-lint-action@v9.3.0
+        with: {version: v2.15.0, working-directory: pool-scaler}
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  typescript:
+    needs: changes
+    if: needs.changes.outputs.ts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with: {node-version: 22}
+      - name: Client
+        working-directory: clients/typescript
+        run: npm ci && npm audit --audit-level=high && npm run build && npm test
+      - name: Extension eduide-session
+        if: hashFiles('extensions/eduide-session/package.json') != ''
+        working-directory: extensions/eduide-session
+        run: npm ci && npm audit --audit-level=high && npm run lint && npm test
+
+  landing-page:
+    needs: changes
+    if: needs.changes.outputs.landing == 'true'
+    runs-on: ubuntu-latest
+    defaults: {run: {working-directory: landing-page}}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with: {node-version: 22}
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test --if-present
+
+  charts:
+    needs: changes
+    if: needs.changes.outputs.charts == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: azure/setup-helm@v5.1.0
+      - run: make helm-lint
+      - name: Template tests
+        run: if [ -x charts/test.sh ]; then charts/test.sh; fi
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with: {fetch-depth: 0}
+      - name: Gitleaks
+        run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.0 git /repo --redact --no-banner -v

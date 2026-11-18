@@ -1,0 +1,15 @@
+# One Dockerfile for the four Go binaries: docker build --build-arg CMD=operator -f build/Dockerfile .
+FROM --platform=$BUILDPLATFORM golang:1.27.4 AS build
+ARG TARGETOS TARGETARCH CMD
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY api/ api/
+COPY cmd/ cmd/
+COPY internal/ internal/
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /app ./cmd/${CMD}
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /app /app
+USER 65532:65532
+ENTRYPOINT ["/app"]

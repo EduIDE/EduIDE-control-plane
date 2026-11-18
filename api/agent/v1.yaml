@@ -1,0 +1,145 @@
+openapi: 3.1.0
+info:
+  title: EduIDE session agent protocol
+  version: 1.0.0
+  description: |
+    The agent is a sidecar in every session pod (ADR 0006). It has three listeners:
+
+    | Listener | Address | Who | Auth |
+    |---|---|---|---|
+    | proxy | 0.0.0.0:8080 | Envoy | header `X-EduIDE-Instance-Token`, stripped before forwarding to the IDE on 127.0.0.1:<template port> (HTTP and WebSocket) |
+    | control | 0.0.0.0:8081 | operator | `Authorization: Bearer <instance token>`; `/healthz` and `/readyz` without auth for the kubelet |
+    | local | 127.0.0.1:8082 | `eduide-session` extension in the IDE | none, loopback only |
+
+    The instance token comes from the file `/var/run/eduide/token` (Secret per instance). Comparisons are constant-time.
+    Additive changes only; `snapshot` (phase 9) adds fields to ClaimRequest.
+servers:
+  - url: http://localhost
+paths:
+  /v1/claim:
+    post:
+      operationId: claim
+      tags: [control]
+      description: |
+        Exactly one push per claim. Stores the launch data in memory (never on disk, never logged).
+        Idempotent for the same session; a different session gets 409.
+      security: [{instanceToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ClaimRequest"}
+      responses:
+        "200": {description: "Claimed, agent is ready."}
+        "401": {description: Wrong or missing token.}
+        "409": {description: Claimed by another session.}
+        "413": {description: Payload larger than 16 KiB.}
+  /v1/status:
+    get:
+      operationId: status
+      tags: [control]
+      description: Polled by the operator in a throttled cycle with jitter (ADR 0016).
+      security: [{instanceToken: []}]
+      responses:
+        "200":
+          description: Current state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Status"}
+        "401": {description: Wrong or missing token.}
+  /v1/notify:
+    post:
+      operationId: notify
+      tags: [control]
+      description: The operator pushes a notice for the user, e.g. the idle timeout warning. The extension receives it via the local long-poll.
+      security: [{instanceToken: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Notice"}
+      responses:
+        "204": {description: Queued.}
+        "401": {description: Wrong or missing token.}
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [control]
+      responses:
+        "200": {description: Agent alive.}
+  /readyz:
+    get:
+      operationId: readyz
+      tags: [control]
+      description: Ready when the IDE answers on its loopback port. Used as the pod readiness probe; a ready idle pod counts as idleReady.
+      responses:
+        "200": {description: IDE answers.}
+        "503": {description: IDE not yet up.}
+  /v1/session:
+    get:
+      operationId: getSession
+      tags: [local]
+      description: |
+        Long-poll for the extension. Returns immediately when `version` on the server is greater than `after`,
+        otherwise waits up to `timeout` seconds and returns the unchanged state (same version).
+      parameters:
+        - {name: after, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: timeout, in: query, schema: {type: integer, minimum: 0, maximum: 60, default: 30}}
+      responses:
+        "200":
+          description: Session state.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/LocalSession"}
+  /v1/heartbeat:
+    post:
+      operationId: heartbeat
+      tags: [local]
+      description: Sent by the extension on real user input, at most once per minute.
+      responses:
+        "204": {description: Recorded.}
+components:
+  securitySchemes:
+    instanceToken: {type: http, scheme: bearer}
+  schemas:
+    ClaimRequest:
+      type: object
+      required: [session, data]
+      properties:
+        session: {type: string, description: "IDESession name."}
+        data:
+          type: object
+          description: Launch data from the session's data Secret, after the allowlist check.
+          additionalProperties: {type: string}
+        traceparent: {type: string}
+    Status:
+      type: object
+      required: [claimed, ready, connections]
+      properties:
+        claimed: {type: boolean}
+        session: {type: string}
+        ready: {type: boolean, description: "Claimed and launch data stored."}
+        lastActivity:
+          type: string
+          format: date-time
+          description: Latest of extension heartbeat and proxied request. Absent without any activity since the claim.
+        connections: {type: integer, description: "Open proxied WebSocket connections. 0 after the claim counts as no browser (G7)."}
+    Notice:
+      type: object
+      required: [kind, message]
+      properties:
+        kind: {type: string, enum: [idle-warning, max-warning, info]}
+        message: {type: string, maxLength: 1024}
+        at: {type: string, format: date-time, description: "When the session will end."}
+    LocalSession:
+      type: object
+      required: [version, claimed]
+      properties:
+        version: {type: integer, description: "Increases on every change (claim, notice)."}
+        claimed: {type: boolean}
+        data:
+          type: object
+          additionalProperties: {type: string}
+        notices:
+          type: array
+          items: {$ref: "#/components/schemas/Notice"}

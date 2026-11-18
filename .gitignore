@@ -1,0 +1,6 @@
+/bin/
+/.e2e/
+node_modules/
+dist/
+*.out
+.DS_Store

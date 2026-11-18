@@ -1,0 +1,94 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: eduide-operator
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - persistentvolumeclaims
+  - pods
+  - secrets
+  - services
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  - events.k8s.io
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - eduide.github.io
+  resources:
+  - idepools
+  - idesessions
+  - idetemplates
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - eduide.github.io
+  resources:
+  - idepools/status
+  - idesessions/status
+  - idetemplates/status
+  - ideworkspaces/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - eduide.github.io
+  resources:
+  - idesessions/finalizers
+  - ideworkspaces/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - eduide.github.io
+  resources:
+  - ideworkspaces
+  verbs:
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch

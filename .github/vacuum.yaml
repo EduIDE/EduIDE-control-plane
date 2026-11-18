@@ -1,0 +1,5 @@
+extends: [[vacuum:oas, recommended]]
+rules:
+  operation-description: off
+  oas3-valid-schema-example: off
+  description-duplication: off

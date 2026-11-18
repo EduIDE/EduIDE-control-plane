@@ -1,0 +1,38 @@
+name: Release
+
+# A tag vX.Y.Z versions everything together (U2): images are built by images.yml
+# on the same tag; this workflow publishes the charts as OCI artifacts.
+on:
+  push:
+    tags: ['v*.*.*']
+  pull_request:
+    paths: ['charts/**']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: azure/setup-helm@v5.1.0
+      - name: Version
+        id: v
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "version=0.0.0-pr.${{ github.event.pull_request.number }}.$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            echo "app=pr-${{ github.event.pull_request.number }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "app=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Package and push
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for c in charts/*/; do
+            helm package "$c" --version "${{ steps.v.outputs.version }}" --app-version "${{ steps.v.outputs.app }}" -d dist
+          done
+          for p in dist/*.tgz; do helm push "$p" oci://ghcr.io/eduide/eduide-control-plane/charts; done

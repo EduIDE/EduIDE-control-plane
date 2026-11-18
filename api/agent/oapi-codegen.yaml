@@ -1,0 +1,4 @@
+package: agentapi
+output: internal/agentapi/types.gen.go
+generate:
+  models: true

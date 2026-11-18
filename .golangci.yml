@@ -1,0 +1,10 @@
+version: "2"
+linters:
+  enable: [errorlint, gosec, misspell, unconvert, bodyclose, noctx]
+  exclusions:
+    generated: strict
+    rules:
+      - path: _test\.go
+        linters: [gosec, noctx]
+formatters:
+  enable: [gofmt, goimports]

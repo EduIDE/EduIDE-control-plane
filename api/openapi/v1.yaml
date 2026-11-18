@@ -1,0 +1,295 @@
+openapi: 3.1.0
+info:
+  title: EduIDE control plane API
+  version: 1.0.0
+  description: |
+    Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
+    Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
+    All endpoints need an OIDC bearer token of the deployment's realm.
+  license: {name: EPL-2.0}
+servers:
+  - url: /api/v1
+security:
+  - bearer: []
+tags:
+  - name: templates
+  - name: sessions
+  - name: workspaces
+  - name: overview
+paths:
+  /templates:
+    get:
+      operationId: listTemplates
+      tags: [templates]
+      responses:
+        "200":
+          description: Templates of this deployment.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Template"}}
+        default: {$ref: "#/components/responses/Problem"}
+  /sessions:
+    get:
+      operationId: listSessions
+      tags: [sessions]
+      responses:
+        "200":
+          description: Sessions of the calling user.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Session"}}
+        default: {$ref: "#/components/responses/Problem"}
+    post:
+      operationId: launchSession
+      tags: [sessions]
+      description: |
+        Launches a session. Idempotent (G14): the key is template plus workspace, or for sessions
+        without persistence template plus a hash of the launch data. A repeated launch returns the
+        existing session with 200. Send `traceparent` to join the launch trace.
+      parameters:
+        - {name: traceparent, in: header, required: false, schema: {type: string, maxLength: 55}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LaunchRequest"}
+      responses:
+        "200":
+          description: Existing session for the same launch key.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+        "201":
+          description: New session.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+        default: {$ref: "#/components/responses/Problem"}
+  /sessions/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getSession
+      tags: [sessions]
+      responses:
+        "200":
+          description: The session.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Session"}
+        default: {$ref: "#/components/responses/Problem"}
+    delete:
+      operationId: deleteSession
+      tags: [sessions]
+      responses:
+        "204": {description: "Stopping. The pod is discarded, a volume workspace stays."}
+        default: {$ref: "#/components/responses/Problem"}
+  /sessions/{name}/events:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: watchSession
+      tags: [sessions]
+      description: |
+        Server-Sent Events. Every change of the session is one event `session` with a Session as data.
+        The stream starts with the current state. Comments (`: ping`) keep it open every 15 s.
+        After phase Ready or Failed the server sends the final event and closes.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /workspaces:
+    get:
+      operationId: listWorkspaces
+      tags: [workspaces]
+      responses:
+        "200":
+          description: Workspaces of the calling user.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/Workspace"}}
+        default: {$ref: "#/components/responses/Problem"}
+    post:
+      operationId: createWorkspace
+      tags: [workspaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/WorkspaceRequest"}
+      responses:
+        "201":
+          description: New workspace.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Workspace"}
+        default: {$ref: "#/components/responses/Problem"}
+  /workspaces/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    delete:
+      operationId: deleteWorkspace
+      tags: [workspaces]
+      description: Deletes a workspace and its files. Fails with `workspace-in-use` while a session runs on it.
+      responses:
+        "204": {description: Deleted.}
+        default: {$ref: "#/components/responses/Problem"}
+  /me/overview:
+    get:
+      operationId: getOverview
+      tags: [overview]
+      description: Merged list for the landing page (G15). Running sessions and workspaces without a running session.
+      responses:
+        "200":
+          description: Overview of the calling user.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Overview"}
+        default: {$ref: "#/components/responses/Problem"}
+  /me/overview/events:
+    get:
+      operationId: watchOverview
+      tags: [overview]
+      description: Server-Sent Events. Event `overview` with a full Overview as data on every change, starting with the current state.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+components:
+  securitySchemes:
+    bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    Name:
+      name: name
+      in: path
+      required: true
+      schema: {type: string, pattern: "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"}
+  responses:
+    Problem:
+      description: Error as RFC 9457 Problem Details.
+      content:
+        application/problem+json:
+          schema: {$ref: "#/components/schemas/Problem"}
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type: {type: string, description: "URI reference, `about:blank` or `https://eduide.github.io/problems/<code>`"}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        code:
+          type: string
+          description: Stable machine-readable code. New codes may be added within v1.
+          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-in-use, session-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, internal]
+        sessions:
+          description: Running sessions of the user, only with `session-limit-reached`.
+          type: array
+          items: {$ref: "#/components/schemas/Session"}
+    PersistenceMode:
+      type: string
+      enum: [none, volume]
+    Display:
+      type: object
+      properties:
+        title: {type: string, maxLength: 200}
+        source: {type: string, maxLength: 2048}
+    Template:
+      type: object
+      required: [name, displayName, persistence, defaultPersistence, injectableKeys]
+      properties:
+        name: {type: string}
+        displayName: {type: string}
+        logoUrl: {type: string}
+        persistence: {type: array, items: {$ref: "#/components/schemas/PersistenceMode"}}
+        defaultPersistence: {$ref: "#/components/schemas/PersistenceMode"}
+        injectableKeys:
+          description: Keys a launch request may send in `data`.
+          type: array
+          items: {type: string}
+        warm: {type: boolean, description: "A pool prewarms sessions without persistence."}
+    LaunchRequest:
+      type: object
+      required: [template]
+      additionalProperties: false
+      properties:
+        template: {type: string, maxLength: 63}
+        persistence:
+          $ref: "#/components/schemas/PersistenceMode"
+        workspace:
+          type: string
+          maxLength: 63
+          description: Start on this existing workspace of the user. Implies persistence volume.
+        data:
+          type: object
+          description: Launch data, only keys of the template's injectableKeys with source Request. At most 8 KiB in total (G18).
+          maxProperties: 32
+          additionalProperties: {type: string, maxLength: 8192}
+        display: {$ref: "#/components/schemas/Display"}
+    SessionPhase:
+      type: string
+      enum: [Pending, Starting, Ready, Failed]
+    Session:
+      type: object
+      required: [name, template, phase, createdAt]
+      properties:
+        name: {type: string}
+        template: {type: string}
+        workspace: {type: string}
+        phase: {$ref: "#/components/schemas/SessionPhase"}
+        url: {type: string, description: "Set once phase is Ready."}
+        startStrategy: {type: string, enum: [warm-ready, warm-starting, cold]}
+        errorCode: {type: string}
+        message: {type: string}
+        display: {$ref: "#/components/schemas/Display"}
+        createdAt: {type: string, format: date-time}
+        readyAt: {type: string, format: date-time}
+        lastActivity: {type: string, format: date-time}
+    WorkspaceRequest:
+      type: object
+      required: [template]
+      additionalProperties: false
+      properties:
+        template: {type: string, maxLength: 63}
+        display: {$ref: "#/components/schemas/Display"}
+    WorkspacePhase:
+      type: string
+      enum: [Pending, Ready, Expired]
+    Workspace:
+      type: object
+      required: [name, template, phase, createdAt]
+      properties:
+        name: {type: string}
+        template: {type: string}
+        phase: {$ref: "#/components/schemas/WorkspacePhase"}
+        display: {$ref: "#/components/schemas/Display"}
+        createdAt: {type: string, format: date-time}
+        lastUsed: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+    OverviewItem:
+      type: object
+      required: [kind, title, template, running]
+      properties:
+        kind: {type: string, enum: [session, workspace]}
+        title: {type: string, description: "From display.title, else derived from display.source (G15)."}
+        source: {type: string}
+        template: {type: string}
+        templateDisplayName: {type: string}
+        templateLogoUrl: {type: string}
+        running: {type: boolean}
+        lastUsed: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        session: {$ref: "#/components/schemas/Session"}
+        workspace: {$ref: "#/components/schemas/Workspace"}
+    Overview:
+      type: object
+      required: [items]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/OverviewItem"}}
