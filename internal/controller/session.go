@@ -85,6 +85,13 @@ func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
 		WithOptions(opts(16)).Complete(r)
 }
 
+// traced runs f in a child span named name, one per phase of the start path.
+func traced[T any](ctx context.Context, name string, f func(context.Context) (T, bool, error)) (T, bool, error) {
+	ctx, span := otel.Tracer("eduide-operator").Start(ctx, name)
+	defer span.End()
+	return f(ctx)
+}
+
 // startSpan continues the trace of the launch from the traceparent annotation.
 func startSpan(ctx context.Context, s *v1.IDESession, name string) (context.Context, trace.Span) {
 	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
@@ -183,12 +190,14 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 			return nil, ctrl.Result{}, r.patchStatus(ctx, orig, s)
 		}
 		claimName = ws.Status.ClaimName
-	} else if pod, retry, err := r.tryClaim(ctx, s, tmpl, np); pod != nil || retry || err != nil {
+	} else if pod, retry, err := traced(ctx, "claim", func(ctx context.Context) (*corev1.Pod, bool, error) { return r.tryClaim(ctx, s, tmpl, np) }); pod != nil || retry || err != nil {
 		// After a conflict the cache is behind; look again instead of starting cold.
 		return pod, ctrl.Result{Requeue: retry}, err //nolint:staticcheck // rate limited retry, no fixed delay
 	}
 
-	pod, err := r.createInstance(ctx, tmpl, s, r.sessionLabels(s, nil), claimName)
+	cctx, cspan := otel.Tracer("eduide-operator").Start(ctx, "instance.create")
+	pod, err := r.createInstance(cctx, tmpl, s, r.sessionLabels(s, nil), claimName)
+	cspan.End()
 	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
 		// Quota is capacity pressure like an unschedulable pod (G8).
 		res, err := r.capacity(ctx, s, tmpl)
@@ -330,7 +339,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
 		req.Traceparent = &tp
 	}
-	switch err := r.agent.Claim(cctx, base, token, req); {
+	actx, aspan := otel.Tracer("eduide-operator").Start(cctx, "agent.claim")
+	err = r.agent.Claim(actx, base, token, req)
+	aspan.End()
+	switch {
 	case errors.Is(err, agentclient.ErrConflict):
 		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance belongs to another session")
 	case err != nil:
@@ -342,7 +354,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	st.Timestamps.AgentReady, st.Timestamps.Ready = &t, &t
 	st.Phase, st.URL, st.ErrorCode, st.Message = v1.SessionReady, r.cfg.InstanceURL(st.Instance), "", ""
 	meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Ready", ObservedGeneration: s.Generation, LastTransitionTime: t})
-	if err := r.patchStatus(ctx, orig, s); err != nil {
+	sctx, sspan := otel.Tracer("eduide-operator").Start(ctx, "status.ready")
+	err = r.patchStatus(sctx, orig, s)
+	sspan.End()
+	if err != nil {
 		return ctrl.Result{}, err
 	}
 	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})

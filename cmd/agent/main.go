@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	// "noop" exits at once; the prepull DaemonSet uses it to pull the image onto every session node.
+	if len(os.Args) > 1 && os.Args[1] == "noop" {
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
 		log.Error("agent failed", "error", err)

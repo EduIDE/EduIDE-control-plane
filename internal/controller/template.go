@@ -98,6 +98,9 @@ func (r *templateReconciler) reconcilePrepull(ctx context.Context, t *v1.IDETemp
 					InitContainers: []corev1.Container{{
 						Name: "pull", Image: t.Spec.Image, ImagePullPolicy: t.Spec.ImagePullPolicy,
 						Command: []string{"sh", "-c", "true"},
+					}, {
+						// The agent image is pulled too, otherwise a cold start waits for it after the IDE image.
+						Name: "pull-agent", Image: r.cfg.Agent.Image, Args: []string{"noop"},
 					}},
 					Containers: []corev1.Container{{
 						Name: "pause", Image: r.cfg.Placement.Prepull.PauseImage,

@@ -26,7 +26,8 @@ func TestTemplatePrepullAndValidation(t *testing.T) {
 	ds.Name, ds.Namespace = "prepull-tpl-prepull", testNS
 	eventually(t, "prepull daemonset", func() bool { return get(ds) == nil })
 	init := ds.Spec.Template.Spec.InitContainers
-	if len(init) != 1 || init[0].Image != tm.Spec.Image || strings.Join(init[0].Command, " ") != "sh -c true" {
+	if len(init) != 2 || init[0].Image != tm.Spec.Image || strings.Join(init[0].Command, " ") != "sh -c true" ||
+		init[1].Image != "example.org/agent:1" || strings.Join(init[1].Args, " ") != "noop" {
 		t.Errorf("init container: %+v", init)
 	}
 	if ds.Spec.Template.Spec.Containers[0].Image != "registry.k8s.io/pause:3.10" {
