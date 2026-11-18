@@ -1,12 +1,12 @@
 import './Privacy.css';
 
-import { getTheiaCloudConfig } from '@eclipse-theiacloud/common';
 import React from 'react';
 
-import { ExtendedTheiaCloudConfig, PrivacyConfig } from '../common-extensions/types';
+import type { PrivacyConfig } from '../config';
 
 interface PrivacyProps {
     onNavigate?: (page: 'home' | 'imprint' | 'privacy') => void;
+    privacy?: PrivacyConfig;
 }
 
 /**
@@ -63,9 +63,7 @@ const duration = (minutes: number, locale: 'de' | 'en'): string => {
     return locale === 'de' ? `${minutes} Minuten` : `${minutes} minutes`;
 };
 
-export const Privacy: React.FC<PrivacyProps> = ({ onNavigate }) => {
-    const config = getTheiaCloudConfig() as ExtendedTheiaCloudConfig | undefined;
-    const configured = config?.privacy ?? {};
+export const Privacy: React.FC<PrivacyProps> = ({ onNavigate, privacy: configured = {} }) => {
     const privacy: Required<PrivacyConfig> = {
         ...FALLBACK,
         ...configured,

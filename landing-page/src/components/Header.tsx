@@ -3,15 +3,16 @@ import './Header.css';
 import { ThemeToggle } from './ThemeToggle';
 
 interface HeaderProps {
+    title?: string;
     email?: string;
     authenticate?: () => void;
     logoutUrl?: string;
 }
 
-export const Header = ({ email, authenticate, logoutUrl }: HeaderProps): React.JSX.Element => (
+export const Header = ({ title = 'EduIDE Cloud', email, authenticate, logoutUrl }: HeaderProps): React.JSX.Element => (
     <div className='header'>
         <div className='header__app-name'>
-            <h1 className='header__title'>EduIDE Cloud</h1>
+            <h1 className='header__title'>{title}</h1>
         </div>
         <div className='header__actions'>
             <ThemeToggle />
