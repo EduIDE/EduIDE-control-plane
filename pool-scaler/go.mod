@@ -1,6 +1,6 @@
-module github.com/EduIDE/EduIDE-pool-scaler
+module github.com/EduIDE/EduIDE-control-plane/pool-scaler
 
-go 1.26.0
+go 1.27.4
 
 require (
 	github.com/prometheus/client_golang v1.25.0

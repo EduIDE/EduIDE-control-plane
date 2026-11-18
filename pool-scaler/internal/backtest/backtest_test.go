@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 func TestRun(t *testing.T) {

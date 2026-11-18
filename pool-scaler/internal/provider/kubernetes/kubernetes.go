@@ -1,5 +1,5 @@
 // Package kubernetes reads the pool state, pod sizes, quota and node capacity,
-// and patches spec.targetIdle. It is the scaler's only writer.
+// and writes spec.targetIdle through the pool's /scale subresource. It is the scaler's only writer.
 package kubernetes
 
 import (
@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,12 +18,19 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/budget"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
-// AppDefinitionGVR is the served AppDefinition version.
-var AppDefinitionGVR = schema.GroupVersionResource{Group: "theia.cloud", Version: "v1beta11", Resource: "appdefinitions"}
+// Served versions of the control plane resources (api/v1alpha1 in the monorepo).
+var (
+	PoolGVR     = schema.GroupVersionResource{Group: "eduide.github.io", Version: "v1alpha1", Resource: "idepools"}
+	TemplateGVR = schema.GroupVersionResource{Group: "eduide.github.io", Version: "v1alpha1", Resource: "idetemplates"}
+)
+
+// conditionCapacityPressure is api/v1alpha1.ConditionCapacityPressure; this
+// module does not import the root module.
+const conditionCapacityPressure = "CapacityPressure"
 
 // Provider talks to the Kubernetes API.
 type Provider struct {
@@ -35,68 +41,64 @@ type Provider struct {
 	PodOverhead  budget.Resources
 }
 
-// Apps returns every AppDefinition with its pool counts and pod size.
-func (p *Provider) Apps(ctx context.Context) (map[string]*model.App, error) {
-	list, err := p.Dynamic.Resource(AppDefinitionGVR).Namespace(p.Namespace).List(ctx, metav1.ListOptions{})
+// Pools returns every IDEPool with its counts from status and the pod size
+// from its IDETemplate.
+func (p *Provider) Pools(ctx context.Context) (map[string]*model.App, error) {
+	list, err := p.Dynamic.Resource(PoolGVR).Namespace(p.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("list appdefinitions: %w", err)
+		return nil, fmt.Errorf("list idepools: %w", err)
 	}
-	apps := map[string]*model.App{}
+	tpls, err := p.Dynamic.Resource(TemplateGVR).Namespace(p.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("list idetemplates: %w", err)
+	}
+	requests := map[string]*unstructured.Unstructured{}
+	for i := range tpls.Items {
+		requests[tpls.Items[i].GetName()] = &tpls.Items[i]
+	}
+	pools := map[string]*model.App{}
 	for i := range list.Items {
-		a, err := p.appFromUnstructured(&list.Items[i])
-		if err != nil {
-			return nil, err
-		}
-		apps[a.Name] = a
+		a := p.poolFromUnstructured(&list.Items[i], requests)
+		pools[a.Name] = a
 	}
-
-	deps, err := p.Core.AppsV1().Deployments(p.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("list deployments: %w", err)
-	}
-	CountPool(apps, deps.Items)
-	return apps, nil
+	return pools, nil
 }
 
-func (p *Provider) appFromUnstructured(u *unstructured.Unstructured) (*model.App, error) {
-	spec, _, _ := unstructured.NestedMap(u.Object, "spec")
-	a := &model.App{
-		Name:        u.GetName(),
-		Annotations: u.GetAnnotations(),
-		ClaimRate:   -1,
-	}
-	if v, ok, _ := unstructured.NestedInt64(spec, "minInstances"); ok {
-		a.MinInstances = int(v)
-	}
-	if v, ok, _ := unstructured.NestedInt64(spec, "maxInstances"); ok {
-		a.MaxInstances = int(v)
-	}
-	if v, ok, _ := unstructured.NestedInt64(spec, "targetIdle"); ok {
+func (p *Provider) poolFromUnstructured(u *unstructured.Unstructured, templates map[string]*unstructured.Unstructured) *model.App {
+	a := &model.App{Name: u.GetName(), Annotations: u.GetAnnotations(), ClaimRate: -1}
+	a.Template, _, _ = unstructured.NestedString(u.Object, "spec", "templateRef")
+	a.MinIdle = int(nestedInt(u.Object, "spec", "minIdle"))
+	a.MaxInstances = int(nestedInt(u.Object, "spec", "maxInstances"))
+	if v, ok, _ := unstructured.NestedInt64(u.Object, "spec", "targetIdle"); ok {
 		t := int(v)
 		a.TargetIdle = &t
 	}
-	a.PodCPU = p.PodOverhead.CPU + quantity(spec["requestsCpu"])
-	a.PodMemory = p.PodOverhead.Memory + quantity(spec["requestsMemory"])
-	sidecars, _, _ := unstructured.NestedSlice(spec, "sidecars")
-	for _, s := range sidecars {
-		if m, ok := s.(map[string]any); ok {
-			a.PodCPU += quantity(m["cpuRequest"])
-			a.PodMemory += quantity(m["memoryRequest"])
+	a.IdleReady = int(nestedInt(u.Object, "status", "idleReady"))
+	a.IdleStarting = int(nestedInt(u.Object, "status", "idleStarting"))
+	a.Claimed = int(nestedInt(u.Object, "status", "claimed"))
+	conds, _, _ := unstructured.NestedSlice(u.Object, "status", "conditions")
+	for _, c := range conds {
+		if m, ok := c.(map[string]any); ok && m["type"] == conditionCapacityPressure {
+			a.CapacityPressure = m["status"] == "True"
 		}
 	}
-	return a, nil
+	a.PodCPU, a.PodMemory = p.PodOverhead.CPU, p.PodOverhead.Memory
+	if t := templates[a.Template]; t != nil {
+		req, _, _ := unstructured.NestedMap(t.Object, "spec", "resources", "requests")
+		a.PodCPU += quantity(req["cpu"])
+		a.PodMemory += quantity(req["memory"])
+	}
+	return a
+}
+
+func nestedInt(obj map[string]any, fields ...string) int64 {
+	v, _, _ := unstructured.NestedInt64(obj, fields...)
+	return v
 }
 
 func quantity(v any) float64 {
-	var s string
-	switch t := v.(type) {
-	case string:
-		s = t
-	case int64:
-		return float64(t)
-	case float64:
-		return t
-	default:
+	s, ok := v.(string)
+	if !ok {
 		return 0
 	}
 	q, err := resource.ParseQuantity(s)
@@ -104,37 +106,6 @@ func quantity(v any) float64 {
 		return 0
 	}
 	return q.AsApproximateFloat64()
-}
-
-// CountPool sorts pool Deployments into idle ready, idle starting and
-// claimed. A pool Deployment is owned by its AppDefinition; a claimed one also
-// has an owner of kind Session. Ready means at least one ready replica.
-func CountPool(apps map[string]*model.App, deps []appsv1.Deployment) {
-	for i := range deps {
-		d := &deps[i]
-		if d.DeletionTimestamp != nil {
-			continue
-		}
-		var app *model.App
-		claimed := false
-		for _, o := range d.OwnerReferences {
-			switch o.Kind {
-			case "AppDefinition":
-				app = apps[o.Name]
-			case "Session":
-				claimed = true
-			}
-		}
-		switch {
-		case app == nil:
-		case claimed:
-			app.Claimed++
-		case d.Status.ReadyReplicas >= 1:
-			app.IdleReady++
-		default:
-			app.IdleStarting++
-		}
-	}
 }
 
 // Budget returns the quota rest and the unrequested allocatable on the
@@ -216,10 +187,10 @@ func NodeRest(nodes []corev1.Node, pods []corev1.Pod) *budget.Resources {
 	return &rest
 }
 
-// PatchTargetIdle sets spec.targetIdle with a merge patch, leaving every other
-// field to its owner.
-func (p *Provider) PatchTargetIdle(ctx context.Context, app string, v int) error {
-	patch, _ := json.Marshal(map[string]any{"spec": map[string]any{"targetIdle": v}})
-	_, err := p.Dynamic.Resource(AppDefinitionGVR).Namespace(p.Namespace).Patch(ctx, app, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: "pool-scaler"})
+// PatchTargetIdle sets targetIdle through the /scale subresource, so the
+// scaler needs no update right on the pool itself.
+func (p *Provider) PatchTargetIdle(ctx context.Context, pool string, v int) error {
+	patch, _ := json.Marshal(map[string]any{"spec": map[string]any{"replicas": v}})
+	_, err := p.Dynamic.Resource(PoolGVR).Namespace(p.Namespace).Patch(ctx, pool, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: "pool-scaler"}, "scale")
 	return err
 }

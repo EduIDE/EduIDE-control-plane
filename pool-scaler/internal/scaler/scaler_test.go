@@ -10,12 +10,12 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/budget"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/guardrail"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/metrics"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/guardrail"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/metrics"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 var now = time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
@@ -27,7 +27,7 @@ type fakeKube struct {
 	patches map[string]int
 }
 
-func (f *fakeKube) Apps(context.Context) (map[string]*model.App, error) {
+func (f *fakeKube) Pools(context.Context) (map[string]*model.App, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -64,7 +64,7 @@ func (f *fakeProm) ClaimHistory(context.Context, time.Time, time.Time) (map[stri
 }
 
 func app(name string) *model.App {
-	return &model.App{Name: name, MaxInstances: 100, PodCPU: 0.6, PodMemory: 650e6}
+	return &model.App{Name: name, Template: name, MaxInstances: 100, PodCPU: 0.6, PodMemory: 650e6}
 }
 
 func newScaler(t *testing.T, mode config.Mode, active string, k *fakeKube, p *fakeProm) *Scaler {
@@ -127,9 +127,9 @@ func TestNoSnapshotIsFailStatic(t *testing.T) {
 	}
 }
 
-func TestPausedIsLeftAlone(t *testing.T) {
+func TestModeOffIsLeftAlone(t *testing.T) {
 	a := app("java-17")
-	a.Annotations = map[string]string{guardrail.AnnotationPaused: "true"}
+	a.Annotations = map[string]string{guardrail.AnnotationMode: "off"}
 	k := &fakeKube{apps: map[string]*model.App{"java-17": a}, patches: map[string]int{}}
 	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 1}})
 	_ = s.Tick(context.Background(), now)
@@ -138,12 +138,43 @@ func TestPausedIsLeftAlone(t *testing.T) {
 	}
 }
 
+func TestPoolModeOverridesGlobalMode(t *testing.T) {
+	shadow, active := app("a"), app("b")
+	shadow.Annotations = map[string]string{guardrail.AnnotationMode: "shadow"}
+	active.Annotations = map[string]string{guardrail.AnnotationMode: "active"}
+	k := &fakeKube{apps: map[string]*model.App{"a": shadow, "b": active}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeShadow, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"a": 0.1, "b": 0.1}})
+	_ = s.Tick(context.Background(), now)
+	if _, ok := k.patches["a"]; ok || k.patches["b"] == 0 {
+		t.Fatalf("patches %v", k.patches)
+	}
+}
+
+func TestCapacityPressureLeavesPoolAlone(t *testing.T) {
+	a := app("java-17")
+	a.CapacityPressure = true
+	k := &fakeKube{apps: map[string]*model.App{"java-17": a}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 1}})
+	_ = s.Tick(context.Background(), now)
+	if len(k.patches) != 0 {
+		t.Fatalf("patches %v", k.patches)
+	}
+}
+
+func TestMinIdleIsTheFloor(t *testing.T) {
+	a := app("java-17")
+	a.MinIdle = 6
+	k := &fakeKube{apps: map[string]*model.App{"java-17": a}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 0}})
+	_ = s.Tick(context.Background(), now)
+	if k.patches["java-17"] != 6 {
+		t.Fatalf("patches %v", k.patches)
+	}
+}
+
 func TestOverrideBypassesGuardrailsButNotBudget(t *testing.T) {
 	a := app("java-17")
-	a.Annotations = map[string]string{
-		guardrail.AnnotationOverride:      "50",
-		guardrail.AnnotationOverrideUntil: now.Add(time.Hour).Format(time.RFC3339),
-	}
+	a.Annotations = map[string]string{guardrail.AnnotationOverride: "50"}
 	k := &fakeKube{apps: map[string]*model.App{"java-17": a}, patches: map[string]int{}}
 	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 0}})
 	// Default maxStepUp is 20 and ceiling 100: the override jumps straight to 50.
@@ -202,8 +233,8 @@ func TestEventsAreCountedAndRemembered(t *testing.T) {
 	k := &fakeKube{apps: map[string]*model.App{"java-17": app("java-17")}, patches: map[string]int{}}
 	s := newScaler(t, config.ModeShadow, config.StrategyReactive, k, nil)
 	s.Sources = []EventSource{fakeSource{events: []model.Event{
-		{AppDefinition: "java-17", Kind: model.EventExam, Time: now.Add(24 * time.Hour)},
-		{AppDefinition: "java-17", Kind: model.EventDue, Time: now.Add(30 * 24 * time.Hour)},
+		{Pool: "java-17", Kind: model.EventExam, Time: now.Add(24 * time.Hour)},
+		{Pool: "java-17", Kind: model.EventDue, Time: now.Add(30 * 24 * time.Hour)},
 	}}}
 	_ = s.Tick(context.Background(), now)
 	if testutil.ToFloat64(s.Metrics.UpcomingEvents.WithLabelValues("java-17")) != 1 {

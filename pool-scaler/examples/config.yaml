@@ -1,16 +1,16 @@
 # Every field is optional; the values shown are the defaults unless marked.
-namespace: eduide-test1           # default: $POD_NAMESPACE
-mode: shadow                      # shadow | active
+namespace: eduide                 # default: $POD_NAMESPACE
+mode: shadow                      # shadow | active; per pool: annotation eduide.github.io/scaler-mode
 interval: 30s
-timezone: Europe/Berlin           # default: UTC
+timezone: UTC                     # default: UTC
 metricsAddr: ":9090"
 
 activeStrategy: reactive          # used when switchback is off
 strategies: [reactive, predictive]  # computed every round; default: [reactive]
-apps: []                          # AppDefinitions to manage; empty = all
+pools: []                         # IDEPools to manage; empty = all
 
 defaults: {floor: 0, ceiling: 100}
-appLimits:
+poolLimits:
   java-17: {floor: 2, ceiling: 80, static: 3}
 
 guardrails:
@@ -53,7 +53,7 @@ budget:
   usageHeadroomFraction: 0.8
 
 prometheus:
-  url: http://prometheus-operated.cattle-monitoring-system:9090   # default: empty
+  url: http://prometheus-operated.monitoring:9090  # default: empty
   timeout: 30s
 
 artemis:

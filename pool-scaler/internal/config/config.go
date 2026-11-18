@@ -18,6 +18,8 @@ const (
 	ModeShadow Mode = "shadow"
 	// ModeActive patches spec.targetIdle.
 	ModeActive Mode = "active"
+	// ModeOff is only valid per pool (annotation): the scaler skips the pool.
+	ModeOff Mode = "off"
 )
 
 // Strategy names.
@@ -50,7 +52,7 @@ func (d Duration) MarshalJSON() ([]byte, error) { return json.Marshal(d.String()
 
 // Config is the whole configuration file.
 type Config struct {
-	// Namespace holding the AppDefinitions. Defaults to $POD_NAMESPACE.
+	// Namespace holding the pools. Defaults to $POD_NAMESPACE.
 	Namespace string `json:"namespace"`
 	Mode      Mode   `json:"mode"`
 	// Interval between two decisions.
@@ -65,11 +67,11 @@ type Config struct {
 	// Strategies computed on every tick. The active one is always included.
 	Strategies []string `json:"strategies"`
 
-	// Apps limits which AppDefinitions the scaler manages. Empty means all.
-	Apps       []string             `json:"apps"`
-	Defaults   AppLimits            `json:"defaults"`
-	AppLimits  map[string]AppLimits `json:"appLimits"`
-	Guardrails Guardrails           `json:"guardrails"`
+	// Pools limits which IDEPools the scaler manages. Empty means all.
+	Pools      []string              `json:"pools"`
+	Defaults   PoolLimits            `json:"defaults"`
+	PoolLimits map[string]PoolLimits `json:"poolLimits"`
+	Guardrails Guardrails            `json:"guardrails"`
 
 	Reactive      Reactive      `json:"reactive"`
 	Predictive    Predictive    `json:"predictive"`
@@ -81,18 +83,18 @@ type Config struct {
 	Switchback    Switchback    `json:"switchback"`
 }
 
-// AppLimits are the per AppDefinition bounds on targetIdle.
-type AppLimits struct {
+// PoolLimits are the per Pool bounds on targetIdle.
+type PoolLimits struct {
 	Floor   *int `json:"floor,omitempty"`
 	Ceiling *int `json:"ceiling,omitempty"`
 	// Static is what the static strategy recommends.
 	Static *int `json:"static,omitempty"`
 }
 
-// Limits resolves the bounds for one AppDefinition.
+// Limits resolves the bounds for one Pool.
 func (c *Config) Limits(app string) (floor, ceiling, static int) {
-	pick := func(get func(AppLimits) *int, fallback int) int {
-		if v := get(c.AppLimits[app]); v != nil {
+	pick := func(get func(PoolLimits) *int, fallback int) int {
+		if v := get(c.PoolLimits[app]); v != nil {
 			return *v
 		}
 		if v := get(c.Defaults); v != nil {
@@ -100,9 +102,9 @@ func (c *Config) Limits(app string) (floor, ceiling, static int) {
 		}
 		return fallback
 	}
-	floor = pick(func(l AppLimits) *int { return l.Floor }, 0)
-	ceiling = pick(func(l AppLimits) *int { return l.Ceiling }, 100)
-	static = pick(func(l AppLimits) *int { return l.Static }, floor)
+	floor = pick(func(l PoolLimits) *int { return l.Floor }, 0)
+	ceiling = pick(func(l PoolLimits) *int { return l.Ceiling }, 100)
+	static = pick(func(l PoolLimits) *int { return l.Static }, floor)
 	return floor, ceiling, static
 }
 

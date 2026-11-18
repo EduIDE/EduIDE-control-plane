@@ -11,17 +11,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/budget"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/guardrail"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/metrics"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/guardrail"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/metrics"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 // Kube is what the scaler needs from the Kubernetes provider.
 type Kube interface {
-	Apps(ctx context.Context) (map[string]*model.App, error)
+	Pools(ctx context.Context) (map[string]*model.App, error)
 	Budget(ctx context.Context) (quota, nodes *budget.Resources, err error)
 	PatchTargetIdle(ctx context.Context, app string, v int) error
 }
@@ -60,6 +60,8 @@ type Scaler struct {
 	lastValid  map[string]int
 	pastEvents map[string]model.Event
 	lastActive string
+	// templates maps pool to spec.templateRef: Prometheus knows templates only.
+	templates map[string]string
 }
 
 // New wires a scaler. The caller fills the providers and optional strategies.
@@ -91,7 +93,7 @@ func (s *Scaler) AddPredictive(p *strategy.Predictive) {
 func (s *Scaler) AddDecisionModel(d *strategy.DecisionModel) {
 	d.OnError = func(app string, err error) {
 		s.Metrics.StrategyErrors.WithLabelValues(d.Name()).Inc()
-		s.Log.Warn("decision model call failed", "appdef", app, "err", err)
+		s.Log.Warn("decision model call failed", "pool", app, "err", err)
 	}
 	s.Decision = d
 	s.Strategies[d.Name()] = d
@@ -100,14 +102,18 @@ func (s *Scaler) AddDecisionModel(d *strategy.DecisionModel) {
 // Tick runs one decision round. Without a pool snapshot it decides nothing
 // and leaves every pool as it is.
 func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
-	apps, err := s.Kube.Apps(ctx)
+	apps, err := s.Kube.Pools(ctx)
 	s.Metrics.Provider("kubernetes", err)
 	if err != nil {
 		return fmt.Errorf("no pool snapshot, leaving pools as they are: %w", err)
 	}
-	if len(s.Cfg.Apps) > 0 {
+	s.templates = map[string]string{}
+	for name, a := range apps {
+		s.templates[name] = a.Template
+	}
+	if len(s.Cfg.Pools) > 0 {
 		keep := map[string]bool{}
-		for _, a := range s.Cfg.Apps {
+		for _, a := range s.Cfg.Pools {
 			keep[a] = true
 		}
 		for name := range apps {
@@ -135,35 +141,46 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 	chain := guardrail.Chain(active)
 
 	var demands []budget.Demand
+	modes := map[string]config.Mode{}
 	wishes := map[string]string{}
 	for name, a := range apps {
-		paused := guardrail.Paused(a.Annotations)
-		s.Metrics.Paused.WithLabelValues(name).Set(b2f(paused))
-		if paused {
+		mode, modeErr := guardrail.PoolMode(a.Annotations, s.Cfg.Mode)
+		if modeErr != nil {
+			s.Log.Warn("ignoring scaler mode", "pool", name, "err", modeErr)
+		}
+		off := mode == config.ModeOff
+		s.Metrics.Paused.WithLabelValues(name).Set(b2f(off))
+		if off || a.CapacityPressure {
+			if a.CapacityPressure {
+				// The operator holds 0 idle instances now; a target set meanwhile would only be stale later.
+				s.Log.Info("capacity pressure, leaving the pool alone", "pool", name)
+			}
 			s.Metrics.OverrideActive.WithLabelValues(name).Set(0)
 			continue
 		}
+		modes[name] = mode
 		floor, ceiling, _ := s.Cfg.Limits(name)
+		floor = max(floor, a.MinIdle) // minIdle is the floor set by Helm
 		seed := a.Idle()
 		if a.TargetIdle != nil {
 			seed = *a.TargetIdle
 		}
 		s.guard.Seed(name, seed)
 
-		ov, ovErr := guardrail.ParseOverride(a.Annotations, now)
+		ov, ovErr := guardrail.ParseOverride(a.Annotations)
 		if ovErr != nil {
-			s.Log.Warn("ignoring override", "appdef", name, "err", ovErr)
+			s.Log.Warn("ignoring override", "pool", name, "err", ovErr)
 		}
 		s.Metrics.OverrideActive.WithLabelValues(name).Set(b2f(ov != nil))
 		if ov != nil {
 			// An override bypasses strategy and guardrails; only the budget and
 			// maxInstances still apply.
-			v := ov.Value
+			v := *ov
 			if a.MaxInstances > 0 && v > a.MaxInstances {
 				v = a.MaxInstances
 			}
 			demands = append(demands, budget.Demand{App: name, Floor: min(floor, v), Desired: v, Pod: budget.Resources{CPU: a.PodCPU, Memory: a.PodMemory}})
-			wishes[name] = fmt.Sprintf("override %d until %s", ov.Value, ov.Until.Format(time.RFC3339))
+			wishes[name] = fmt.Sprintf("override %d", *ov)
 			s.Metrics.Decisions.WithLabelValues(name, "override", active).Inc()
 			continue
 		}
@@ -209,21 +226,21 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 		// once an override ends.
 		s.guard.Set(d.App, now, g.Value)
 		s.Metrics.TargetIdle.WithLabelValues(d.App, active).Set(float64(g.Value))
-		s.Log.Info("decision", "appdef", d.App, "targetIdle", g.Value, "mode", s.Cfg.Mode, "active_strategy", active,
+		s.Log.Info("decision", "pool", d.App, "targetIdle", g.Value, "mode", modes[d.App], "active_strategy", active,
 			"idle_ready", a.IdleReady, "idle_starting", a.IdleStarting, "claimed", a.Claimed, "why", why)
-		s.patch(ctx, a, g.Value)
+		s.patch(ctx, a, g.Value, modes[d.App])
 	}
 	s.Metrics.LastDecision.Set(float64(now.Unix()))
 	return nil
 }
 
-func (s *Scaler) patch(ctx context.Context, a *model.App, v int) {
-	if s.Cfg.Mode != config.ModeActive || (a.TargetIdle != nil && *a.TargetIdle == v) {
+func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mode) {
+	if mode != config.ModeActive || (a.TargetIdle != nil && *a.TargetIdle == v) {
 		return
 	}
 	if err := s.Kube.PatchTargetIdle(ctx, a.Name, v); err != nil {
 		s.Metrics.Patches.WithLabelValues(a.Name, "error").Inc()
-		s.Log.Error("patch failed", "appdef", a.Name, "err", err)
+		s.Log.Error("patch failed", "pool", a.Name, "err", err)
 		return
 	}
 	s.Metrics.Patches.WithLabelValues(a.Name, "success").Inc()
@@ -238,13 +255,13 @@ func (s *Scaler) fillPrometheus(ctx context.Context, now time.Time, apps map[str
 	}
 	rates, err := s.Prom.ClaimRates(ctx, s.Cfg.Reactive.Window.Duration, now)
 	if err == nil {
-		for name, a := range apps {
-			a.ClaimRate = rates[name] // no series means no claims yet
+		for _, a := range apps {
+			a.ClaimRate = rates[a.Template] // no series means no claims yet
 		}
 		var ready map[string]float64
 		if ready, err = s.Prom.ReadySeconds(ctx, now); err == nil {
-			for name, a := range apps {
-				a.ReadySeconds = ready[name]
+			for _, a := range apps {
+				a.ReadySeconds = ready[a.Template]
 			}
 		}
 	}
@@ -269,9 +286,9 @@ func (s *Scaler) events(ctx context.Context, now time.Time) []model.Event {
 	horizon := now.Add(7 * 24 * time.Hour)
 	upcoming := map[string]int{}
 	for _, e := range all {
-		s.pastEvents[fmt.Sprintf("%s/%s/%d", e.AppDefinition, e.Kind, e.Time.Unix())] = e
+		s.pastEvents[fmt.Sprintf("%s/%s/%d", e.Pool, e.Kind, e.Time.Unix())] = e
 		if e.Time.After(now) && e.Time.Before(horizon) {
-			upcoming[e.AppDefinition]++
+			upcoming[e.Pool]++
 		}
 	}
 	for k, e := range s.pastEvents {
@@ -297,6 +314,13 @@ func (s *Scaler) train(ctx context.Context, now time.Time) {
 		s.Log.Warn("predictive training failed, keeping the previous profile", "err", err)
 		return
 	}
+	byPool := make(map[string][]strategy.Sample, len(s.templates))
+	for pool, tpl := range s.templates {
+		if h, ok := hist[tpl]; ok {
+			byPool[pool] = h
+		}
+	}
+	hist = byPool
 	past := make([]model.Event, 0, len(s.pastEvents))
 	for _, e := range s.pastEvents {
 		past = append(past, e)
@@ -328,11 +352,11 @@ func (s *Scaler) recommend(ctx context.Context, snap model.Snapshot, active stri
 		}
 		recs[name] = map[string]model.Recommendation{}
 		for _, r := range out {
-			recs[name][r.AppDefinition] = r
-			s.Metrics.DesiredIdle.WithLabelValues(r.AppDefinition, name, strconv.FormatBool(name == active), active).Set(float64(r.TargetIdle))
-			s.Metrics.ForecastStarts.WithLabelValues(r.AppDefinition, name).Set(r.Forecast)
+			recs[name][r.Pool] = r
+			s.Metrics.DesiredIdle.WithLabelValues(r.Pool, name, strconv.FormatBool(name == active), active).Set(float64(r.TargetIdle))
+			s.Metrics.ForecastStarts.WithLabelValues(r.Pool, name).Set(r.Forecast)
 			for _, p := range r.Distribution {
-				s.Metrics.ForecastDistribution.WithLabelValues(r.AppDefinition, name, strconv.Itoa(p.Level)).Set(p.Probability)
+				s.Metrics.ForecastDistribution.WithLabelValues(r.Pool, name, strconv.Itoa(p.Level)).Set(p.Probability)
 			}
 		}
 	}
@@ -369,11 +393,11 @@ func (s *Scaler) budget(ctx context.Context, now time.Time, apps map[string]*mod
 	if src.UsageMemory != nil {
 		s.Metrics.Budget.WithLabelValues("memory", "usage").Set(*src.UsageMemory)
 	}
-	// Idle pods of paused AppDefinitions stay as they are, so they are not
+	// Idle pods of pools that are off or under pressure stay as they are, so they are not
 	// part of what is shared out.
 	var held budget.Resources
 	for _, a := range apps {
-		if guardrail.Paused(a.Annotations) {
+		if m, _ := guardrail.PoolMode(a.Annotations, s.Cfg.Mode); m == config.ModeOff || a.CapacityPressure {
 			continue
 		}
 		held.CPU += float64(a.Idle()) * a.PodCPU

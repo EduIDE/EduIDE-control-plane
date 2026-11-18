@@ -43,19 +43,19 @@ func New() *Metrics {
 		DesiredIdle: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_desired_idle",
 			Help: "targetIdle each strategy recommends, before guardrails and budget.",
-		}, []string{"appdef", "strategy", "active", "active_strategy"}),
+		}, []string{"pool", "strategy", "active", "active_strategy"}),
 		TargetIdle: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_target_idle",
 			Help: "targetIdle the scaler decided after guardrails, override and budget. In shadow mode it is not patched.",
-		}, []string{"appdef", "active_strategy"}),
+		}, []string{"pool", "active_strategy"}),
 		ForecastStarts: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_forecast_starts",
 			Help: "Expected session starts within the strategy's horizon.",
-		}, []string{"appdef", "strategy"}),
+		}, []string{"pool", "strategy"}),
 		ForecastDistribution: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_forecast_demand_probability",
 			Help: "P(demand <= level) within the horizon, for calibration.",
-		}, []string{"appdef", "strategy", "level"}),
+		}, []string{"pool", "strategy", "level"}),
 		Budget: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_budget",
 			Help: "Free budget per source, CPU in cores and memory in bytes.",
@@ -63,7 +63,7 @@ func New() *Metrics {
 		BudgetClamped: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "pool_scaler_budget_clamped_total",
 			Help: "Decisions the budget cut below the guarded wish.",
-		}, []string{"appdef"}),
+		}, []string{"pool"}),
 		ProviderUp: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_provider_up",
 			Help: "1 when the provider's last call succeeded.",
@@ -83,11 +83,11 @@ func New() *Metrics {
 		OverrideActive: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_override_active",
 			Help: "1 while a manual override annotation is in force.",
-		}, []string{"appdef"}),
+		}, []string{"pool"}),
 		Paused: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_paused",
-			Help: "1 while the AppDefinition carries the pause annotation.",
-		}, []string{"appdef"}),
+			Help: "1 while the Pool carries the pause annotation.",
+		}, []string{"pool"}),
 		LastDecision: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "pool_scaler_last_decision_timestamp_seconds",
 			Help: "Unix time of the last completed decision round.",
@@ -95,15 +95,15 @@ func New() *Metrics {
 		Patches: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "pool_scaler_patches_total",
 			Help: "Patches of spec.targetIdle by result (success, error).",
-		}, []string{"appdef", "result"}),
+		}, []string{"pool", "result"}),
 		Decisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "pool_scaler_decisions_total",
-			Help: "Decisions per AppDefinition by where the value came from: a strategy, last-valid, floor or override.",
-		}, []string{"appdef", "source", "active_strategy"}),
+			Help: "Decisions per Pool by where the value came from: a strategy, last-valid, floor or override.",
+		}, []string{"pool", "source", "active_strategy"}),
 		UpcomingEvents: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_upcoming_events",
 			Help: "Known events in the next 7 days.",
-		}, []string{"appdef"}),
+		}, []string{"pool"}),
 		ActiveStrategy: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "pool_scaler_active_strategy",
 			Help: "1 for the strategy active today.",

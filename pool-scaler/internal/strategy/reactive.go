@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 // Reactive keeps enough idle pods for the claims expected while a new pool pod
@@ -34,7 +34,7 @@ func (r *Reactive) Recommend(_ context.Context, s model.Snapshot) ([]model.Recom
 	return out, nil
 }
 
-// ForApp decides for one AppDefinition. It returns false when the claim rate
+// ForApp decides for one Pool. It returns false when the claim rate
 // is unknown, so the caller falls back instead of reading that as zero demand.
 func (r *Reactive) ForApp(a *model.App) (model.Recommendation, bool) {
 	if a.ClaimRate < 0 {
@@ -47,14 +47,14 @@ func (r *Reactive) ForApp(a *model.App) (model.Recommendation, bool) {
 	expected := a.ClaimRate * ready
 	target := int(math.Ceil(expected * (1 + r.cfg.SafetyFactor)))
 	return model.Recommendation{
-		AppDefinition: a.Name,
-		TargetIdle:    target,
-		Forecast:      expected,
-		Reason:        fmt.Sprintf("%.3f claims/s x %.0fs ready x %.2f safety", a.ClaimRate, ready, 1+r.cfg.SafetyFactor),
+		Pool:       a.Name,
+		TargetIdle: target,
+		Forecast:   expected,
+		Reason:     fmt.Sprintf("%.3f claims/s x %.0fs ready x %.2f safety", a.ClaimRate, ready, 1+r.cfg.SafetyFactor),
 	}, true
 }
 
-// Static recommends a fixed value per AppDefinition. It is the baseline arm of
+// Static recommends a fixed value per Pool. It is the baseline arm of
 // the switchback experiment.
 type Static struct {
 	limits func(app string) (floor, ceiling, static int)
@@ -73,7 +73,7 @@ func (s *Static) Recommend(_ context.Context, snap model.Snapshot) ([]model.Reco
 	var out []model.Recommendation
 	for _, a := range sortedApps(snap) {
 		_, _, v := s.limits(a.Name)
-		out = append(out, model.Recommendation{AppDefinition: a.Name, TargetIdle: v, Reason: "static value"})
+		out = append(out, model.Recommendation{Pool: a.Name, TargetIdle: v, Reason: "static value"})
 	}
 	return out, nil
 }

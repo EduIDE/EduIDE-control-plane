@@ -10,15 +10,15 @@ import (
 	"sort"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/guardrail"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/guardrail"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 // Input is the recorded history to replay.
 type Input struct {
-	// Claims per Step, per AppDefinition. A sample at T counts the claims in
+	// Claims per Step, per Pool. A sample at T counts the claims in
 	// (T-Step, T].
 	Claims map[string][]strategy.Sample
 	Events []model.Event
@@ -29,16 +29,16 @@ type Input struct {
 	ReadySeconds float64
 }
 
-// Result is one strategy's simulated outcome for one AppDefinition.
+// Result is one strategy's simulated outcome for one Pool.
 type Result struct {
-	Strategy      string
-	AppDefinition string
-	Claims        int
-	WarmReady     int
-	WarmStarting  int
-	Cold          int
-	IdlePodHours  float64
-	MeanTarget    float64
+	Strategy     string
+	Pool         string
+	Claims       int
+	WarmReady    int
+	WarmStarting int
+	Cold         int
+	IdlePodHours float64
+	MeanTarget   float64
 }
 
 // WarmReadyRatio is the share of claims served by a ready pod.
@@ -49,7 +49,7 @@ func (r Result) WarmReadyRatio() float64 {
 	return float64(r.WarmReady) / float64(r.Claims)
 }
 
-// Run simulates every AppDefinition under one strategy with the same
+// Run simulates every Pool under one strategy with the same
 // guardrails the scaler applies (no budget: history does not say what was
 // free). reactive supplies the lower bound, as in the scaler; pass nil for the
 // static baseline.
@@ -76,7 +76,7 @@ func Run(ctx context.Context, in Input, st strategy.Strategy, reactive *strategy
 	for _, a := range apps {
 		c := append([]strategy.Sample(nil), in.Claims[a]...)
 		sort.Slice(c, func(i, j int) bool { return c[i].T.Before(c[j].T) })
-		pools[a] = &pool{claims: c, res: Result{Strategy: st.Name(), AppDefinition: a}}
+		pools[a] = &pool{claims: c, res: Result{Strategy: st.Name(), Pool: a}}
 	}
 
 	guard := guardrail.NewGuard(cfg.Guardrails)
@@ -135,13 +135,13 @@ func Run(ctx context.Context, in Input, st strategy.Strategy, reactive *strategy
 			}
 			wish := map[string]int{}
 			for _, r := range recs {
-				wish[r.AppDefinition] = r.TargetIdle
+				wish[r.Pool] = r.TargetIdle
 			}
 			floors := map[string]int{}
 			if reactive != nil {
 				rr, _ := reactive.Recommend(ctx, snap)
 				for _, r := range rr {
-					floors[r.AppDefinition] = r.TargetIdle
+					floors[r.Pool] = r.TargetIdle
 				}
 			}
 			for _, a := range apps {
