@@ -1,0 +1,52 @@
+groups:
+- name: eduide-control-plane
+  rules:
+  - alert: EduIDEAuthzDenyRateHigh
+    expr: sum(rate(eduide_authz_decisions_total{result="deny"}[5m])) / sum(rate(eduide_authz_decisions_total[5m])) > 0.2
+    for: 10m
+    labels: {severity: warning}
+    annotations:
+      summary: More than 20% of session access checks are denied
+      description: Authz denies {{ $value | humanizePercentage }} of its decisions. Check the reasons in eduide_authz_decisions_total and whether authz can list sessions.
+  - alert: EduIDEAuthzSlow
+    expr: histogram_quantile(0.99, sum by (le) (rate(eduide_authz_check_seconds_bucket[5m]))) > 0.25
+    for: 10m
+    labels: {severity: warning}
+    annotations:
+      summary: Session access checks are slow
+      description: The p99 of an ext_authz check is {{ $value | humanizeDuration }}. Every request to a session waits for it.
+  - alert: EduIDEAuthzDown
+    expr: sum(up{pod=~".*-authz-.*"}) == 0 or absent(eduide_authz_check_seconds_count)
+    for: 5m
+    labels: {severity: critical}
+    annotations:
+      summary: No authz replica is scraped
+      description: The SecurityPolicy fails closed, so no session can be opened while authz is down.
+  - alert: EduIDELaunchFailures
+    expr: sum(increase(eduide_session_startup_seconds_count{result="failed"}[15m])) > 3
+    for: 5m
+    labels: {severity: warning}
+    annotations:
+      summary: Sessions fail to start
+      description: '{{ $value }} sessions failed to start in the last 15 minutes.'
+  - alert: EduIDEApiErrors
+    expr: sum(rate(eduide_api_requests_total{code=~"5.."}[5m])) / sum(rate(eduide_api_requests_total[5m])) > 0.05
+    for: 10m
+    labels: {severity: warning}
+    annotations:
+      summary: More than 5% of API requests fail with 5xx
+      description: The service answers {{ $value | humanizePercentage }} of its requests with a server error.
+  - alert: EduIDECapacityPressure
+    expr: max by (node_pool) (eduide_capacity_pressure) == 1
+    for: 5m
+    labels: {severity: warning}
+    annotations:
+      summary: Node pool {{ $labels.node_pool }} cannot place session pods
+      description: The operator evicts idle pods and keeps the pools at 0 idle. Sessions fail with capacity-exhausted after the configured time.
+  - alert: EduIDEPoolEmpty
+    expr: eduide_pool_target_idle > 0 and on (pool) eduide_pool_instances{state="idle_ready"} == 0
+    for: 10m
+    labels: {severity: warning}
+    annotations:
+      summary: Pool {{ $labels.pool }} has no ready idle instance
+      description: Launches from this pool start cold while the target is above 0.

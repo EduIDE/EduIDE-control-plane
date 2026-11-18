@@ -1,0 +1,29 @@
+image:
+  repository: ghcr.io/eduide/eduide-control-plane/landing-page
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+replicas: 1
+
+# required: host of the landing page, the same as config.hosts.service of the control plane chart
+host: ""
+# parentRef of the HTTPRoute
+gateway:
+  name: ""
+  namespace: ""
+  sectionName: ""
+
+# Served as /config.json
+config:
+  title: EduIDE
+  apiBaseUrl: /api/v1
+  keycloak:
+    url: https://auth.example.org
+    realm: eduide
+    clientId: eduide-landing
+  legacy: false
+
+resources:
+  requests: {cpu: 5m, memory: 16Mi}
+  limits: {memory: 48Mi}

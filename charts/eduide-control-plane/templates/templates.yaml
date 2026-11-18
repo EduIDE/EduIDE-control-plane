@@ -1,0 +1,23 @@
+{{- range $t := .Values.templates }}
+---
+apiVersion: eduide.github.io/v1alpha1
+kind: IDETemplate
+metadata:
+  name: {{ $t.name }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+spec:
+  {{- toYaml $t.spec | nindent 2 }}
+{{- if $t.pool }}
+---
+apiVersion: eduide.github.io/v1alpha1
+kind: IDEPool
+metadata:
+  name: {{ $t.name }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+spec:
+  templateRef: {{ $t.name }}
+  {{- toYaml $t.pool | nindent 2 }}
+{{- end }}
+{{- end }}

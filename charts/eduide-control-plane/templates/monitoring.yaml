@@ -1,0 +1,51 @@
+{{- $full := include "ecp.fullname" . }}
+{{- with .Values.monitoring.podMonitor }}
+{{- if .enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+    {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: eduide-control-plane
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  podMetricsEndpoints:
+  - port: metrics
+    path: /metrics
+    interval: {{ .interval }}
+{{- end }}
+{{- end }}
+{{- with .Values.monitoring.rules }}
+{{- if .enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+    {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
+spec:
+  {{- $.Files.Get "files/alerts.yaml" | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- with .Values.monitoring.dashboard }}
+{{- if .enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-dashboard
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+    {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
+data:
+  eduide-control-plane.json: |
+    {{- $.Files.Get "files/dashboard.json" | nindent 4 }}
+{{- end }}
+{{- end }}

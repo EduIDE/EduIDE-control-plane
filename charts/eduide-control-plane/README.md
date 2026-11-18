@@ -1,0 +1,58 @@
+# eduide-control-plane
+
+The EduIDE control plane for one deployment (one namespace): operator, service, authz, the access policy for sessions, network isolation and optional monitoring.
+Install the `eduide-control-plane-crds` chart first (once per cluster).
+The Gateway, the Envoy Gateway installation, the OIDC provider and the client secret are prerequisites and not part of this chart.
+
+```sh
+helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-control-plane \
+  --version 0.1.0 -n eduide -f my-values.yaml
+```
+
+## What it renders
+
+| Object | Purpose |
+|---|---|
+| Deployments `operator` (1, leader election), `service` (2), `authz` (2) | Images `<image.registry>/<name>:<tag>`, tag defaults to the chart appVersion |
+| PodDisruptionBudgets for `service` and `authz` | `minAvailable: 1` |
+| ServiceAccounts, namespaced Roles and RoleBindings | Operator rules equal `config/rbac/role.yaml` |
+| ConfigMap `config.yaml` | Rendered from `config` (shape of `internal/config`) |
+| Secret `<release>-user-salt` | Generated once with `lookup`, kept on upgrade |
+| IDETemplate and IDEPool | From `templates` |
+| SecurityPolicy | OIDC login plus ext_authz (gRPC, `failOpen: false`) on all HTTPRoutes labelled `eduide.github.io/route: session` |
+| HTTPRoutes | `/api/` on `config.hosts.service`, `/oauth2/` on `config.hosts.instance` |
+| NetworkPolicies | Session pods: default deny, :8080 from Envoy, :8081 from the operator (ADR 0019) |
+| Pool scaler (optional) | Deployment, config, RBAC for `idepools` and `idepools/scale` |
+| PodMonitor, PrometheusRule, dashboard (optional) | Based on `docs/contracts/metrics.md` |
+
+No Ingress is rendered.
+The memory requests of operator, service and authz add up to 128 MiB.
+
+## Values a deployment must set
+
+`config.deployment`, `config.hosts.service`, `config.hosts.instance`, `config.gateway.name`, `config.oidc.issuerURL`, `config.oidc.clientIDs`, `config.oidc.gatewayClientID` and `oidc.clientSecretName`.
+The client secret Secret holds the key `client-secret`.
+`values.schema.json` rejects an install without them.
+Examples use `example.org`, see `ci/test-values.yaml`.
+
+## Values
+
+| Key | Default | Description |
+|---|---|---|
+| `image.registry`, `image.tag`, `image.pullPolicy` | `ghcr.io/eduide/eduide-control-plane`, appVersion | Image of all binaries |
+| `imagePullSecrets` | `[]` | |
+| `config` | see values.yaml | Content of `config.yaml`; `agent.image` defaults to the chart's agent image, `telemetry.userSaltFile` is set by the chart |
+| `oidc.clientSecretName` | required | Existing Secret with `client-secret` |
+| `operator.*`, `service.*`, `authz.*` | replicas 1/2/2 | `replicas`, `resources`, `nodeSelector`, `tolerations`, `affinity` |
+| `templates` | `[]` | List of `{name, spec, pool}`; `spec` is the IDETemplate spec, `pool` (optional) is `{minIdle, targetIdle, maxInstances}` |
+| `networkPolicy.enabled` | `true` | Needs a CNI that enforces policies |
+| `networkPolicy.envoy.namespaceSelector`, `.podSelector` | `envoy-gateway-system`, `app.kubernetes.io/name: envoy` | Pods allowed to reach sessions, service and authz |
+| `networkPolicy.monitoringNamespace` | `monitoring` | Namespace allowed to scrape the metrics ports |
+| `networkPolicy.sessionEgress` | `[]` | Egress rules for session pods; empty keeps egress open |
+| `userSalt.secretName` | generated | Use an own Secret with key `salt` instead |
+| `poolScaler.enabled`, `.mode`, `.config`, `.env`, `.resources`, `.image` | disabled, `shadow` | Config is rendered into `/etc/pool-scaler/config.yaml`, see `pool-scaler/examples/config.yaml` |
+| `monitoring.podMonitor`, `.rules`, `.dashboard` | disabled | `enabled` and extra `labels` (dashboard default label `grafana_dashboard: "1"`) |
+
+## Tests
+
+`charts/test.sh` lints and renders the charts and checks: SecurityPolicy fail closed, NetworkPolicies present, no Ingress, resources and securityContext on every container, operator Role equals the generated RBAC, memory requests below 150 MiB.

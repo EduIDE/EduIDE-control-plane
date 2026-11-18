@@ -1,0 +1,33 @@
+config:
+  deployment: example
+  hosts:
+    service: ide.example.org
+    instance: sessions.example.org
+  gateway:
+    name: eduide
+    namespace: envoy-gateway-system
+    sectionName: https
+  oidc:
+    issuerURL: https://auth.example.org/realms/eduide
+    clientIDs: [eduide-landing]
+    gatewayClientID: eduide-gateway
+oidc:
+  clientSecretName: eduide-gateway-oidc
+templates:
+- name: java
+  spec:
+    displayName: Java
+    image: registry.example.org/ide/java:latest
+    persistence: {allowed: [ephemeral], default: ephemeral}
+  pool: {minIdle: 1, targetIdle: 2, maxInstances: 20}
+- name: python
+  spec:
+    displayName: Python
+    image: registry.example.org/ide/python:latest
+    persistence: {allowed: [ephemeral], default: ephemeral}
+poolScaler:
+  enabled: true
+monitoring:
+  podMonitor: {enabled: true}
+  rules: {enabled: true}
+  dashboard: {enabled: true}

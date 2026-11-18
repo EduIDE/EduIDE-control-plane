@@ -1,0 +1,142 @@
+# Values of the EduIDE control plane for ONE deployment (one namespace).
+# Values marked "required" have no default; the install fails without them (values.schema.json).
+
+image:
+  registry: ghcr.io/eduide/eduide-control-plane
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Rendered 1:1 into config.yaml (internal/config). Unknown keys make the binaries fail on start.
+config:
+  # required: short name of the deployment, used in metrics and traces
+  deployment: ""
+  hosts:
+    # required: host of the landing page and /api/v1, e.g. ide.example.org
+    service: ""
+    # required: host all sessions share, e.g. sessions.example.org
+    instance: ""
+    # default: "webview." + instance
+    webview: ""
+  gateway:
+    # required: Gateway all routes attach to
+    name: ""
+    namespace: ""
+    sectionName: ""
+  oidc:
+    # required: e.g. https://auth.example.org/realms/eduide
+    issuerURL: ""
+    # required: clients accepted for API tokens (landing page client)
+    clientIDs: []
+    # required: confidential client of the SecurityPolicy
+    gatewayClientID: ""
+    userClaim: preferred_username
+    idTokenCookie: eduide-id
+  sessionsPerUser: 3
+  allowedHosts: []
+  workspaces: {}
+  placement: {}
+  capacity: {}
+  telemetry: {}
+  agent:
+    # Default: <image.registry>/agent:<image.tag>
+    image: ""
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {memory: 64Mi}
+  rateLimit: {}
+
+oidc:
+  # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID
+  # under the key "client-secret" (the key the SecurityPolicy reads).
+  clientSecretName: ""
+
+operator:
+  replicas: 1
+  resources:
+    requests: {cpu: 20m, memory: 48Mi}
+    limits: {memory: 96Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+service:
+  replicas: 2
+  resources:
+    requests: {cpu: 10m, memory: 24Mi}
+    limits: {memory: 64Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+authz:
+  replicas: 2
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 48Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# Prewarmed instances per template: name, the IDETemplate spec and an optional pool.
+# The pool name equals the template name.
+templates: []
+# - name: java
+#   spec:
+#     displayName: Java
+#     image: registry.example.org/ide/java:latest
+#     persistence: {allowed: [ephemeral], default: ephemeral}
+#   pool: {minIdle: 1, targetIdle: 2, maxInstances: 20}
+
+# Network isolation (ADR 0019). Needs a CNI that enforces NetworkPolicies.
+networkPolicy:
+  enabled: true
+  envoy:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: envoy-gateway-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: envoy
+  # Namespace of the Prometheus that scrapes the metrics ports.
+  monitoringNamespace: monitoring
+  # Egress rules for session pods (NetworkPolicyEgressRule list). Empty: egress stays open.
+  sessionEgress: []
+
+# Secret with the salt for pseudonymous user ids in spans (G17). Generated once, kept on upgrade.
+userSalt:
+  secretName: ""
+
+# Optional pool scaler: writes IDEPool targetIdle through the scale subresource.
+poolScaler:
+  enabled: false
+  image:
+    repository: ghcr.io/eduide/eduide-control-plane/pool-scaler
+    tag: ""
+  # Rendered into /etc/pool-scaler/config.yaml, see pool-scaler/examples/config.yaml.
+  mode: shadow
+  config:
+    prometheus:
+      url: http://prometheus-operated.monitoring:9090
+  # Extra environment, e.g. ARTEMIS_TOKEN from a Secret.
+  env: []
+  resources:
+    requests: {cpu: 10m, memory: 32Mi}
+    limits: {memory: 128Mi}
+
+monitoring:
+  # PodMonitor (monitoring.coreos.com/v1) for all components.
+  podMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  # PrometheusRule with alerts.
+  rules:
+    enabled: false
+    labels: {}
+  # Grafana dashboard ConfigMap, picked up by the sidecar through the label.
+  dashboard:
+    enabled: false
+    labels:
+      grafana_dashboard: "1"
