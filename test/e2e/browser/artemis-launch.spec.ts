@@ -22,8 +22,11 @@ test("launch from Artemis without an existing login", async ({ page }) => {
   await expect
     .poll(
       async () => {
-        const res = await page.request.get(`${page.url().split("#")[0]}data-state`);
-        return res.ok() ? ((await res.json()) as { keys: string[] }).keys : [];
+        // Fetch inside the page: only the browser resolves *.e2e.test to the local gateway.
+        return page.evaluate(async (url) => {
+          const res = await fetch(url, { credentials: "include" });
+          return res.ok ? ((await res.json()) as { keys: string[] }).keys : [];
+        }, `${page.url().split("#")[0]}data-state`);
       },
       { timeout: 30_000 },
     )
