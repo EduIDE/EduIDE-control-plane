@@ -32,7 +32,7 @@ func Usable(p *corev1.Pod) bool {
 }
 
 // stuckWaiting are container waiting reasons that do not heal by waiting: a wrong image name or tag, no pull access, a broken container config.
-var stuckWaiting = map[string]bool{"ErrImagePull": true, "ImagePullBackOff": true, "InvalidImageName": true, "CreateContainerConfigError": true}
+var stuckWaiting = map[string]bool{"ErrImagePull": true, "ImagePullBackOff": true, "InvalidImageName": true, "CreateContainerConfigError": true, "CrashLoopBackOff": true}
 
 // StuckWaiting returns the container and the waiting reason of a container that waits for a reason that does not heal, or "".
 func StuckWaiting(p *corev1.Pod) (container, reason string) {
@@ -44,6 +44,21 @@ func StuckWaiting(p *corev1.Pod) (container, reason string) {
 		}
 	}
 	return "", ""
+}
+
+// Broken returns why an idle pod must not be handed out: a container waits for a reason that does not heal, or has restarted. "" for a sound pod.
+func Broken(p *corev1.Pod) string {
+	if _, reason := StuckWaiting(p); reason != "" {
+		return reason
+	}
+	for _, list := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, cs := range list {
+			if cs.RestartCount > 0 {
+				return "restarted"
+			}
+		}
+	}
+	return ""
 }
 
 // Unschedulable reports whether the scheduler could not place the pod.
@@ -79,6 +94,9 @@ func Idle(pods []corev1.Pod) []corev1.Pod {
 func Candidates(pods []corev1.Pod, includeStarting bool) []corev1.Pod {
 	var ready, starting []corev1.Pod
 	for _, p := range Idle(pods) {
+		if Broken(&p) != "" {
+			continue
+		}
 		if Ready(&p) {
 			ready = append(ready, p)
 		} else if includeStarting {

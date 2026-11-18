@@ -278,7 +278,14 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 	if conflict {
 		return nil, true, nil
 	}
-	telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+	// Templates without a pool never have an idle pod: that is no signal.
+	var pools v1.IDEPoolList
+	if err := r.List(ctx, &pools, client.InNamespace(s.Namespace)); err != nil {
+		return nil, false, err
+	}
+	if slices.ContainsFunc(pools.Items, func(p v1.IDEPool) bool { return p.Spec.TemplateRef == tmpl.Name }) {
+		telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+	}
 	return nil, false, nil
 }
 
@@ -321,8 +328,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
 	}
 	// Also on a ready pod: a create that failed half way leaves the instance without its route.
-	if err := r.ensureChildren(ctx, pod); err != nil {
+	if gone, err := r.repairChildren(ctx, pod); err != nil {
 		return ctrl.Result{}, err
+	} else if gone {
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the access token Secret of the instance is missing")
 	}
 	if !claim.Ready(pod) {
 		switch {

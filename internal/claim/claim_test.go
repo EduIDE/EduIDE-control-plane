@@ -171,3 +171,18 @@ func TestStuckWaiting(t *testing.T) {
 		})
 	}
 }
+
+func TestBrokenPodsAreNeverCandidates(t *testing.T) {
+	ok := pod("ok", 1, true, v1.StateIdle)
+	crash := pod("crash", 0, false, v1.StateIdle)
+	crash.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}}}}
+	restarted := pod("restarted", 0, true, v1.StateIdle)
+	restarted.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "agent", RestartCount: 1}}
+	got := Candidates([]corev1.Pod{crash, restarted, ok}, true)
+	if len(got) != 1 || got[0].Name != "ok" {
+		t.Fatalf("candidates: %v", got)
+	}
+	if Broken(&crash) != "CrashLoopBackOff" || Broken(&restarted) != "restarted" || Broken(&ok) != "" {
+		t.Error("Broken reasons")
+	}
+}

@@ -27,6 +27,7 @@ const (
 	RouteSession       = "session"
 
 	AnnotationTraceparent = Prefix + "traceparent" // W3C trace context of the launch
+	AnnotationSpecHash    = Prefix + "spec-hash"   // hash of template spec and agent image a pool pod was built from
 	AnnotationRetain      = Prefix + "retain"      // "true" on an IDEWorkspace cancels expiry (G19)
 
 	// Pool scaler annotations on IDEPool (G6).

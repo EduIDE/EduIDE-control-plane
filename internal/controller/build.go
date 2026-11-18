@@ -3,7 +3,9 @@ package controller
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -121,7 +123,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		SecretName: tokenName(instance), DefaultMode: &mode,
 		Items: []corev1.KeyToPath{{Key: v1.InstanceTokenKey, Path: v1.InstanceTokenKey}},
 	}}}
-	ann := map[string]string{}
+	ann := map[string]string{v1.AnnotationSpecHash: d.specHash(t)}
 	if b := t.Spec.Bandwidth; b != nil {
 		if b.Ingress != nil {
 			ann["kubernetes.io/ingress-bandwidth"] = b.Ingress.String()
@@ -143,12 +145,37 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 	}
 }
 
+// specHash identifies what a pod is built from: the template spec, the agent image and the deployment placement.
+// A pool replaces idle pods with another hash.
+func (d *deps) specHash(t *v1.IDETemplate) string {
+	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// repairChildren makes sure Service and HTTPRoute of an existing instance exist. gone is true when its token
+// Secret is missing: the pod cannot get its token back, so the caller discards the instance.
+func (d *deps) repairChildren(ctx context.Context, pod *corev1.Pod) (gone bool, err error) {
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: tokenName(pod.Labels[v1.LabelInstance])}
+	if err := d.Get(ctx, key, &corev1.Secret{}); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return false, err
+		}
+		// The cache can lag behind a Secret created a moment ago.
+		if err := d.reader.Get(ctx, key, &corev1.Secret{}); err != nil {
+			return apierrors.IsNotFound(err), client.IgnoreNotFound(err)
+		}
+	}
+	return false, d.ensureChildren(ctx, pod)
+}
+
 // ensureChildren creates token Secret, Service and HTTPRoute of an instance, owned by the pod.
 // Existing objects stay as they are. The route is created last, so its presence marks the set complete.
 func (d *deps) ensureChildren(ctx context.Context, pod *corev1.Pod) error {
 	instance := pod.Labels[v1.LabelInstance]
 	route := &gatewayv1.HTTPRoute{}
-	if err := d.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}, route); err == nil {
+	key := client.ObjectKey{Namespace: pod.Namespace, Name: podName(instance)}
+	if d.Get(ctx, key, route) == nil && d.Get(ctx, key, &corev1.Service{}) == nil {
 		return nil
 	}
 	own := func(o client.Object) error { return controllerutil.SetOwnerReference(pod, o, d.scheme) }
