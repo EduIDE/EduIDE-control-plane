@@ -102,7 +102,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			{Name: "AGENT_TOKEN_FILE", Value: tokenMountPath + "/" + v1.InstanceTokenKey},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "token", MountPath: tokenMountPath, ReadOnly: true}},
-		ReadinessProbe: &corev1.Probe{PeriodSeconds: 2, FailureThreshold: 3, ProbeHandler: corev1.ProbeHandler{
+		ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, FailureThreshold: 3, ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{Path: "/readyz", Port: intstr.FromInt32(8081)}}},
 		LivenessProbe: &corev1.Probe{PeriodSeconds: 10, FailureThreshold: 3, InitialDelaySeconds: 5, ProbeHandler: corev1.ProbeHandler{
 			HTTPGet: &corev1.HTTPGetAction{Path: "/healthz", Port: intstr.FromInt32(8081)}}},
