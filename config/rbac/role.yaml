@@ -55,7 +55,6 @@ rules:
   - eduide.github.io
   resources:
   - idepools
-  - idesessions
   - idetemplates
   verbs:
   - get
@@ -63,6 +62,15 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - eduide.github.io
+  resources:
+  - idepools/finalizers
+  - idesessions/finalizers
+  - idetemplates/finalizers
+  - ideworkspaces/finalizers
+  verbs:
+  - update
 - apiGroups:
   - eduide.github.io
   resources:
@@ -77,13 +85,7 @@ rules:
 - apiGroups:
   - eduide.github.io
   resources:
-  - idesessions/finalizers
-  - ideworkspaces/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - eduide.github.io
-  resources:
+  - idesessions
   - ideworkspaces
   verbs:
   - delete

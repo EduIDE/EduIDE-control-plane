@@ -1,0 +1,588 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/rand/v2"
+	"strings"
+	"sync"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
+	"github.com/EduIDE/EduIDE-control-plane/internal/agentclient"
+	"github.com/EduIDE/EduIDE-control-plane/internal/claim"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
+)
+
+const (
+	condCapacity    = v1.ConditionCapacityPressure
+	condIdleWarned  = "IdleWarningSent"
+	condMaxWarned   = "MaxWarningSent"
+	activityStep    = 5 * time.Minute
+	agentWaitLimit  = 2 * time.Minute
+	agentCallBudget = 5 * time.Second
+	// pollBudget is shorter than the claim budget, so unreachable agents hold workers only briefly.
+	pollBudget = 2 * time.Second
+	// startLimit fails a session whose pod does not become ready, for example on an image pull error.
+	startLimit = 10 * time.Minute
+	// failedRetention keeps a failed session so the landing page can read the error.
+	failedRetention = 10 * time.Minute
+)
+
+// lowPriority puts timeout polls and cleanups behind claims in the work queue.
+var lowPriority = new(handler.LowPriority)
+
+type sessionReconciler struct {
+	*deps
+	// readyWritten holds sessions whose Ready status this operator wrote but the cache does not show yet.
+	// A reconcile on the stale copy would claim the agent a second time.
+	readyWritten sync.Map
+}
+
+func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
+	// The service creates the data Secret right after the session, so its arrival wakes the session.
+	bySecret := handler.EnqueueRequestsFromMapFunc(func(_ context.Context, o client.Object) []reconcile.Request {
+		for _, ref := range o.GetOwnerReferences() {
+			if ref.Kind == "IDESession" {
+				return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: o.GetNamespace(), Name: ref.Name}}}
+			}
+		}
+		return nil
+	})
+	byWorkspace := handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, o client.Object) []reconcile.Request {
+		var l v1.IDESessionList
+		if r.List(ctx, &l, client.InNamespace(o.GetNamespace()), client.MatchingFields{indexWorkspaceRef: o.GetName()}) != nil {
+			return nil
+		}
+		out := make([]reconcile.Request, 0, len(l.Items))
+		for _, s := range l.Items {
+			out = append(out, reconcile.Request{NamespacedName: client.ObjectKeyFromObject(&s)})
+		}
+		return out
+	})
+	return ctrl.NewControllerManagedBy(mgr).Named("session").For(&v1.IDESession{}).
+		Owns(&corev1.Pod{}).
+		Watches(&corev1.Secret{}, bySecret).
+		Watches(&v1.IDEWorkspace{}, byWorkspace).
+		WithOptions(opts(16)).Complete(r)
+}
+
+// startSpan continues the trace of the launch from the traceparent annotation.
+func startSpan(ctx context.Context, s *v1.IDESession, name string) (context.Context, trace.Span) {
+	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
+		ctx = propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": tp})
+	}
+	return otel.Tracer("eduide-operator").Start(ctx, name, trace.WithAttributes(
+		attribute.String("eduide.session", s.Name), attribute.String("eduide.template", s.Spec.TemplateRef)))
+}
+
+func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	s := &v1.IDESession{}
+	if err := r.Get(ctx, req.NamespacedName, s); err != nil {
+		r.readyWritten.Delete(req.NamespacedName)
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+	if _, ok := r.readyWritten.Load(req.NamespacedName); ok {
+		if s.Status.Phase == "" || s.Status.Phase == v1.SessionPending || s.Status.Phase == v1.SessionStarting {
+			// The status event follows in a moment and reconciles the session again.
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		r.readyWritten.Delete(req.NamespacedName)
+	}
+	ctx, span := startSpan(ctx, s, "session.reconcile")
+	defer span.End()
+	if s.DeletionTimestamp != nil {
+		return r.finalize(ctx, s)
+	}
+	if !controllerutil.ContainsFinalizer(s, v1.SessionFinalizer) {
+		orig := s.DeepCopy()
+		controllerutil.AddFinalizer(s, v1.SessionFinalizer)
+		if err := r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager)); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	if s.Status.Phase == v1.SessionFailed {
+		return r.expire(ctx, s)
+	}
+	tmpl := &v1.IDETemplate{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.TemplateRef}, tmpl); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.fail(ctx, s, v1.ErrorTemplateNotFound, fmt.Sprintf("template %s not found", s.Spec.TemplateRef))
+		}
+		return ctrl.Result{}, err
+	}
+	pod, err := r.findPod(ctx, s)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if pod == nil {
+		if s.Status.Instance != "" {
+			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance is gone")
+		}
+		var res ctrl.Result
+		if pod, res, err = r.start(ctx, s, tmpl); pod == nil {
+			return res, err
+		}
+	}
+	return r.progress(ctx, s, tmpl, pod)
+}
+
+// findPod looks in the cache first. A miss is checked against the API server, so a pod claimed a moment ago is never claimed twice.
+func (r *sessionReconciler) findPod(ctx context.Context, s *v1.IDESession) (*corev1.Pod, error) {
+	var l corev1.PodList
+	sel := client.MatchingLabels{v1.LabelSession: s.Name}
+	if err := r.List(ctx, &l, client.InNamespace(s.Namespace), sel); err != nil {
+		return nil, err
+	}
+	if len(l.Items) == 0 {
+		if err := r.reader.List(ctx, &l, client.InNamespace(s.Namespace), sel); err != nil {
+			return nil, err
+		}
+	}
+	if len(l.Items) == 0 {
+		return nil, nil
+	}
+	return &l.Items[0], nil
+}
+
+// start claims an idle pod or creates a cold one. It returns nil when it waits or fails.
+func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate) (*corev1.Pod, ctrl.Result, error) {
+	np := r.nodePool(tmpl)
+	var claimName string
+	if ref := s.Spec.WorkspaceRef; ref != "" {
+		ws := &v1.IDEWorkspace{}
+		if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: ref}, ws); err != nil {
+			if apierrors.IsNotFound(err) {
+				res, err := r.fail(ctx, s, v1.ErrorWorkspaceNotFound, fmt.Sprintf("workspace %s not found", ref))
+				return nil, res, err
+			}
+			return nil, ctrl.Result{}, err
+		}
+		if ws.Status.Phase != v1.WorkspaceReady || ws.Status.ClaimName == "" {
+			// The workspace watch wakes the session when the volume is there.
+			orig := s.DeepCopy()
+			s.Status.Phase = v1.SessionPending
+			return nil, ctrl.Result{}, r.patchStatus(ctx, orig, s)
+		}
+		claimName = ws.Status.ClaimName
+	} else if pod, retry, err := r.tryClaim(ctx, s, tmpl, np); pod != nil || retry || err != nil {
+		// After a conflict the cache is behind; look again instead of starting cold.
+		return pod, ctrl.Result{Requeue: retry}, err //nolint:staticcheck // rate limited retry, no fixed delay
+	}
+
+	pod, err := r.createInstance(ctx, tmpl, s, r.sessionLabels(s, nil), claimName)
+	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
+		// Quota is capacity pressure like an unschedulable pod (G8).
+		res, err := r.capacity(ctx, s, tmpl)
+		return nil, res, err
+	}
+	return pod, ctrl.Result{}, err
+}
+
+func (r *sessionReconciler) sessionLabels(s *v1.IDESession, extra map[string]string) map[string]string {
+	l := map[string]string{v1.LabelState: v1.StateClaimed, v1.LabelSession: s.Name, v1.LabelOwnerHash: v1.OwnerHash(s.Spec.Owner)}
+	for k, v := range extra {
+		l[k] = v
+	}
+	return l
+}
+
+// tryClaim takes an idle pool pod with one merge patch guarded by the resourceVersion (ADR 0009).
+// retry is true when a candidate was in conflict: the cache is behind and may still hold an idle pod.
+func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, nodePool string) (*corev1.Pod, bool, error) {
+	var pods corev1.PodList
+	err := r.List(ctx, &pods, client.InNamespace(s.Namespace), client.HasLabels{v1.LabelPool},
+		client.MatchingLabels{v1.LabelTemplate: tmpl.Name, v1.LabelState: v1.StateIdle, v1.LabelComponent: v1.ComponentSession})
+	if err != nil {
+		return nil, false, err
+	}
+	conflict := false
+	// Under pressure the claim does not wait for pods that are still starting.
+	for _, c := range claim.Candidates(pods.Items, !r.pressure.Active(nodePool)) {
+		pod, before := c.DeepCopy(), c.DeepCopy()
+		for k, v := range r.sessionLabels(s, nil) {
+			pod.Labels[k] = v
+		}
+		pod.OwnerReferences = nil
+		if err := controllerutil.SetControllerReference(s, pod, r.scheme); err != nil {
+			return nil, false, err
+		}
+		err := r.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.FieldOwner(fieldManager))
+		switch {
+		case apierrors.IsConflict(err):
+			conflict = true
+			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
+		case apierrors.IsNotFound(err):
+			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
+		case err != nil:
+			return nil, false, err
+		default:
+			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "claimed").Inc()
+			return pod, false, nil
+		}
+	}
+	if conflict {
+		return nil, true, nil
+	}
+	telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+	return nil, false, nil
+}
+
+// progress moves a session with a pod through Starting to Ready.
+func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod) (ctrl.Result, error) {
+	now := r.clock.Now()
+	orig := s.DeepCopy()
+	st := &s.Status
+	st.Instance, st.PodName, st.ObservedGeneration = pod.Labels[v1.LabelInstance], pod.Name, s.Generation
+	if st.StartStrategy == "" {
+		switch {
+		case pod.Labels[v1.LabelPool] == "":
+			st.StartStrategy = v1.StartCold
+		case claim.Ready(pod):
+			st.StartStrategy = v1.StartWarmReady
+		default:
+			st.StartStrategy = v1.StartWarmStarting
+		}
+	}
+	if st.Timestamps.Claimed == nil {
+		t := metav1.NewTime(now)
+		if st.StartStrategy == v1.StartCold {
+			t = pod.CreationTimestamp
+		}
+		st.Timestamps.Claimed = &t
+	}
+	if st.Phase == "" || st.Phase == v1.SessionPending {
+		st.Phase = v1.SessionStarting
+	}
+
+	switch {
+	case pod.DeletionTimestamp != nil:
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance was terminated")
+	case st.Phase == v1.SessionReady:
+		return r.running(ctx, s, tmpl, pod)
+	case claim.Unschedulable(pod):
+		return r.capacity(ctx, s, tmpl)
+	}
+	if c := meta.FindStatusCondition(st.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
+		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
+	}
+	// Also on a ready pod: a create that failed half way leaves the instance without its route.
+	if err := r.ensureChildren(ctx, pod); err != nil {
+		return ctrl.Result{}, err
+	}
+	if !claim.Ready(pod) {
+		switch {
+		case !claim.Usable(pod):
+			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance stopped")
+		case now.Sub(st.Timestamps.Claimed.Time) > startLimit:
+			return r.fail(ctx, s, v1.ErrorStartFailed, "the instance did not become ready in time")
+		}
+		return ctrl.Result{RequeueAfter: time.Minute}, r.patchStatus(ctx, orig, s)
+	}
+
+	if st.Timestamps.PodReady == nil {
+		t := *st.Timestamps.Claimed
+		if ready := readyTime(pod); ready.After(t.Time) {
+			t = ready
+		}
+		st.Timestamps.PodReady = &t
+	}
+	stuck := now.Sub(st.Timestamps.PodReady.Time) > agentWaitLimit
+	wait := func(why string) (ctrl.Result, error) {
+		if stuck {
+			return r.fail(ctx, s, v1.ErrorStartFailed, why)
+		}
+		return ctrl.Result{RequeueAfter: time.Second}, r.patchStatus(ctx, orig, s)
+	}
+
+	data, ok, err := r.launchData(ctx, s)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !ok {
+		return wait("launch data is missing")
+	}
+	base, token, err := r.agentTarget(ctx, pod)
+	if err != nil {
+		return wait("the agent is not reachable")
+	}
+	cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
+	defer cancel()
+	req := agentapi.ClaimRequest{Session: s.Name, Data: data}
+	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
+		req.Traceparent = &tp
+	}
+	switch err := r.agent.Claim(cctx, base, token, req); {
+	case errors.Is(err, agentclient.ErrConflict):
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance belongs to another session")
+	case err != nil:
+		slog.WarnContext(ctx, "agent claim failed", "session", s.Name, "error", err.Error())
+		return wait("the agent did not accept the launch data")
+	}
+
+	t := metav1.NewTime(now)
+	st.Timestamps.AgentReady, st.Timestamps.Ready = &t, &t
+	st.Phase, st.URL, st.ErrorCode, st.Message = v1.SessionReady, r.cfg.InstanceURL(st.Instance), "", ""
+	meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Ready", ObservedGeneration: s.Generation, LastTransitionTime: t})
+	if err := r.patchStatus(ctx, orig, s); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})
+	strategy := string(st.StartStrategy)
+	telemetry.SessionPhase.WithLabelValues("claim", strategy).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
+	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready").Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
+	if s.Spec.WorkspaceRef != "" {
+		if err := r.touchWorkspace(ctx, s); err != nil {
+			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
+		}
+	}
+	return ctrl.Result{RequeueAfter: r.jitter(), Priority: lowPriority}, nil
+}
+
+func readyTime(p *corev1.Pod) metav1.Time {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.LastTransitionTime
+		}
+	}
+	return metav1.Time{}
+}
+
+func (r *sessionReconciler) jitter() time.Duration {
+	return time.Duration(float64(r.poll) * (0.8 + 0.4*rand.Float64())) //nolint:gosec // jitter, not security
+}
+
+// launchData reads the data Secret. ok is false while it does not exist yet. The values are never logged.
+func (r *sessionReconciler) launchData(ctx context.Context, s *v1.IDESession) (map[string]string, bool, error) {
+	data := map[string]string{}
+	if s.Spec.DataSecretRef == "" {
+		return data, true, nil
+	}
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.DataSecretRef}, sec); err != nil {
+		return nil, false, client.IgnoreNotFound(err)
+	}
+	for k, v := range sec.Data {
+		data[k] = string(v)
+	}
+	return data, true, nil
+}
+
+// agentTarget is the control address and the bearer token of a pod's agent.
+func (r *sessionReconciler) agentTarget(ctx context.Context, pod *corev1.Pod) (string, string, error) {
+	base, err := r.agentURL(pod)
+	if err != nil {
+		return "", "", err
+	}
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: tokenName(pod.Labels[v1.LabelInstance])}, sec); err != nil {
+		return "", "", err
+	}
+	return base, string(sec.Data[v1.InstanceTokenKey]), nil
+}
+
+// running enforces idle and maximum lifetime from the agent's activity (ADR 0016).
+func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod) (ctrl.Result, error) {
+	now := r.clock.Now()
+	orig := s.DeepCopy()
+	st := &s.Status
+	base := st.Timestamps.Claimed.Time
+	if st.Timestamps.AgentReady != nil {
+		base = st.Timestamps.AgentReady.Time
+	}
+	url, token, terr := r.agentTarget(ctx, pod)
+	last := time.Time{}
+	if st.LastActivity != nil {
+		last = st.LastActivity.Time
+	}
+	polled := false
+	if terr == nil {
+		cctx, cancel := context.WithTimeout(ctx, pollBudget)
+		as, err := r.agent.Status(cctx, url, token)
+		cancel()
+		polled = err == nil
+		if err == nil && as.LastActivity != nil {
+			if as.LastActivity.Sub(last) > activityStep || st.LastActivity == nil {
+				t := metav1.NewTime(*as.LastActivity)
+				st.LastActivity = &t
+			}
+			last = *as.LastActivity
+		}
+	}
+	if last.After(base) {
+		base = last
+	}
+	if !polled {
+		// Missing data alone never ends a session for idleness (ADR 0016); the maximum lifetime still applies.
+		base = now
+	}
+	to := resolveTimeouts(tmpl)
+	idleWarned := meta.IsStatusConditionTrue(st.Conditions, condIdleWarned)
+	if idleWarned && now.Before(base.Add(to.warning)) {
+		// The user came back, so the next idle period gets its own warning.
+		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condIdleWarned, Status: metav1.ConditionFalse, Reason: "Active", LastTransitionTime: metav1.NewTime(now)})
+		idleWarned = false
+	}
+	maxWarned := meta.IsStatusConditionTrue(st.Conditions, condMaxWarned)
+	d := decide(now, s.CreationTimestamp.Time, base, to, idleWarned, maxWarned)
+
+	switch d.act {
+	case actEnd:
+		return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, s))
+	case actWarnIdle, actWarnMax:
+		kind, cond, msg := agentapi.IdleWarning, condIdleWarned, "This session ends soon because it is idle."
+		if d.act == actWarnMax {
+			kind, cond, msg = agentapi.MaxWarning, condMaxWarned, "This session reaches its maximum lifetime soon."
+		}
+		if terr == nil {
+			cctx, cancel := context.WithTimeout(ctx, pollBudget)
+			err := r.agent.Notify(cctx, url, token, agentapi.Notice{Kind: kind, Message: msg, At: &d.at})
+			cancel()
+			if err == nil {
+				meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: cond, Status: metav1.ConditionTrue, Reason: "Sent", LastTransitionTime: metav1.NewTime(now)})
+			}
+		}
+	}
+	if err := r.patchStatus(ctx, orig, s); err != nil {
+		return ctrl.Result{}, err
+	}
+	wait := min(r.jitter(), d.next.Sub(now))
+	if d.act != actNone {
+		wait = min(wait, 5*time.Second)
+	}
+	return ctrl.Result{RequeueAfter: max(wait, time.Second), Priority: lowPriority}, nil
+}
+
+// capacity handles a session pod that cannot be placed (G8): evict the oldest idle pod of the node pool and fail after exhaustedAfter.
+func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate) (ctrl.Result, error) {
+	now := r.clock.Now()
+	np := r.nodePool(tmpl)
+	r.pressure.Mark(np)
+	orig := s.DeepCopy()
+	since := now
+	if c := meta.FindStatusCondition(s.Status.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
+		since = c.LastTransitionTime.Time
+	}
+	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionTrue, Reason: "NoCapacity",
+		Message: "the pod cannot be placed in its node pool", LastTransitionTime: metav1.NewTime(now)})
+	if s.Status.Phase == "" {
+		s.Status.Phase = v1.SessionPending
+	}
+	if err := r.patchStatus(ctx, orig, s); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	var idle corev1.PodList
+	if err := r.List(ctx, &idle, client.InNamespace(s.Namespace), client.MatchingLabels{v1.LabelComponent: v1.ComponentSession, v1.LabelState: v1.StateIdle}); err != nil {
+		return ctrl.Result{}, err
+	}
+	if v := claim.OldestIdle(idle.Items, np); v != nil {
+		if err := r.Delete(ctx, v); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		telemetry.CapacityEvictions.WithLabelValues(gaugeName(np)).Inc()
+	}
+
+	left := r.cfg.Capacity.ExhaustedAfter.Duration - now.Sub(since)
+	if left <= 0 {
+		return r.fail(ctx, s, v1.ErrorCapacityExhausted, "there is no capacity to start the session")
+	}
+	return ctrl.Result{RequeueAfter: min(left, 2*time.Second)}, nil
+}
+
+// fail ends the start path for good and discards the instance.
+func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, msg string) (ctrl.Result, error) {
+	orig := s.DeepCopy()
+	s.Status.Phase, s.Status.ErrorCode, s.Status.Message = v1.SessionFailed, code, msg
+	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionFalse, Reason: camel(code), Message: msg,
+		ObservedGeneration: s.Generation, LastTransitionTime: metav1.NewTime(r.clock.Now())})
+	if err := r.patchStatus(ctx, orig, s); err != nil {
+		return ctrl.Result{}, err
+	}
+	strategy := string(s.Status.StartStrategy)
+	if strategy == "" {
+		strategy = "none"
+	}
+	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed").Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	return r.expire(ctx, s)
+}
+
+// expire discards the pods of a failed session and deletes the session after failedRetention.
+func (r *sessionReconciler) expire(ctx context.Context, s *v1.IDESession) (ctrl.Result, error) {
+	var pods corev1.PodList
+	if err := r.List(ctx, &pods, client.InNamespace(s.Namespace), client.MatchingLabels{v1.LabelSession: s.Name}); err != nil {
+		return ctrl.Result{}, err
+	}
+	for i := range pods.Items {
+		if pods.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		if err := r.Delete(ctx, &pods.Items[i]); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	failedAt := s.CreationTimestamp.Time
+	if c := meta.FindStatusCondition(s.Status.Conditions, v1.ConditionReady); c != nil && c.Status == metav1.ConditionFalse {
+		failedAt = c.LastTransitionTime.Time
+	}
+	if left := failedAt.Add(failedRetention).Sub(r.clock.Now()); left > 0 {
+		return ctrl.Result{RequeueAfter: left, Priority: lowPriority}, nil
+	}
+	return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, s))
+}
+
+// finalize records the workspace use. The pod goes through garbage collection.
+func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(s, v1.SessionFinalizer) {
+		return ctrl.Result{}, nil
+	}
+	if s.Spec.WorkspaceRef != "" {
+		if err := r.touchWorkspace(ctx, s); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+	orig := s.DeepCopy()
+	controllerutil.RemoveFinalizer(s, v1.SessionFinalizer)
+	return ctrl.Result{}, client.IgnoreNotFound(r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager)))
+}
+
+// touchWorkspace sets lastUsed to now (G19). A missing workspace is not an error.
+func (r *sessionReconciler) touchWorkspace(ctx context.Context, s *v1.IDESession) error {
+	ws := &v1.IDEWorkspace{}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: s.Spec.WorkspaceRef}, ws); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	orig := ws.DeepCopy()
+	t := metav1.NewTime(r.clock.Now())
+	ws.Status.LastUsed = &t
+	return client.IgnoreNotFound(r.patchStatus(ctx, orig, ws))
+}
+
+// camel turns an error code such as capacity-exhausted into a condition reason such as CapacityExhausted.
+func camel(code string) string {
+	var b strings.Builder
+	for _, p := range strings.Split(code, "-") {
+		b.WriteString(strings.ToUpper(p[:1]) + p[1:])
+	}
+	return b.String()
+}
