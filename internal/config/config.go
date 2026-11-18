@@ -60,6 +60,8 @@ type GatewayRef struct {
 	Name        string `json:"name"`
 	Namespace   string `json:"namespace,omitempty"`
 	SectionName string `json:"sectionName,omitempty"`
+	// Port restricts the routes to listeners on this port (e.g. 443). 0 means any listener.
+	Port int32 `json:"port,omitempty"`
 }
 
 type OIDC struct {

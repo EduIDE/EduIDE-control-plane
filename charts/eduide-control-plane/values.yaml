@@ -24,6 +24,9 @@ config:
     name: ""
     namespace: ""
     sectionName: ""
+    # Attach routes only to listeners on this port (e.g. 443), so sessions are never served on plain HTTP
+    # listeners of the same Gateway. 0 attaches to every listener the hostnames match.
+    port: 443
   oidc:
     # required: e.g. https://auth.example.org/realms/eduide
     issuerURL: ""

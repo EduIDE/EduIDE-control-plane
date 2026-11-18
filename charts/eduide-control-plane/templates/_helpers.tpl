@@ -58,6 +58,9 @@ seccompProfile:
   {{- with .Values.config.gateway.sectionName }}
   sectionName: {{ . }}
   {{- end }}
+  {{- with .Values.config.gateway.port }}
+  port: {{ . }}
+  {{- end }}
 {{- end }}
 
 {{/* volumes and mounts shared by the three Go binaries */}}
