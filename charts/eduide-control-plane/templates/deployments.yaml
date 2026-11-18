@@ -59,6 +59,8 @@ spec:
             sleep: {seconds: {{ $.Values.endpointDrainSeconds }}}
         {{- end }}
         env:
+        - name: LOG_LEVEL
+          value: {{ $c.v.logLevel | default "info" | quote }}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:

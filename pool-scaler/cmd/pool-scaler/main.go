@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -38,7 +39,7 @@ import (
 )
 
 func main() {
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	log := newLogger()
 	args := os.Args[1:]
 	cmd := "run"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -57,6 +58,44 @@ func main() {
 		log.Error("exiting", "err", err)
 		os.Exit(1)
 	}
+}
+
+// newLogger writes JSON on stdout like the other binaries; LOG_LEVEL is debug, info or warn.
+func newLogger() *slog.Logger {
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logLevel()})).With("service", "eduide-pool-scaler")
+}
+
+func logLevel() slog.Level {
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	}
+	return slog.LevelInfo
+}
+
+// version is the VCS revision of the build.
+func version() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	rev, dirty := "", ""
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value[:min(12, len(s.Value))]
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if rev == "" {
+		return bi.Main.Version
+	}
+	return rev + dirty
 }
 
 func run(args []string, log *slog.Logger) error {
@@ -110,17 +149,23 @@ func run(args []string, log *slog.Logger) error {
 	}()
 	defer func() { _ = srv.Shutdown(context.Background()) }()
 
-	log.Info("pool-scaler started", "namespace", cfg.Namespace, "mode", cfg.Mode, "interval", cfg.Interval.String())
+	log.Info("starting", "version", version(), "namespace", cfg.Namespace, "mode", string(cfg.Mode), "interval", cfg.Interval.String(),
+		"metrics_addr", cfg.MetricsAddr, "timezone", cfg.Timezone, "active_strategy", cfg.ActiveStrategy, "strategies", cfg.Strategies,
+		"pools", cfg.Pools, "prometheus_set", cfg.Prometheus.URL != "", "calendar_set", cfg.Calendar.File != "",
+		"artemis_set", cfg.Artemis.URL != "", "decision_model_set", cfg.DecisionModel.URL != "", "log_level", logLevel().String())
 	t := time.NewTicker(cfg.Interval.Duration)
 	defer t.Stop()
-	for {
+	for first := true; ; first = false {
 		tctx, cancel := context.WithTimeout(ctx, cfg.Interval.Duration)
 		if err := s.Tick(tctx, time.Now()); err != nil {
 			log.Error("decision round failed", "err", err)
+		} else if first {
+			log.Info("ready", "detail", "first decision round done")
 		}
 		cancel()
 		select {
 		case <-ctx.Done():
+			log.Info("shutdown", "reason", "signal")
 			return nil
 		case <-t.C:
 		}

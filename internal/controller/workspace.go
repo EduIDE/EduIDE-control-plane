@@ -90,6 +90,10 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		inUse = inUse || s.Status.Phase != v1.SessionFailed
 	}
 	retained := ws.Annotations[v1.AnnotationRetain] == "true"
+	if debugOn(ctx) {
+		slog.DebugContext(ctx, "workspace ttl", "workspace", ws.Name, "last_used", st.LastUsed.Time, "retention", r.retention(ws, tmpl).String(),
+			"expires_at", exp.Time, "in_use", inUse, "retained", retained, "expired", !now.Before(exp.Time))
+	}
 
 	var res ctrl.Result
 	if inUse || retained || now.Before(exp.Time) {

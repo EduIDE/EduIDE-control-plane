@@ -52,6 +52,8 @@ config:
   agent:
     # Default: <image.registry>/agent:<image.tag>
     image: ""
+    # debug, info or warn. Applies to session pods created after the change.
+    logLevel: info
     resources:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 64Mi}
@@ -76,6 +78,8 @@ oidc:
   endSessionEndpoint: ""
 
 operator:
+  # debug, info or warn. Changing it restarts the component.
+  logLevel: info
   replicas: 1
   resources:
     requests: {cpu: 20m, memory: 48Mi}
@@ -85,6 +89,8 @@ operator:
   affinity: {}
 
 service:
+  # debug, info or warn. Changing it restarts the component.
+  logLevel: info
   replicas: 2
   resources:
     requests: {cpu: 10m, memory: 24Mi}
@@ -94,6 +100,8 @@ service:
   affinity: {}
 
 authz:
+  # debug, info or warn. Changing it restarts the component.
+  logLevel: info
   replicas: 2
   resources:
     requests: {cpu: 10m, memory: 16Mi}
@@ -150,6 +158,8 @@ userSalt:
 # Optional pool scaler: writes IDEPool targetIdle through the scale subresource.
 poolScaler:
   enabled: false
+  # debug, info or warn.
+  logLevel: info
   image:
     repository: ghcr.io/eduide/eduide-control-plane/pool-scaler
     tag: ""

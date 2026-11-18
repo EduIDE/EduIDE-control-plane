@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -23,10 +22,12 @@ import (
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
 	"github.com/EduIDE/EduIDE-control-plane/internal/controller"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 func main() {
+	telemetry.InitLogger("eduide-operator")
 	cfgPath := flag.String("config", "/etc/eduide/config.yaml", "path of the deployment config")
 	flag.Parse()
 	if err := run(*cfgPath); err != nil {
@@ -46,7 +47,7 @@ func run(cfgPath string) error {
 		return err
 	}
 	defer func() { _ = shutdown(context.Background()) }()
-	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
+	telemetry.BridgeLogs()
 	var salt []byte
 	if cfg.Telemetry.UserSaltFile != "" {
 		if salt, err = os.ReadFile(cfg.Telemetry.UserSaltFile); err != nil {
@@ -99,6 +100,27 @@ func run(cfgPath string) error {
 	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
 		return err
 	}
-	slog.Info("operator starting", "namespace", cfg.Namespace, "deployment", cfg.Deployment)
-	return mgr.Start(ctx)
+	logStarting(cfg, salt)
+	// Ready once this replica leads and the controllers run; a standby replica logs nothing more.
+	go func() {
+		select {
+		case <-mgr.Elected():
+			slog.Info("ready", "detail", "elected leader, controllers running")
+		case <-ctx.Done():
+		}
+	}()
+	err = mgr.Start(ctx)
+	reason := "signal"
+	if err != nil {
+		reason = "manager stopped"
+	}
+	slog.Info("shutdown", "reason", reason)
+	return err
+}
+
+// logStarting logs the non-secret effective settings.
+func logStarting(cfg *config.Config, salt []byte) {
+	slog.Info("starting", "version", logx.Version(), "deployment", cfg.Deployment, "namespace", cfg.Namespace,
+		"metrics_addr", ":9464", "probe_addr", ":8081", "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "",
+		"user_salt_set", len(salt) > 0, "log_level", logx.Level().String())
 }

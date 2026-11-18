@@ -14,6 +14,7 @@ Status: **experimental**. Planned parts are marked **Planned** in the pages.
 | [contracts/metrics.md](contracts/metrics.md) | Metric names and labels |
 | [operations/install.md](operations/install.md) | Install the CRDs and the control plane |
 | Runbooks | [pool empty](operations/pool-empty.md), [slow launch](operations/slow-launch.md), [authz errors](operations/authz-errors.md), [gateway backlog](operations/gateway-backlog.md) |
+| [operations/logging.md](operations/logging.md) | Log format, fields and how to switch on debug logs |
 | [operations/migration.md](operations/migration.md) | Move a deployment from the Java stack |
 | [development/setup.md](development/setup.md) | Tools and first build |
 | [development/testing.md](development/testing.md) | Test pyramid and how to run it |

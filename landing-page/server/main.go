@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
@@ -24,32 +25,79 @@ type config struct {
 	} `json:"keycloak"`
 }
 
+// logger writes JSON on stdout like the other binaries; LOG_LEVEL is debug, info or warn.
+func logger() *slog.Logger {
+	level := slog.LevelInfo
+	switch strings.ToLower(os.Getenv("LOG_LEVEL")) {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn", "warning":
+		level = slog.LevelWarn
+	}
+	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})).With("service", "eduide-landing-page")
+}
+
+// version is the VCS revision of the build.
+func version() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	rev, dirty := "", ""
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value[:min(12, len(s.Value))]
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if rev == "" {
+		return bi.Main.Version
+	}
+	return rev + dirty
+}
+
 func main() {
+	slog.SetDefault(logger())
 	addr := flag.String("addr", ":8080", "listen address")
 	dist := flag.String("dist", "/app/dist", "directory with the built app")
 	cfgPath := flag.String("config", "/etc/eduide/landing/config.json", "runtime config served as /config.json")
 	flag.Parse()
 
-	h, err := newHandler(*dist, *cfgPath)
-	if err != nil {
-		slog.Error("start", "error", err)
-		os.Exit(1)
-	}
-	srv := &http.Server{Addr: *addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
-
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = srv.Shutdown(shutdownCtx)
-	}()
-	slog.Info("listening", "addr", *addr)
-	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+	if err := run(ctx, *addr, *dist, *cfgPath); err != nil {
 		slog.Error("serve", "error", err)
 		os.Exit(1)
 	}
+}
+
+// run serves until ctx ends and logs start, ready and shutdown.
+func run(ctx context.Context, addr, dist, cfgPath string) error {
+	h, err := newHandler(dist, cfgPath)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Addr: addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-ctx.Done()
+		slog.Info("shutdown", "reason", "signal")
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutdownCtx)
+	}()
+	slog.Info("starting", "version", version(), "addr", addr, "dist", dist, "config", cfgPath, "log_level", os.Getenv("LOG_LEVEL"))
+	slog.Info("ready", "detail", "config read, serving")
+	if err := srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	<-done
+	return nil
 }
 
 // newHandler reads the config once to derive the CSP and serves the file again on every request,
@@ -127,6 +175,7 @@ func newHandler(dist, cfgPath string) (http.Handler, error) {
 
 func securityHeaders(csp string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slog.Debug("request", "method", r.Method, "path", r.URL.Path)
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
 		h.Set("Strict-Transport-Security", "max-age=31536000")

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/agent"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 func main() {
@@ -22,7 +23,8 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "noop" {
 		return
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	// AGENT_LOG_LEVEL is set by the operator from the config; LOG_LEVEL works for a manual run.
+	log := logx.NewAt("eduide-agent", logx.ParseLevel(env("AGENT_LOG_LEVEL", os.Getenv("LOG_LEVEL"))))
 	if err := run(log); err != nil {
 		log.Error("agent failed", "error", err)
 		os.Exit(1)
@@ -68,18 +70,22 @@ func run(log *slog.Logger) error {
 		{Addr: env("AGENT_CONTROL_ADDR", "0.0.0.0:8081"), Handler: a.ControlHandler(), ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: idleTimeout},
 		{Addr: localAddr, Handler: a.LocalHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: idleTimeout},
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
 	errc := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() { errc <- s.ListenAndServe() }()
 	}
-	log.Info("agent started")
+	log.Info("starting", "version", logx.Version(), "proxy_addr", servers[0].Addr, "control_addr", servers[1].Addr,
+		"local_addr", localAddr, "ide_port", env("AGENT_IDE_PORT", "3000"), "log_level", logx.ParseLevel(env("AGENT_LOG_LEVEL", os.Getenv("LOG_LEVEL"))).String())
+	log.Info("ready", "detail", "listening, waiting for the claim")
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
-	defer stop()
 	select {
 	case err := <-errc:
+		log.Info("shutdown", "reason", "server stopped")
 		return err
 	case <-ctx.Done():
+		log.Info("shutdown", "reason", "signal")
 	}
 	sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

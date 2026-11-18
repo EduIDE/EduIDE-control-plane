@@ -66,6 +66,8 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 	span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.launch_result", "rejected"))
 	span.SetStatus(codes.Error, string(perr.code)) // the code only: details may name launch data keys
 	telemetry.Launches.WithLabelValues(template, "rejected").Inc()
+	// The detail names keys and rules, never values.
+	slog.DebugContext(ctx, "launch rejected", "template", template, "code", string(perr.code), "detail", perr.detail)
 	slog.InfoContext(ctx, "launch", "template", template, "result", "rejected", "code", string(perr.code), "user", s.userID(u.Owner))
 	writeProblem(w, perr)
 }
@@ -109,6 +111,7 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 	}
 
 	key := launchKey(u.Owner, tpl.Name, wsName, data)
+	slog.DebugContext(ctx, "launch validated", "template", tpl.Name, "workspace", wsName, "keys", len(data), "launch_key", key)
 	// Live read: the cache may not hold a session a launch created a moment ago.
 	sessions, err := s.ownedSessions(ctx, s.w, u.Owner)
 	if err != nil {
@@ -120,6 +123,7 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 			continue
 		}
 		if sessions[i].Labels[v1alpha1.LabelLaunchKey] == key {
+			slog.DebugContext(ctx, "launch is idempotent: session with the same launch key exists", "session", sessions[i].Name, "launch_key", key)
 			return &sessions[i], false, nil
 		}
 		running = append(running, sessions[i])

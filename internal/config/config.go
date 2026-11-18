@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -155,7 +156,9 @@ type Telemetry struct {
 
 // Agent describes the sidecar the operator injects into session pods.
 type Agent struct {
-	Image     string                      `json:"image"`
+	Image string `json:"image"`
+	// LogLevel (debug, info or warn) becomes AGENT_LOG_LEVEL of the sidecar. Default info.
+	LogLevel  string                      `json:"logLevel,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
 }
 
@@ -252,6 +255,9 @@ func (c *Config) validate() error {
 	}
 	if len(c.OIDC.ClientIDs) == 0 {
 		errs = append(errs, errors.New("config: oidc.clientIDs needs at least one client"))
+	}
+	if !slices.Contains([]string{"", "debug", "info", "warn"}, c.Agent.LogLevel) {
+		errs = append(errs, errors.New("config: agent.logLevel must be debug, info or warn"))
 	}
 	if c.SessionsPerUser < 1 {
 		errs = append(errs, errors.New("config: sessionsPerUser must be at least 1"))

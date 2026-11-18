@@ -124,6 +124,7 @@ func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 	ctx, span := startSpan(ctx, s, "session.reconcile")
 	defer span.End()
+	slog.DebugContext(ctx, "reconcile session", "session", s.Name, "phase", string(s.Status.Phase), "instance", s.Status.Instance, "deleting", s.DeletionTimestamp != nil)
 	if s.DeletionTimestamp != nil {
 		return r.finalize(ctx, s)
 	}
@@ -252,7 +253,9 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 	}
 	conflict := false
 	// Under pressure the claim does not wait for pods that are still starting.
-	for _, c := range claim.Candidates(pods.Items, !r.pressure.Active(nodePool)) {
+	cands := claim.Candidates(pods.Items, !r.pressure.Active(nodePool))
+	slog.DebugContext(ctx, "claim candidates", "session", s.Name, "template", tmpl.Name, "idle_pods", len(pods.Items), "candidates", len(cands), "under_pressure", r.pressure.Active(nodePool))
+	for _, c := range cands {
 		pod, before := c.DeepCopy(), c.DeepCopy()
 		for k, v := range r.sessionLabels(s, nil) {
 			pod.Labels[k] = v
@@ -264,6 +267,7 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 		err := r.Patch(ctx, pod, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{}), client.FieldOwner(fieldManager))
 		switch {
 		case apierrors.IsConflict(err):
+			slog.DebugContext(ctx, "claim conflict, trying the next candidate", "session", s.Name, "pod", c.Name)
 			conflict = true
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
 		case apierrors.IsNotFound(err):
@@ -271,6 +275,7 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 		case err != nil:
 			return nil, false, err
 		default:
+			slog.DebugContext(ctx, "claim won", "session", s.Name, "pod", c.Name)
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "claimed").Inc()
 			r.note(ctx, s, corev1.EventTypeNormal, "Claimed", "claimed an idle instance")
 			return pod, false, nil
@@ -715,7 +720,10 @@ func (r *sessionReconciler) pushClaim(ctx context.Context, s *v1.IDESession, tmp
 	}
 	actx, aspan := otel.Tracer("eduide-operator").Start(cctx, "agent.claim")
 	defer aspan.End()
-	return r.agent.Claim(actx, base, token, req)
+	start := time.Now()
+	err := r.agent.Claim(actx, base, token, req)
+	slog.DebugContext(ctx, "agent claim call", "session", s.Name, "keys", len(req.Data), "duration_ms", time.Since(start).Milliseconds(), "ok", err == nil)
+	return err
 }
 
 // reclaim pushes the claim again to an agent that reports claimed=false for a Ready session.

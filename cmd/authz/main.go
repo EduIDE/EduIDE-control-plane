@@ -14,7 +14,6 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
@@ -29,10 +28,12 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/authz"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 func main() {
+	telemetry.InitLogger("eduide-authz")
 	cfgPath := flag.String("config", "/etc/eduide/config.yaml", "path of the config file")
 	flag.Parse()
 	if err := run(*cfgPath); err != nil {
@@ -53,7 +54,7 @@ func run(cfgPath string) error {
 		return err
 	}
 	defer func() { _ = shutdownTel(context.Background()) }()
-	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
+	telemetry.BridgeLogs()
 
 	var salt []byte
 	if cfg.Telemetry.UserSaltFile != "" {
@@ -100,6 +101,11 @@ func run(cfgPath string) error {
 		Salt:          salt,
 	}
 	go discover(ctx, cfg, srv)
+	go func() {
+		if c.WaitForCacheSync(ctx) {
+			slog.Info("ready", "detail", "session cache synced")
+		}
+	}()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(telemetry.AuthzMetrics...)
@@ -126,12 +132,15 @@ func run(cfgPath string) error {
 	healthpb.RegisterHealthServer(g, h)
 	go serveWhenReady(ctx, h, ready, time.Second)
 
+	logStarting(cfg, httpSrv.Addr, salt)
 	errc := make(chan error, 2)
 	go func() { errc <- g.Serve(lis) }()
 	go func() { errc <- httpSrv.ListenAndServe() }()
 	select {
 	case err = <-errc:
+		slog.Info("shutdown", "reason", "server stopped")
 	case <-ctx.Done():
+		slog.Info("shutdown", "reason", "signal")
 	}
 	h.Shutdown()
 	done := make(chan struct{})
@@ -158,6 +167,7 @@ func discover(ctx context.Context, cfg *config.Config, srv *authz.Server) {
 			var v *oidc.IDTokenVerifier
 			if v, err = authz.Verifier(p, cfg.OIDC.GatewayClientID, client, 30*time.Second); err == nil {
 				srv.SetVerifier(v)
+				slog.Info("ready", "detail", "oidc discovered", "issuer", cfg.OIDC.IssuerURL)
 				return
 			}
 		}
@@ -181,4 +191,13 @@ func serveWhenReady(ctx context.Context, h *health.Server, ready func(context.Co
 		}
 	}
 	h.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
+	slog.Info("ready", "detail", "serving")
+}
+
+// logStarting logs the non-secret effective settings.
+func logStarting(cfg *config.Config, opsAddr string, salt []byte) {
+	slog.Info("starting", "version", logx.Version(), "deployment", cfg.Deployment, "namespace", cfg.Namespace,
+		"grpc_addr", ":9001", "ops_addr", opsAddr, "instance_host", cfg.Hosts.Instance, "webview_host", cfg.Hosts.Webview,
+		"oidc_issuer", cfg.OIDC.IssuerURL, "user_claim", cfg.OIDC.UserClaim, "id_token_cookie", cfg.OIDC.IDTokenCookie,
+		"otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0, "log_level", logx.Level().String())
 }

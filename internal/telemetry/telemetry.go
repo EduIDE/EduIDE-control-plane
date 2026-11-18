@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/go-logr/logr"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -16,12 +17,16 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	"k8s.io/klog/v2"
+	ctrl "sigs.k8s.io/controller-runtime"
+
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 // Setup installs a JSON slog logger with trace_id and, when endpoint is set, an
 // OTLP trace exporter. The returned function flushes traces on shutdown.
 func Setup(ctx context.Context, service, endpoint string) (func(context.Context) error, error) {
-	slog.SetDefault(slog.New(traceHandler{slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level()})}).With("service", service))
+	InitLogger(service)
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	if endpoint == "" {
 		return func(context.Context) error { return nil }, nil
@@ -39,11 +44,17 @@ func Setup(ctx context.Context, service, endpoint string) (func(context.Context)
 	return tp.Shutdown, nil
 }
 
-func level() slog.Level {
-	if os.Getenv("LOG_LEVEL") == "debug" {
-		return slog.LevelDebug
-	}
-	return slog.LevelInfo
+// InitLogger installs the JSON logger on stdout. Binaries call it first so that even a config error
+// is logged as JSON; Setup calls it again, which is harmless.
+func InitLogger(service string) {
+	slog.SetDefault(slog.New(traceHandler{slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: logx.Level()})}).With("service", service))
+}
+
+// BridgeLogs sends controller-runtime and client-go (klog) output through the default logger.
+func BridgeLogs() {
+	l := logr.FromSlogHandler(slog.Default().Handler())
+	ctrl.SetLogger(l)
+	klog.SetLogger(l)
 }
 
 // UserID is the pseudonymous user id for spans and logs (G17): HMAC-SHA256 with a per-deployment salt.

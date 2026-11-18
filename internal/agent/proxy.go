@@ -2,12 +2,15 @@ package agent
 
 import (
 	"bufio"
+	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ProxyHandler forwards HTTP and WebSocket traffic to the IDE after checking the instance token.
@@ -27,17 +30,70 @@ func (a *Agent) ProxyHandler() http.Handler {
 				}
 			}
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			if ok, n := a.limit.Allow("upstream"); ok {
+				a.log.Warn("proxy upstream error", "method", r.Method, "prefix", pathPrefix(r.URL.Path), "error", errString(err), "suppressed", n)
+			}
 			http.Error(w, "ide unavailable", http.StatusBadGateway)
 		},
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !a.headerTokenOK(r.Header) {
+			a.tokenRejected("proxy", r)
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		rp.ServeHTTP(&countingWriter{ResponseWriter: w, a: a}, r)
+		if !a.log.Enabled(r.Context(), slog.LevelDebug) {
+			rp.ServeHTTP(&countingWriter{ResponseWriter: w, a: a}, r)
+			return
+		}
+		start := time.Now()
+		rec := &statusWriter{ResponseWriter: w}
+		rp.ServeHTTP(&countingWriter{ResponseWriter: rec, a: a}, r)
+		status := rec.code
+		if status == 0 && r.Header.Get("Upgrade") != "" {
+			status = http.StatusSwitchingProtocols // hijacked: the proxy wrote the response itself
+		}
+		a.log.Debug("proxy request", "method", r.Method, "prefix", pathPrefix(r.URL.Path), "status", status, "duration_ms", time.Since(start).Milliseconds())
 	})
+}
+
+// statusWriter remembers the status code for the debug log.
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+}
+
+func (w *statusWriter) WriteHeader(c int) {
+	if w.code == 0 {
+		w.code = c
+	}
+	w.ResponseWriter.WriteHeader(c)
+}
+
+func (w *statusWriter) Write(p []byte) (int, error) {
+	if w.code == 0 {
+		w.code = http.StatusOK
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// pathPrefix keeps the first path segment: the rest may carry file names of the user.
+func pathPrefix(p string) string {
+	p = strings.TrimPrefix(p, "/")
+	seg, _, _ := strings.Cut(p, "/")
+	return "/" + seg
+}
+
+// errString is the error text without the request URL, which may carry a query.
+func errString(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err.Error()
+	}
+	return err.Error()
 }
 
 // countingWriter counts hijacked (upgraded) connections until they close.

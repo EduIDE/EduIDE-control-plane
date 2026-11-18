@@ -59,7 +59,9 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
-          build-args: ${{ matrix.args }}
+          build-args: |
+            ${{ matrix.args }}
+            VERSION=${{ steps.meta.outputs.version }}-${{ github.sha }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           load: false

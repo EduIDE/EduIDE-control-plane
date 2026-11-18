@@ -43,8 +43,9 @@
       "type": "array",
       "items": {"type": "object", "required": ["name", "spec"]}
     },
-    "operator": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}},
-    "service": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}},
-    "authz": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}}
+    "operator": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
+    "service": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
+    "authz": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
+    "poolScaler": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}}}
   }
 }

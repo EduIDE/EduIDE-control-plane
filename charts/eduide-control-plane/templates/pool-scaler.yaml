@@ -55,6 +55,8 @@ spec:
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args: [--config, /etc/pool-scaler/config.yaml]
         env:
+        - name: LOG_LEVEL
+          value: {{ .Values.poolScaler.logLevel | default "info" | quote }}
         - name: POD_NAMESPACE
           valueFrom:
             fieldRef:
