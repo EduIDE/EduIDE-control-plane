@@ -31,6 +31,7 @@ paths:
             schema: {$ref: "#/components/schemas/ClaimRequest"}
       responses:
         "200": {description: "Claimed, agent is ready."}
+        "400": {description: Malformed body or missing session.}
         "401": {description: Wrong or missing token.}
         "409": {description: Claimed by another session.}
         "413": {description: Payload larger than 16 KiB.}
@@ -51,7 +52,7 @@ paths:
     post:
       operationId: notify
       tags: [control]
-      description: The operator pushes a notice for the user, e.g. the idle timeout warning. The extension receives it via the local long-poll.
+      description: The operator pushes a notice for the user, e.g. the idle timeout warning. The extension receives it via the local long-poll. The agent keeps the last 16 notices.
       security: [{instanceToken: []}]
       requestBody:
         required: true
@@ -60,6 +61,7 @@ paths:
             schema: {$ref: "#/components/schemas/Notice"}
       responses:
         "204": {description: Queued.}
+        "400": {description: Malformed body, unknown kind or message longer than 1024 characters.}
         "401": {description: Wrong or missing token.}
   /healthz:
     get:
@@ -122,7 +124,7 @@ components:
         lastActivity:
           type: string
           format: date-time
-          description: Latest of extension heartbeat and proxied request. Absent without any activity since the claim.
+          description: Latest extension heartbeat since the claim (proxied requests do not count). Absent without any heartbeat since the claim.
         connections: {type: integer, description: "Open proxied WebSocket connections. 0 after the claim counts as no browser (G7)."}
     Notice:
       type: object
