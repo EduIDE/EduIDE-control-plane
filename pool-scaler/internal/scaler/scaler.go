@@ -124,6 +124,13 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 	}
 
 	s.fillPrometheus(ctx, now, apps)
+	if s.Log.Enabled(ctx, slog.LevelDebug) {
+		for name, a := range apps {
+			s.Log.Debug("pool inputs", "pool", name, "template", a.Template, "idle_ready", a.IdleReady, "idle_starting", a.IdleStarting,
+				"claimed", a.Claimed, "claim_rate_per_s", a.ClaimRate, "ready_seconds", a.ReadySeconds, "min_idle", a.MinIdle,
+				"max_instances", a.MaxInstances, "capacity_pressure", a.CapacityPressure)
+		}
+	}
 	events := s.events(ctx, now)
 	s.train(ctx, now)
 
@@ -353,6 +360,7 @@ func (s *Scaler) recommend(ctx context.Context, snap model.Snapshot, active stri
 		recs[name] = map[string]model.Recommendation{}
 		for _, r := range out {
 			recs[name][r.Pool] = r
+			s.Log.Debug("strategy recommendation", "strategy", name, "pool", r.Pool, "target_idle", r.TargetIdle, "forecast", r.Forecast, "reason", r.Reason)
 			s.Metrics.DesiredIdle.WithLabelValues(r.Pool, name, strconv.FormatBool(name == active), active).Set(float64(r.TargetIdle))
 			s.Metrics.ForecastStarts.WithLabelValues(r.Pool, name).Set(r.Forecast)
 			for _, p := range r.Distribution {

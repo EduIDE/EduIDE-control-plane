@@ -43,7 +43,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `imagePullSecrets` | `[]` | |
 | `config` | see values.yaml | Content of `config.yaml`; `agent.image` defaults to the chart's agent image, `telemetry.userSaltFile` is set by the chart |
 | `oidc.clientSecretName` | required | Existing Secret with `client-secret` |
-| `operator.*`, `service.*`, `authz.*` | replicas 1/2/2 | `replicas`, `resources`, `nodeSelector`, `tolerations`, `affinity` |
+| `operator.*`, `service.*`, `authz.*` | replicas 1/2/2 | `logLevel` (debug, info, warn), `replicas`, `resources`, `nodeSelector`, `tolerations`, `affinity` |
 | `templates` | `[]` | List of `{name, spec, pool}`; `spec` is the IDETemplate spec, `pool` (optional) is `{minIdle, targetIdle, maxInstances}` |
 | `networkPolicy.enabled` | `true` | Needs a CNI that enforces policies |
 | `networkPolicy.envoy.namespaceSelector`, `.podSelector` | `envoy-gateway-system`, `app.kubernetes.io/name: envoy` | Pods allowed to reach sessions, service and authz |
@@ -52,7 +52,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `networkPolicy.sessionEgressDeny`, `.sessionEgressExtraDeny` | RFC 1918, link-local, 100.64.0.0/10, `fc00::/7`, `fe80::/10`; none | Default egress is DNS plus the internet without these ranges. Add the pod CIDR and the node network of the cluster to `sessionEgressExtraDeny` |
 | `networkPolicy.dnsNamespaceSelector` | `kube-system` | Namespace session pods resolve names in |
 | `userSalt.secretName` | generated | Use an own Secret with key `salt` instead |
-| `poolScaler.enabled`, `.mode`, `.config`, `.env`, `.resources`, `.image` | disabled, `shadow` | Config is rendered into `/etc/pool-scaler/config.yaml`, see `pool-scaler/examples/config.yaml` |
+| `poolScaler.enabled`, `.mode`, `.logLevel`, `.config`, `.env`, `.resources`, `.image` | disabled, `shadow` | Config is rendered into `/etc/pool-scaler/config.yaml`, see `pool-scaler/examples/config.yaml` |
 | `monitoring.podMonitor`, `.rules`, `.dashboard` | disabled | `enabled` and extra `labels` (dashboard default label `grafana_dashboard: "1"`). Alerts carry `eduide_namespace` and select metrics by the release namespace (the PodMonitor sets the `namespace` label); the dashboard has a namespace variable |
 
 ## Tests

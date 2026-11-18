@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"slices"
@@ -50,7 +51,7 @@ func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, s
 func (s *Server) Handler(v auth.Verifier) http.Handler {
 	return secureAndProblemFallback(HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseURL:     basePath,
-		Middlewares: []MiddlewareFunc{auth.Middleware(v), metricsMiddleware}, // last is outermost
+		Middlewares: []MiddlewareFunc{auth.Middleware(userRecorder{v}), s.accessLog, metricsMiddleware}, // last is outermost
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeProblem(w, problem(CodeInvalidInput, "invalid request parameter"))
 		},
@@ -103,7 +104,7 @@ func user(r *http.Request) auth.User {
 	return u
 }
 
-func (s *Server) allowLaunch(owner string) bool {
+func (s *Server) allowLaunch(owner string) (ok bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := s.limiters[owner]
@@ -112,7 +113,11 @@ func (s *Server) allowLaunch(owner string) bool {
 		l = rate.NewLimiter(rate.Limit(float64(n)/60), n)
 		s.limiters[owner] = l
 	}
-	return l.Allow()
+	ok = l.Allow()
+	if slog.Default().Enabled(context.Background(), slog.LevelDebug) {
+		slog.Debug("launch rate limit", "user", s.userID(owner), "allowed", ok, "tokens_left", int(l.Tokens()))
+	}
+	return ok
 }
 
 // ownedSessions lists through rd: the cache, or s.w where a decision must not miss a session created just now.

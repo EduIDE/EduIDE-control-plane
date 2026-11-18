@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"slices"
@@ -20,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 const (
@@ -50,12 +52,16 @@ type Agent struct {
 	readyMu   sync.Mutex
 	readyAt   time.Time
 	readyLast bool
+	readySeen bool
+
+	// limit keeps probes and port scans from flooding the log.
+	limit *logx.Limiter
 }
 
 // New returns an agent that guards and proxies to 127.0.0.1:idePort.
 func New(token, idePort string, log *slog.Logger) *Agent {
 	// the version starts at the start time so it never goes back when the agent container restarts
-	return &Agent{token: []byte(token), idePort: idePort, log: log, changed: make(chan struct{}), version: int(time.Now().UnixMilli())}
+	return &Agent{token: []byte(token), idePort: idePort, log: log, changed: make(chan struct{}), version: int(time.Now().UnixMilli()), limit: logx.NewLimiter(10)}
 }
 
 func (a *Agent) tokenOK(got string) bool {
@@ -66,6 +72,13 @@ func (a *Agent) tokenOK(got string) bool {
 func (a *Agent) headerTokenOK(h http.Header) bool {
 	v := h.Values(TokenHeader)
 	return len(v) == 1 && a.tokenOK(v[0])
+}
+
+// tokenRejected logs a failed token check without the token; at most 10 lines per minute and endpoint.
+func (a *Agent) tokenRejected(endpoint string, r *http.Request) {
+	if ok, n := a.limit.Allow("token/" + endpoint); ok {
+		a.log.Info("token check failed", "endpoint", endpoint, "method", r.Method, "suppressed", n)
+	}
 }
 
 // bump must be called with a.mu held.
@@ -90,6 +103,7 @@ func (a *Agent) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		bearer, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || !a.tokenOK(bearer) {
+			a.tokenRejected("control", r)
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -105,7 +119,15 @@ func (a *Agent) readyz(w http.ResponseWriter, _ *http.Request) {
 		if err == nil {
 			_ = c.Close()
 		}
-		a.readyLast, a.readyAt = err == nil, time.Now()
+		if reachable := err == nil; !a.readySeen || a.readyLast != reachable {
+			if reachable {
+				a.log.Info("ide port reachable", "port", a.idePort)
+			} else {
+				a.log.Info("ide port unreachable", "port", a.idePort)
+			}
+		}
+		a.readyLast, a.readyAt, a.readySeen = err == nil, time.Now(), true
+		a.log.Debug("readiness probe", "reachable", err == nil)
 	}
 	ok := a.readyLast
 	a.readyMu.Unlock()
@@ -148,6 +170,7 @@ func (a *Agent) claim(w http.ResponseWriter, r *http.Request) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.session != "" && a.session != req.Session {
+		a.log.Info("claim refused: instance belongs to another session", "session", req.Session)
 		http.Error(w, "claimed by another session", http.StatusConflict)
 		return
 	}
@@ -158,7 +181,9 @@ func (a *Agent) claim(w http.ResponseWriter, r *http.Request) {
 			a.data = map[string]string{}
 		}
 		a.bump()
-		a.log.Info("claimed", "session", req.Session)
+		a.log.Info("claimed", "session", req.Session, "keys", sortedKeys(req.Data))
+	} else {
+		a.log.Info("re-claimed", "session", req.Session, "keys", sortedKeys(req.Data), "version", a.version)
 	}
 	w.WriteHeader(http.StatusOK)
 }
@@ -191,7 +216,9 @@ func (a *Agent) notify(w http.ResponseWriter, r *http.Request) {
 		a.notices = a.notices[len(a.notices)-maxNotices:]
 	}
 	a.bump()
+	queued := len(a.notices)
 	a.mu.Unlock()
+	a.log.Info("notice queued", "kind", string(n.Kind), "queued", queued)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -200,6 +227,7 @@ func (a *Agent) LocalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/session", a.getSession)
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
+		a.log.Debug("heartbeat")
 		a.mu.Lock()
 		a.lastActivity = time.Now()
 		// Activity cancels pending idle warnings, so a reloaded IDE does not show a stale one.
@@ -241,6 +269,12 @@ func (a *Agent) getSession(w http.ResponseWriter, r *http.Request) {
 	}
 	timer := time.NewTimer(time.Duration(secs) * time.Second)
 	defer timer.Stop()
+	if a.log.Enabled(r.Context(), slog.LevelDebug) {
+		start := time.Now()
+		defer func() {
+			a.log.Debug("long poll finished", "after", after, "timeout_s", secs, "waited_ms", time.Since(start).Milliseconds())
+		}()
+	}
 	for {
 		s, changed := a.snapshot()
 		if s.Version > after {
@@ -262,4 +296,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// sortedKeys lists the key names of the launch data; the values stay out of every log.
+func sortedKeys(m map[string]string) []string {
+	return slices.Sorted(maps.Keys(m))
 }

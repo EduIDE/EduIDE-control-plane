@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -103,6 +104,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_IDE_PORT", Value: strconv.Itoa(int(port))},
 			{Name: "AGENT_TOKEN_FILE", Value: tokenMountPath + "/" + v1.InstanceTokenKey},
+			{Name: "AGENT_LOG_LEVEL", Value: d.cfg.Agent.LogLevel},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "token", MountPath: tokenMountPath, ReadOnly: true}},
 		ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, FailureThreshold: 3, ProbeHandler: corev1.ProbeHandler{
@@ -295,8 +297,16 @@ func (d *deps) createInstance(ctx context.Context, t *v1.IDETemplate, owner clie
 // patchStatus writes status when it differs from orig.
 func (d *deps) patchStatus(ctx context.Context, orig, obj client.Object) error {
 	p := client.MergeFrom(orig)
-	if b, err := p.Data(obj); err != nil || string(b) == "{}" {
+	b, err := p.Data(obj)
+	if err != nil || string(b) == "{}" {
 		return err
+	}
+	if debugOn(ctx) {
+		// The patch holds status fields only: phases, instance names, timestamps, messages.
+		slog.DebugContext(ctx, "status patch", "kind", fmt.Sprintf("%T", obj), "name", obj.GetName(), "diff", string(b))
 	}
 	return d.Status().Patch(ctx, obj, p, client.FieldOwner(fieldManager))
 }
+
+// debugOn guards debug lines that build attributes: it costs one level check when debug is off.
+func debugOn(ctx context.Context) bool { return slog.Default().Enabled(ctx, slog.LevelDebug) }

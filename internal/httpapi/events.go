@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -50,6 +51,15 @@ func (h *Hub) subscribe(ownerHash string) (<-chan struct{}, func()) {
 		}
 		h.mu.Unlock()
 	}
+}
+
+func (h *Hub) count() (n int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, m := range h.subs {
+		n += len(m)
+	}
+	return n
 }
 
 // Notify wakes the streams of the owner with this hash.
@@ -130,6 +140,12 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, ownerHash, event
 func (s *Server) streamEvery(w http.ResponseWriter, r *http.Request, ownerHash, event string, gap time.Duration, snap snapshot) {
 	changes, cancel := s.hub.subscribe(ownerHash)
 	defer cancel()
+	if slog.Default().Enabled(r.Context(), slog.LevelDebug) {
+		slog.DebugContext(r.Context(), "stream subscribed", "event", event, "subscribers", s.hub.count())
+		defer func() {
+			slog.DebugContext(r.Context(), "stream unsubscribed", "event", event, "subscribers", s.hub.count()-1)
+		}()
+	}
 	payload, done, perr := snap(r.Context())
 	if perr != nil {
 		writeProblem(w, perr)

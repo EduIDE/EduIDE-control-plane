@@ -165,6 +165,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 				res.RequeueAfter = left
 			}
 		case p.Labels[v1.LabelState] == v1.StateIdle && !claim.Usable(p):
+			slog.DebugContext(ctx, "pool delete: idle pod failed or deleting", "pool", pool.Name, "pod", p.Name)
 			// Failed or deleting idle pods are replaced; a failed one is removed here.
 			if err := del(p); err != nil {
 				return ctrl.Result{}, err
@@ -216,6 +217,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		p := &idle[i]
 		switch {
 		case p.Annotations[v1.AnnotationSpecHash] != hash && !claim.Ready(p):
+			slog.DebugContext(ctx, "pool delete: outdated and not ready", "pool", pool.Name, "pod", p.Name)
 			if err := del(p); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -244,6 +246,11 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	}
 
 	pending := r.unseen(req.NamespacedName, all.Items, r.clock.Now())
+	if debugOn(ctx) {
+		slog.DebugContext(ctx, "pool sizing", "pool", pool.Name, "template", tmpl.Name, "min_idle", pool.Spec.MinIdle, "max_instances", pool.Spec.MaxInstances,
+			"target_idle", target, "claimed", claimed, "idle", len(idle), "stale_ready", len(staleReady), "pending", pending, "surge", surge,
+			"under_pressure", underPressure, "duplicate_of", duplicate)
+	}
 
 	switch have, want := int32(len(idle))+pending, target+surge; { //nolint:gosec // bounded by maxInstances
 	case have < want:
@@ -258,6 +265,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			slog.DebugContext(ctx, "pool create: below target", "pool", pool.Name, "pod", pod.Name, "have", have, "want", want)
 			r.expect(req.NamespacedName, pod.Name, r.clock.Now())
 			idle = append(idle, *pod)
 		}
@@ -270,6 +278,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 			if err := del(&p); err != nil {
 				return ctrl.Result{}, err
 			}
+			slog.DebugContext(ctx, "pool delete: above target", "pool", pool.Name, "pod", p.Name, "have", have, "want", want)
 			gone[p.Name] = true
 		}
 		kept := idle[:0]

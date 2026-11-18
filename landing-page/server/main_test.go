@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func setup(t *testing.T, cfg string) http.Handler {
@@ -83,5 +89,73 @@ func TestBadConfig(t *testing.T) {
 	_ = os.WriteFile(p, []byte(`{"keycloak":{"url":"not a url"}}`), 0o644)
 	if _, err := newHandler(dir, p); err == nil {
 		t.Error("relative keycloak url must fail")
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func runLogged(t *testing.T, level slog.Level) string {
+	t.Helper()
+	buf := &syncBuf{}
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: level})))
+	defer slog.SetDefault(old)
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "index.html"), []byte("INDEX"), 0o644)
+	cfg := filepath.Join(dir, "config.json")
+	_ = os.WriteFile(cfg, []byte(`{"keycloak":{"url":"https://kc-secret.example.org"}}`), 0o644)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- run(ctx, addr, dir, cfg) }()
+	for range 100 {
+		if resp, err := http.Get("http://" + addr + "/healthz"); err == nil {
+			_ = resp.Body.Close()
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	return buf.String()
+}
+
+func TestStartReadyShutdownLines(t *testing.T) {
+	out := runLogged(t, slog.LevelInfo)
+	for _, want := range []string{`"msg":"starting"`, `"version":`, `"msg":"ready"`, `"msg":"shutdown"`, `"reason":"signal"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %s:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `"level":"DEBUG"`) || strings.Contains(out, "kc-secret") {
+		t.Errorf("unexpected content:\n%s", out)
+	}
+}
+
+func TestRequestsAreLoggedAtDebugOnly(t *testing.T) {
+	if out := runLogged(t, slog.LevelDebug); !strings.Contains(out, `"msg":"request"`) {
+		t.Errorf("no request line at debug:\n%s", out)
 	}
 }

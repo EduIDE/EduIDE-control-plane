@@ -54,3 +54,14 @@ func TestParseOverview(t *testing.T) {
 		t.Fatalf("%v %+v", err, c.Overview)
 	}
 }
+
+func TestAgentLogLevelIsValidated(t *testing.T) {
+	ok := strings.Replace(minimal, "agent: {image: example.org/agent:1}", "agent: {image: example.org/agent:1, logLevel: debug}", 1)
+	if c, err := Parse([]byte(ok)); err != nil || c.Agent.LogLevel != "debug" {
+		t.Fatalf("%v %+v", err, c)
+	}
+	bad := strings.Replace(ok, "logLevel: debug", "logLevel: trace", 1)
+	if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "agent.logLevel") {
+		t.Fatalf("want a logLevel error, got %v", err)
+	}
+}

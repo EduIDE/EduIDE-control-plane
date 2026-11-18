@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 // User is the caller, taken from a verified token.
@@ -42,6 +44,9 @@ func FromContext(ctx context.Context) (User, bool) {
 	return u, ok
 }
 
+// discoveryLog keeps a down issuer from logging one line per request.
+var discoveryLog = logx.NewLimiter(6)
+
 // OIDC verifies tokens against the issuer's JWKS (cached by go-oidc).
 type OIDC struct {
 	cfg config.OIDC
@@ -64,8 +69,12 @@ func (o *OIDC) init(ctx context.Context) (*oidc.IDTokenVerifier, error) {
 	defer cancel()
 	p, err := oidc.NewProvider(ctx, o.cfg.IssuerURL)
 	if err != nil {
+		if ok, n := discoveryLog.Allow("discovery"); ok {
+			slog.WarnContext(ctx, "oidc discovery failed", "issuer", o.cfg.IssuerURL, "error", err.Error(), "suppressed", n)
+		}
 		return nil, err
 	}
+	slog.InfoContext(ctx, "ready", "detail", "oidc discovered", "issuer", o.cfg.IssuerURL)
 	// The audience is checked below: the azp, or without azp any aud, must be one of ours.
 	o.verifier = p.Verifier(&oidc.Config{SkipClientIDCheck: true})
 	return o.verifier, nil
@@ -111,6 +120,7 @@ func Middleware(v Verifier) func(http.Handler) http.Handler {
 			}
 			u, err := v.Verify(r.Context(), raw)
 			if err != nil {
+				slog.DebugContext(r.Context(), "bearer token rejected", "error", err.Error())
 				unauthorized(w)
 				return
 			}

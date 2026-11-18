@@ -3,10 +3,13 @@
 package authz
 
 import (
+	"cmp"
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
@@ -39,8 +43,12 @@ type Server struct {
 	WebviewHost string
 	// Salt feeds the pseudonymous user id in logs.
 	Salt []byte
+	// LogPerMinute caps the deny and login lines per reason and minute. Default 20.
+	LogPerMinute int
 
 	verifier atomic.Pointer[oidc.IDTokenVerifier]
+	logOnce  sync.Once
+	logLimit *logx.Limiter
 }
 
 // SetVerifier is called once OIDC discovery succeeded. Until then every check is denied.
@@ -68,20 +76,49 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (resp *aut
 	user := ""
 	// A span only when the caller's trace is sampled, so unsampled checks cost nothing.
 	var span trace.Span
-	ctx, span = checkSpan(ctx, req.GetAttributes().GetRequest().GetHttp())
+	h := req.GetAttributes().GetRequest().GetHttp()
+	ctx, span = checkSpan(ctx, h)
 	defer func() {
 		if r := recover(); r != nil {
 			d, user = deny("internal"), ""
 			resp = s.response(d)
+			slog.ErrorContext(ctx, "authz check panicked", "panic", fmt.Sprint(r))
 		}
 		telemetry.AuthzDecisions.WithLabelValues(d.result, d.reason).Inc()
 		telemetry.AuthzDuration.Observe(time.Since(start).Seconds())
 		span.SetAttributes(attribute.String("eduide.authz_result", d.result), attribute.String("eduide.authz_reason", d.reason))
 		span.End()
-		slog.DebugContext(ctx, "authz decision", "result", d.result, "reason", d.reason, "user", user)
+		s.logDecision(ctx, h, d, user, time.Since(start))
 	}()
 	d, user = s.decide(ctx, req.GetAttributes().GetRequest().GetHttp())
 	return s.response(d), nil
+}
+
+// logDecision logs deny and login at info, at most LogPerMinute per reason and minute with a count of the
+// dropped lines; allow is debug only. It logs the host, never the path (the path names the instance) or cookies.
+func (s *Server) logDecision(ctx context.Context, h *authv3.AttributeContext_HttpRequest, d decision, user string, took time.Duration) {
+	level := slog.LevelInfo
+	if d.result == "allow" {
+		level = slog.LevelDebug
+	}
+	if !slog.Default().Enabled(ctx, level) {
+		return
+	}
+	attrs := []any{"result", d.result, "reason", d.reason, "host", h.GetHost(), "duration_ms", float64(took.Microseconds()) / 1000}
+	if user != "" {
+		attrs = append(attrs, "user", user)
+	}
+	if level == slog.LevelInfo {
+		s.logOnce.Do(func() { s.logLimit = logx.NewLimiter(cmp.Or(s.LogPerMinute, 20)) })
+		ok, n := s.logLimit.Allow(d.result + "/" + d.reason)
+		if !ok {
+			return
+		}
+		if n > 0 {
+			attrs = append(attrs, "suppressed", n)
+		}
+	}
+	slog.Log(ctx, level, "authz decision", attrs...)
 }
 
 func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequest) (_ decision, user string) {

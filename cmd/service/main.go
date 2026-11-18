@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -29,10 +28,12 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
 	"github.com/EduIDE/EduIDE-control-plane/internal/httpapi"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 func main() {
+	telemetry.InitLogger("eduide-service")
 	if err := run(); err != nil {
 		slog.Error("service failed", "error", err.Error())
 		os.Exit(1)
@@ -55,7 +56,7 @@ func run() error {
 		return err
 	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
-	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
+	telemetry.BridgeLogs()
 
 	scheme := runtime.NewScheme()
 	if err := errors.Join(clientgoscheme.AddToScheme(scheme), v1alpha1.AddToScheme(scheme)); err != nil {
@@ -102,7 +103,11 @@ func run() error {
 		}
 	}()
 	var synced atomic.Bool
-	go func() { synced.Store(c.WaitForCacheSync(ctx)) }()
+	go func() {
+		if synced.Store(c.WaitForCacheSync(ctx)); synced.Load() {
+			slog.Info("ready", "detail", "caches synced")
+		}
+	}()
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
@@ -131,14 +136,17 @@ func run() error {
 			BaseContext: func(net.Listener) context.Context { return ctx }}, // ends SSE streams on shutdown
 		{Addr: ":9090", Handler: ops, ReadHeaderTimeout: 10 * time.Second},
 	}
+	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)
 	errc := make(chan error, len(servers))
 	for _, s := range servers {
 		go func() { errc <- s.ListenAndServe() }()
 	}
 	select {
 	case err := <-errc:
+		slog.Info("shutdown", "reason", "server stopped")
 		return err
 	case <-ctx.Done():
+		slog.Info("shutdown", "reason", "signal")
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -146,4 +154,12 @@ func run() error {
 		_ = s.Shutdown(shutdownCtx)
 	}
 	return nil
+}
+
+// logStarting logs the non-secret effective settings.
+func logStarting(cfg *config.Config, apiAddr, opsAddr string, salt []byte) {
+	slog.Info("starting", "version", logx.Version(), "deployment", cfg.Deployment, "namespace", cfg.Namespace,
+		"api_addr", apiAddr, "ops_addr", opsAddr, "service_host", cfg.Hosts.Service, "instance_host", cfg.Hosts.Instance,
+		"oidc_issuer", cfg.OIDC.IssuerURL, "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0,
+		"sessions_per_user", cfg.SessionsPerUser, "launches_per_minute", cfg.RateLimit.LaunchesPerMinute, "log_level", logx.Level().String())
 }
