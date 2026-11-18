@@ -10,6 +10,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -618,12 +619,12 @@ func TestSessionWaitsForLateWorkspace(t *testing.T) {
 }
 
 func sessionEvents(name string) map[string]string {
-	var l corev1.EventList
+	var l eventsv1.EventList
 	_ = k8s.List(context.Background(), &l, client.InNamespace(testNS))
 	out := map[string]string{}
 	for _, e := range l.Items {
-		if e.InvolvedObject.Kind == "IDESession" && e.InvolvedObject.Name == name {
-			out[e.Reason] = e.Type + ": " + e.Message
+		if e.Regarding.Kind == "IDESession" && e.Regarding.Name == name {
+			out[e.Reason] = e.Type + ": " + e.Note
 		}
 	}
 	return out

@@ -659,7 +659,7 @@ func (r *sessionReconciler) note(ctx context.Context, s *v1.IDESession, eventTyp
 	} else {
 		slog.InfoContext(ctx, "session "+strings.ToLower(reason), args...)
 	}
-	r.events.Event(s, eventType, reason, msg)
+	r.events.Eventf(s, nil, eventType, reason, reason, "%s", msg)
 }
 
 // workspaceHolder returns the name of another session that holds the workspace of s, or "".

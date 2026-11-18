@@ -9,11 +9,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
@@ -61,7 +61,7 @@ type deps struct {
 	agentURL func(*corev1.Pod) (string, error)
 	poll     time.Duration
 	salt     []byte
-	events   record.EventRecorder
+	events   recorder.EventRecorder
 }
 
 // NewScheme returns a scheme with core Kubernetes, Gateway API and EduIDE types.
@@ -78,7 +78,7 @@ func SetupWithManager(mgr ctrl.Manager, o Options) error {
 	d := &deps{
 		Client: mgr.GetClient(), reader: mgr.GetAPIReader(), scheme: mgr.GetScheme(),
 		cfg: o.Config, clock: o.Clock, agent: o.Agent, agentURL: o.AgentURL, poll: o.PollInterval,
-		salt: o.Salt, events: mgr.GetEventRecorderFor(fieldManager),
+		salt: o.Salt, events: mgr.GetEventRecorder(fieldManager),
 	}
 	if d.clock == nil {
 		d.clock = realClock{}
