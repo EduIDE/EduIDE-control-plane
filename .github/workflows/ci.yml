@@ -4,6 +4,7 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,12 +17,12 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      go: ${{ steps.f.outputs.go }}
-      api: ${{ steps.f.outputs.api }}
-      scaler: ${{ steps.f.outputs.scaler }}
-      ts: ${{ steps.f.outputs.ts }}
-      landing: ${{ steps.f.outputs.landing }}
-      charts: ${{ steps.f.outputs.charts }}
+      go: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.go }}
+      api: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.api }}
+      scaler: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.scaler }}
+      ts: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.ts }}
+      landing: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.landing }}
+      charts: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.charts }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: dorny/paths-filter@v4.0.3
