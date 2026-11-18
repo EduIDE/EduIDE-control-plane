@@ -4,7 +4,7 @@
   "description": "Connects an EduIDE session to its agent: launch data, activity heartbeat and timeout notices",
   "version": "0.1.0",
   "publisher": "eduide",
-  "license": "MIT",
+  "license": "EPL-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/EduIDE/EduIDE-control-plane"

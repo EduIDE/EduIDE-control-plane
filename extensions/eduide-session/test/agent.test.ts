@@ -6,6 +6,7 @@ import { AgentClient, type LocalSession, type Notice } from "../src/agent";
 function fakeAgent() {
   let session: LocalSession = { version: 0, claimed: false };
   let failNext = 0;
+  let hangNext = 0;
   const pending: Array<() => void> = [];
   const heartbeats: number[] = [];
   const queries: string[] = [];
@@ -16,6 +17,10 @@ function fakeAgent() {
       return;
     }
     queries.push(req.url ?? "");
+    if (hangNext > 0) {
+      hangNext--;
+      return;
+    }
     if (failNext > 0) {
       failNext--;
       res.writeHead(503).end();
@@ -36,6 +41,7 @@ function fakeAgent() {
     heartbeats,
     queries,
     fail: (n: number) => (failNext = n),
+    hang: (n: number) => (hangNext = n),
     set(s: LocalSession) {
       session = s;
       pending.splice(0).forEach((p) => p());
@@ -52,7 +58,15 @@ function fakeAgent() {
   };
 }
 
-async function setup(opts: { minBackoffMs?: number; now?: () => number } = {}) {
+async function until(cond: () => boolean, ms = 3000) {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    assert.ok(Date.now() < end, "condition not met in time");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+async function setup(opts: { pollTimeoutSec?: number; now?: () => number } = {}) {
   const agent = fakeAgent();
   const notices: Notice[] = [];
   const c = new AgentClient({
@@ -66,19 +80,22 @@ async function setup(opts: { minBackoffMs?: number; now?: () => number } = {}) {
   return { agent, c, notices, done: async () => (await c.stop(), agent.close()) };
 }
 
-test("pending getEnv resolves when data arrives; getEnvState shape", async () => {
+test("getEnv and getEnvState return at once and follow the agent state", async () => {
   const { agent, c, done } = await setup();
   assert.deepEqual(c.getEnvState(), { injected: false, environment: {} });
-  const p = c.getEnv(["A", "MISSING"]);
-  setTimeout(() => agent.set({ version: 1, claimed: true, data: { A: "1", B: "2" } }), 50);
-  assert.deepEqual(await p, { A: "1" });
+  assert.deepEqual(c.getEnv(["A"]), {});
+  agent.set({ version: 1, claimed: true, data: { A: "1", B: "2" } });
+  await until(() => c.getEnvState().injected);
+  assert.deepEqual(c.getEnv(["A", "MISSING", "toString"]), { A: "1" });
   assert.deepEqual(c.getEnvState(), { injected: true, environment: { A: "1", B: "2" } });
   await done();
 });
 
-test("getEnv returns empty after wait timeout when unclaimed", async () => {
-  const { c, done } = await setup();
-  assert.deepEqual(await c.getEnv(["A"], 50), {});
+test("claimed without data counts as injected", async () => {
+  const { agent, c, done } = await setup();
+  agent.set({ version: 1, claimed: true });
+  await until(() => c.getEnvState().injected);
+  assert.deepEqual(c.getEnvState(), { injected: true, environment: {} });
   await done();
 });
 
@@ -86,12 +103,11 @@ test("notices shown once, polls use latest version", async () => {
   const { agent, c, notices, done } = await setup();
   const n: Notice = { kind: "idle-warning", message: "idle" };
   agent.set({ version: 1, claimed: true, data: {}, notices: [n] });
-  await c.getEnv([], 1000);
-  await new Promise((r) => setTimeout(r, 100));
+  await until(() => notices.length === 1);
   agent.set({ version: 2, claimed: true, data: {}, notices: [n, { kind: "info", message: "hi" }] });
-  await new Promise((r) => setTimeout(r, 100));
+  await until(() => agent.queries.some((q) => q.startsWith("/v1/session?after=2&timeout=1")));
   assert.deepEqual(notices.map((x) => x.kind), ["idle-warning", "info"]);
-  assert.ok(agent.queries.some((q) => q.startsWith("/v1/session?after=2&timeout=1")));
+  assert.ok(c.getEnvState().injected);
   await done();
 });
 
@@ -99,7 +115,17 @@ test("backs off on errors and recovers", async () => {
   const { agent, c, done } = await setup();
   agent.fail(3);
   agent.set({ version: 1, claimed: true, data: { A: "1" } });
-  assert.deepEqual(await c.getEnv(["A"], 3000), { A: "1" });
+  await until(() => c.getEnvState().injected);
+  assert.ok(agent.queries.length >= 4);
+  await done();
+});
+
+test("a hung poll times out and the loop retries", async () => {
+  const { agent, c, done } = await setup({ pollTimeoutSec: 0 });
+  agent.hang(1);
+  agent.set({ version: 1, claimed: true, data: { A: "1" } });
+  await until(() => c.getEnvState().injected, 5000);
+  assert.ok(agent.queries.length >= 2);
   await done();
 });
 

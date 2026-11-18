@@ -18,8 +18,8 @@ function show(client: () => AgentClient | undefined, n: Notice) {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const baseUrl = process.env.EDUIDE_AGENT_URL ?? "http://127.0.0.1:8082";
-  const c = new AgentClient({ baseUrl, onNotice: (n) => show(() => client, n) });
+  // Loopback only: launch data never comes from anywhere else.
+  const c = new AgentClient({ baseUrl: "http://127.0.0.1:8082", onNotice: (n) => show(() => client, n) });
   client = c;
   c.start();
 
@@ -39,13 +39,6 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.onDidChangeActiveTextEditor(beat),
     vscode.window.onDidChangeWindowState((s) => s.focused && beat()),
   );
-  // Terminal input events exist only in newer API versions.
-  const w = vscode.window as unknown as {
-    onDidWriteTerminalData?: (l: () => void) => vscode.Disposable;
-  };
-  if (w.onDidWriteTerminalData) {
-    context.subscriptions.push(w.onDidWriteTerminalData(beat));
-  }
 }
 
 export async function deactivate() {

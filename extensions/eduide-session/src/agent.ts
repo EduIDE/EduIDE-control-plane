@@ -31,7 +31,6 @@ const noticeKey = (n: Notice) => `${n.kind}|${n.at ?? ""}|${n.message}`;
 export class AgentClient {
   private version = 0;
   private session: LocalSession = { version: 0, claimed: false };
-  private waiters: Array<() => void> = [];
   private seen = new Set<string>();
   private lastHeartbeat = -Infinity;
   private abort = new AbortController();
@@ -47,31 +46,18 @@ export class AgentClient {
   async stop(): Promise<void> {
     this.stopped = true;
     this.abort.abort();
-    this.wake();
     await this.loop;
   }
 
+  // The agent stores launch data atomically with the claim, so claimed means injected.
   getEnvState(): EnvState {
-    const injected = this.session.claimed && this.session.data !== undefined;
-    return { injected, environment: injected ? { ...this.session.data } : {} };
+    return { injected: this.session.claimed, environment: { ...this.session.data } };
   }
 
-  // Resolves with the requested keys once launch data exists, or with what is there after waitMs.
-  async getEnv(keys: string[], waitMs = 30000): Promise<Record<string, string>> {
-    if (!this.getEnvState().injected && waitMs > 0) {
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(done, waitMs);
-        const self = this;
-        function done() {
-          clearTimeout(t);
-          self.waiters = self.waiters.filter((w) => w !== done);
-          resolve();
-        }
-        this.waiters.push(done);
-      });
-    }
-    const env = this.getEnvState().environment;
-    return Object.fromEntries(keys.filter((k) => k in env).map((k) => [k, env[k]]));
+  // Same as the data bridge: returns at once with the requested keys that are set.
+  getEnv(keys: string[]): Record<string, string> {
+    const env = this.session.data ?? {};
+    return Object.fromEntries(keys.filter((k) => Object.hasOwn(env, k)).map((k) => [k, env[k]]));
   }
 
   // Sends a heartbeat unless one went out within the interval. force skips the throttle.
@@ -94,12 +80,6 @@ export class AgentClient {
     }
   }
 
-  private wake() {
-    for (const w of [...this.waiters]) {
-      w();
-    }
-  }
-
   private apply(s: LocalSession) {
     this.session = s;
     this.version = s.version;
@@ -110,7 +90,6 @@ export class AgentClient {
         this.o.onNotice(n);
       }
     }
-    this.wake();
   }
 
   private async run(): Promise<void> {
@@ -122,7 +101,8 @@ export class AgentClient {
       try {
         const r = await fetch(
           `${this.o.baseUrl}/v1/session?after=${this.version}&timeout=${timeout}`,
-          { signal: this.abort.signal },
+          // A hung agent must not stall the loop forever.
+          { signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout((timeout + 1) * 2000)]) },
         );
         if (!r.ok) {
           throw new Error(`status ${r.status}`);
@@ -134,10 +114,12 @@ export class AgentClient {
           return;
         }
         await new Promise<void>((resolve) => {
-          const t = setTimeout(resolve, backoff);
-          this.abort.signal.addEventListener("abort", () => (clearTimeout(t), resolve()), {
-            once: true,
-          });
+          const onAbort = () => (clearTimeout(t), resolve());
+          const t = setTimeout(() => {
+            this.abort.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, backoff);
+          this.abort.signal.addEventListener("abort", onAbort, { once: true });
         });
         backoff = Math.min(backoff * 2, max);
       }

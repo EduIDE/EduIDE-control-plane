@@ -5,21 +5,24 @@ It replaces the `EduIDE-data-bridge` extension and the Theia Cloud monitor exten
 The extension never opens a server.
 It long-polls the agent on loopback (`GET /v1/session?after=<version>&timeout=30`), keeps the latest data in memory and sends activity heartbeats (`POST /v1/heartbeat`).
 
-Agent URL: `http://127.0.0.1:8082`, override with the env var `EDUIDE_AGENT_URL`.
+Agent URL: `http://127.0.0.1:8082` (fixed, loopback only).
 The contract is `api/agent/v1.yaml` (tag `local`).
 
 ## Command contract (unchanged from the data bridge)
 
-- `dataBridge.getEnv(keys: string[]): Record<string, string>` waits (up to 30 s) until launch data exists, then returns the requested keys that are set. Returns `{}` after the wait if there is no data.
-- `dataBridge.getEnvState(): { injected: boolean; environment: Record<string, string> }` returns at once. `injected` is true once the session is claimed and launch data arrived. Poll it until `injected` is true.
+Both commands return at once, like the data bridge did.
+
+- `dataBridge.getEnv(keys: string[]): Record<string, string>` returns the requested keys that are set (`{}` before the claim).
+- `dataBridge.getEnvState(): { injected: boolean; environment: Record<string, string> }`: `injected` is true once the session is claimed (the agent stores launch data together with the claim). Poll it until `injected` is true.
 
 The extension id changes: Scorpio looks up `tum-aet.data-bridge` and must switch to `eduide.eduide-session`.
 
 ## Notices and heartbeat
 
 - Notices `idle-warning` and `max-warning` show as warning messages with the action "I am still here", which sends a heartbeat at once. `info` shows as an information message. Each notice shows once.
-- Heartbeats go out on text document changes (file and untitled), editor selection and active editor changes, window focus and terminal data (when the API offers it), at most once per minute.
-- Errors (agent not yet up) back off from 0.5 s to 15 s. `deactivate` aborts the pending poll.
+- Heartbeats go out on text document changes (file and untitled), editor selection and active editor changes and window focus, at most once per minute.
+  Terminal output does not count, a long build must not keep an abandoned session alive.
+- Errors (agent not yet up) back off from 0.5 s to 15 s. A poll that hangs longer than twice its timeout is aborted and retried. `deactivate` aborts the pending poll.
 
 ## Migration
 
