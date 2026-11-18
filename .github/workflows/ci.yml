@@ -143,9 +143,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: azure/setup-helm@v5.1.0
-      - run: make helm-lint
-      - name: Template tests
-        run: if [ -x charts/test.sh ]; then charts/test.sh; fi
+      - name: Lint and template tests
+        run: charts/test.sh
 
   gitleaks:
     runs-on: ubuntu-latest

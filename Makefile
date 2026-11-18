@@ -61,7 +61,7 @@ images:
 	docker build -t $(REGISTRY)/landing-page:$(TAG) landing-page
 
 helm-lint:
-	for c in charts/*/; do helm lint $$c || exit 1; done
+	charts/test.sh
 
 ## e2e: kind cluster with Envoy Gateway, Calico and Keycloak, full matrix (see test/e2e/README.md).
 e2e:

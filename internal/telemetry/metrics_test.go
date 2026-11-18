@@ -3,12 +3,13 @@ package telemetry
 import (
 	"context"
 
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/trace"
 	"os"
 	"regexp"
 	"slices"
 	"testing"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/prometheus/client_golang/prometheus"
 )

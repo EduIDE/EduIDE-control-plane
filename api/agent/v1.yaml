@@ -61,7 +61,7 @@ paths:
             schema: {$ref: "#/components/schemas/Notice"}
       responses:
         "204": {description: Queued.}
-        "400": {description: Malformed body, unknown kind or message longer than 1024 characters.}
+        "400": {description: "Malformed body, unknown kind or message longer than 1024 characters."}
         "401": {description: Wrong or missing token.}
   /healthz:
     get:
