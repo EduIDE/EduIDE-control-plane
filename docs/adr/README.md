@@ -1,7 +1,7 @@
 # Architecture decision records
 
 Decisions are written as ADRs in [MADR](https://adr.github.io/madr/) format, one file per decision.
-The tables [decisions.md](decisions.md) list the grilling decisions G1 to G19 and the implementation decisions U1 to U10 and link each to its ADRs.
+The tables [decisions.md](decisions.md) list the grilling decisions G1 to G19 and the implementation decisions U1 to U14 and link each to its ADRs.
 
 | Nr. | Title | Status |
 |---|---|---|
@@ -24,6 +24,7 @@ The tables [decisions.md](decisions.md) list the grilling decisions G1 to G19 an
 | [0017](0017-migration-parallel-run.md) | Migration by parallel run per deployment | Accepted |
 | [0018](0018-charts-oci.md) | Charts in the same repo, published as OCI | Accepted |
 | [0019](0019-network-isolation.md) | Network isolation of session pods with NetworkPolicy, default deny | Accepted |
+| [0020](0020-landing-page-data-in-the-api.md) | Start estimates, image metadata, lifecycle times and one-call delete in the API | Accepted |
 
 ## Format
 

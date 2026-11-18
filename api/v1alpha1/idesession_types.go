@@ -46,7 +46,7 @@ const (
 	ErrorTemplateNotFound  = "template-not-found"
 	ErrorWorkspaceNotFound = "workspace-not-found"
 	ErrorStartFailed       = "start-failed"
-	ErrorWorkspaceInUse    = "workspace-in-use"
+	ErrorWorkspaceInUse    = "workspace-in-use" // unused since U14, kept for compatibility
 )
 
 type SessionTimestamps struct {

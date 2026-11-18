@@ -1332,6 +1332,78 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              image:
+                description: Image is the metadata of the template image; empty when
+                  the image carries none.
+                properties:
+                  digest:
+                    description: Digest of the manifest the metadata was read from.
+                    type: string
+                  includes:
+                    items:
+                      description: IncludedGroup groups what the image brings along,
+                        e.g. languages or build tools.
+                      properties:
+                        group:
+                          maxLength: 100
+                          type: string
+                        items:
+                          items:
+                            description: IncludedItem is one tool of the image with
+                              the version installed at build time.
+                            properties:
+                              name:
+                                maxLength: 200
+                                type: string
+                              version:
+                                maxLength: 100
+                                type: string
+                            required:
+                            - name
+                            type: object
+                          maxItems: 256
+                          type: array
+                      required:
+                      - group
+                      - items
+                      type: object
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  lastChecked:
+                    description: LastChecked is when the operator last wrote this
+                      block, not when it last asked the registry.
+                    format: date-time
+                    type: string
+                  variants:
+                    items:
+                      description: ImageVariant is a project template of the IDE image
+                        (U12), chosen at launch as TEMPLATE.
+                      properties:
+                        description:
+                          maxLength: 1000
+                          type: string
+                        id:
+                          pattern: ^[a-z0-9][a-z0-9._-]{0,63}$
+                          type: string
+                        logoURL:
+                          maxLength: 2048
+                          type: string
+                        name:
+                          maxLength: 200
+                          type: string
+                      required:
+                      - id
+                      - name
+                      type: object
+                    maxItems: 32
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  version:
+                    description: Version of the EduIDE build in the image.
+                    maxLength: 64
+                    type: string
+                type: object
               observedGeneration:
                 format: int64
                 type: integer

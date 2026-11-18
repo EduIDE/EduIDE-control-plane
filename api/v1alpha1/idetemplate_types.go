@@ -171,9 +171,65 @@ type IDETemplateSpec struct {
 	RunAsUser *int64 `json:"runAsUser,omitempty"`
 }
 
+// ImageVariant is a project template of the IDE image (U12), chosen at launch as TEMPLATE.
+type ImageVariant struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9._-]{0,63}$`
+	ID string `json:"id"`
+	// +kubebuilder:validation:MaxLength=200
+	Name string `json:"name"`
+	// +kubebuilder:validation:MaxLength=1000
+	// +optional
+	Description string `json:"description,omitempty"`
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	LogoURL string `json:"logoURL,omitempty"`
+}
+
+// IncludedItem is one tool of the image with the version installed at build time.
+type IncludedItem struct {
+	// +kubebuilder:validation:MaxLength=200
+	Name string `json:"name"`
+	// +kubebuilder:validation:MaxLength=100
+	// +optional
+	Version string `json:"version,omitempty"`
+}
+
+// IncludedGroup groups what the image brings along, e.g. languages or build tools.
+type IncludedGroup struct {
+	// +kubebuilder:validation:MaxLength=100
+	Group string `json:"group"`
+	// +kubebuilder:validation:MaxItems=256
+	Items []IncludedItem `json:"items"`
+}
+
+// ImageMetadata is read from the OCI annotation io.eduide.template of the image manifest (U12).
+type ImageMetadata struct {
+	// Digest of the manifest the metadata was read from.
+	// +optional
+	Digest string `json:"digest,omitempty"`
+	// Version of the EduIDE build in the image.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Version string `json:"version,omitempty"`
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=atomic
+	// +optional
+	Variants []ImageVariant `json:"variants,omitempty"`
+	// +kubebuilder:validation:MaxItems=32
+	// +listType=atomic
+	// +optional
+	Includes []IncludedGroup `json:"includes,omitempty"`
+	// LastChecked is when the operator last wrote this block, not when it last asked the registry.
+	// +optional
+	LastChecked *metav1.Time `json:"lastChecked,omitempty"`
+}
+
 type IDETemplateStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// Image is the metadata of the template image; empty when the image carries none.
+	// +optional
+	Image *ImageMetadata `json:"image,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +optional
