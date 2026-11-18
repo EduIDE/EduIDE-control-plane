@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 func snap(now time.Time, apps ...*model.App) model.Snapshot {
@@ -143,7 +143,7 @@ func TestPredictiveEventUplift(t *testing.T) {
 	now := time.Date(2026, 11, 20, 7, 50, 0, 0, time.UTC)
 	p.Train(now, map[string][]Sample{}, nil)
 
-	exam := model.Event{AppDefinition: "java-17", Kind: model.EventExam, Time: now.Add(10 * time.Minute), Participants: 300}
+	exam := model.Event{Pool: "java-17", Kind: model.EventExam, Time: now.Add(10 * time.Minute), Participants: 300}
 	s := snap(now, &model.App{Name: "java-17"}, &model.App{Name: "c"})
 	s.Events = []model.Event{exam}
 	recs, err := p.Recommend(context.Background(), s)
@@ -153,13 +153,13 @@ func TestPredictiveEventUplift(t *testing.T) {
 	// Exam window 30 min, factor 0.9: 270 starts, 10 of 30 minutes in the horizon.
 	byApp := map[string]model.Recommendation{}
 	for _, r := range recs {
-		byApp[r.AppDefinition] = r
+		byApp[r.Pool] = r
 	}
 	if math.Abs(byApp["java-17"].Forecast-90) > 1e-6 {
 		t.Fatalf("forecast %v, want 90", byApp["java-17"].Forecast)
 	}
 	if byApp["c"].Forecast != 0 {
-		t.Fatal("an event must only lift its own AppDefinition")
+		t.Fatal("an event must only lift its own Pool")
 	}
 }
 
@@ -180,8 +180,8 @@ func TestPredictiveEstimatesFactor(t *testing.T) {
 		return 0
 	})
 	events := []model.Event{
-		{AppDefinition: "java-17", Kind: model.EventExam, Time: examA, Participants: 100},
-		{AppDefinition: "java-17", Kind: model.EventExam, Time: examB, Participants: 100},
+		{Pool: "java-17", Kind: model.EventExam, Time: examA, Participants: 100},
+		{Pool: "java-17", Kind: model.EventExam, Time: examB, Participants: 100},
 	}
 	p.Train(end, hist, events)
 	// The weekly profile only holds one week for these slots, so it already
@@ -342,9 +342,9 @@ func TestHTTPDecisionClient(t *testing.T) {
 func TestStatic(t *testing.T) {
 	cfg := config.Default()
 	five := 5
-	cfg.AppLimits = map[string]config.AppLimits{"java-17": {Static: &five}}
+	cfg.PoolLimits = map[string]config.PoolLimits{"java-17": {Static: &five}}
 	recs, _ := NewStatic(cfg.Limits).Recommend(context.Background(), snap(time.Now(), &model.App{Name: "java-17"}, &model.App{Name: "c"}))
-	if recs[0].AppDefinition != "c" || recs[0].TargetIdle != 0 || recs[1].TargetIdle != 5 {
+	if recs[0].Pool != "c" || recs[0].TargetIdle != 0 || recs[1].TargetIdle != 5 {
 		t.Fatalf("%v", recs)
 	}
 }

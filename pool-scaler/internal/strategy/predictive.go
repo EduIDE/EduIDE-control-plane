@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 // SlotLength is the resolution of the weekly profile.
@@ -106,7 +106,7 @@ func (p *Predictive) estimateFactors(now time.Time, history map[string][]Sample,
 		if e.Participants <= 0 || to.After(now) {
 			continue
 		}
-		samples, ok := history[e.AppDefinition]
+		samples, ok := history[e.Pool]
 		if !ok {
 			continue
 		}
@@ -121,7 +121,7 @@ func (p *Predictive) estimateFactors(now time.Time, history map[string][]Sample,
 		if !covered {
 			continue
 		}
-		excess := observed - p.profileClaims(e.AppDefinition, from, to)
+		excess := observed - p.profileClaims(e.Pool, from, to)
 		ratios[e.Kind] = append(ratios[e.Kind], math.Max(0, excess)/float64(e.Participants))
 	}
 	out := map[model.EventKind]float64{}
@@ -178,7 +178,7 @@ func (p *Predictive) profileClaims(app string, from, to time.Time) float64 {
 func (p *Predictive) eventClaims(app string, events []model.Event, from, to time.Time) float64 {
 	total := 0.0
 	for _, e := range events {
-		if e.AppDefinition != app || e.Participants <= 0 {
+		if e.Pool != app || e.Participants <= 0 {
 			continue
 		}
 		ws, we := p.window(e)
@@ -229,11 +229,11 @@ func (p *Predictive) Recommend(_ context.Context, s model.Snapshot) ([]model.Rec
 			return nil, err
 		}
 		out = append(out, model.Recommendation{
-			AppDefinition: a.Name,
-			TargetIdle:    QuantileLevel(dist, p.cfg.Quantile),
-			Forecast:      lambda,
-			Distribution:  dist,
-			Reason:        fmt.Sprintf("%.1f starts expected in %s, q=%.2f", lambda, p.Horizon(a), p.cfg.Quantile),
+			Pool:         a.Name,
+			TargetIdle:   QuantileLevel(dist, p.cfg.Quantile),
+			Forecast:     lambda,
+			Distribution: dist,
+			Reason:       fmt.Sprintf("%.1f starts expected in %s, q=%.2f", lambda, p.Horizon(a), p.cfg.Quantile),
 		})
 	}
 	return out, nil

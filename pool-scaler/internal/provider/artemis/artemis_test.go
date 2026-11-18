@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 // The example from the shared contract, plus an exam with two exercises.
@@ -44,7 +44,7 @@ func TestEvents(t *testing.T) {
 	}
 	want := []model.EventKind{model.EventRelease, model.EventDue, model.EventExam}
 	for i, e := range evs {
-		if e.Kind != want[i] || e.AppDefinition != "java-17" {
+		if e.Kind != want[i] || e.Pool != "java-17" {
 			t.Fatalf("event %d: %+v", i, e)
 		}
 	}

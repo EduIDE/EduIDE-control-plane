@@ -9,12 +9,12 @@ import (
 	"math"
 	"sort"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
-// Strategy recommends a targetIdle per AppDefinition.
+// Strategy recommends a targetIdle per Pool.
 //
-// An AppDefinition a strategy cannot decide for is left out of the result;
+// An Pool a strategy cannot decide for is left out of the result;
 // the fallback chain then takes over for that one alone. An error means the
 // strategy could decide nothing at all.
 type Strategy interface {

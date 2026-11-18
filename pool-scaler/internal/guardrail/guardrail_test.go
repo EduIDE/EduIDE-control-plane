@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 var t0 = time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
@@ -120,7 +120,6 @@ func TestChooseFallbackChain(t *testing.T) {
 }
 
 func TestParseOverride(t *testing.T) {
-	until := t0.Add(time.Hour).Format(time.RFC3339)
 	cases := []struct {
 		name    string
 		ann     map[string]string
@@ -129,58 +128,40 @@ func TestParseOverride(t *testing.T) {
 		wantErr bool
 	}{
 		{"none", nil, 0, false, false},
-		{"active", map[string]string{AnnotationOverride: "12", AnnotationOverrideUntil: until}, 12, true, false},
-		{"expired", map[string]string{AnnotationOverride: "12", AnnotationOverrideUntil: t0.Add(-time.Second).Format(time.RFC3339)}, 0, false, false},
-		{"end time is mandatory", map[string]string{AnnotationOverride: "12"}, 0, false, true},
-		{"bad number", map[string]string{AnnotationOverride: "many", AnnotationOverrideUntil: until}, 0, false, true},
-		{"negative", map[string]string{AnnotationOverride: "-1", AnnotationOverrideUntil: until}, 0, false, true},
-		{"bad time", map[string]string{AnnotationOverride: "1", AnnotationOverrideUntil: "tomorrow"}, 0, false, true},
+		{"active", map[string]string{AnnotationOverride: "12"}, 12, true, false},
+		{"zero", map[string]string{AnnotationOverride: "0"}, 0, true, false},
+		{"bad number", map[string]string{AnnotationOverride: "many"}, 0, false, true},
+		{"negative", map[string]string{AnnotationOverride: "-1"}, 0, false, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			o, err := ParseOverride(c.ann, t0)
-			if (err != nil) != c.wantErr || (o != nil) != c.active || (o != nil && o.Value != c.want) {
-				t.Fatalf("got %+v, %v", o, err)
+			o, err := ParseOverride(c.ann)
+			if (err != nil) != c.wantErr || (o != nil) != c.active || (o != nil && *o != c.want) {
+				t.Fatalf("got %v, %v", o, err)
 			}
 		})
 	}
-	if !Paused(map[string]string{AnnotationPaused: "true"}) || Paused(map[string]string{AnnotationPaused: "yes"}) || Paused(nil) {
-		t.Fatal("paused only on exactly \"true\"")
-	}
 }
 
-func TestBreaker(t *testing.T) {
-	b := NewBreaker(3, 15*time.Minute)
-	for i := 0; i < 2; i++ {
-		b.Failure(t0)
+func TestPoolMode(t *testing.T) {
+	cases := []struct {
+		name    string
+		ann     map[string]string
+		want    config.Mode
+		wantErr bool
+	}{
+		{"default", nil, config.ModeActive, false},
+		{"shadow", map[string]string{AnnotationMode: "shadow"}, config.ModeShadow, false},
+		{"off", map[string]string{AnnotationMode: "off"}, config.ModeOff, false},
+		{"active", map[string]string{AnnotationMode: "active"}, config.ModeActive, false},
+		{"unknown falls back to shadow", map[string]string{AnnotationMode: "yes"}, config.ModeShadow, true},
 	}
-	if !b.Allow(t0) {
-		t.Fatal("two failures must not open it")
-	}
-	b.Failure(t0)
-	if b.Allow(t0.Add(14 * time.Minute)) {
-		t.Fatal("open for 15 minutes")
-	}
-	if !b.Allow(t0.Add(15 * time.Minute)) {
-		t.Fatal("one test call after the pause")
-	}
-	b.Failure(t0.Add(15 * time.Minute))
-	if b.Allow(t0.Add(16 * time.Minute)) {
-		t.Fatal("a failed test call reopens it")
-	}
-	b.Success()
-	if !b.Allow(t0.Add(16 * time.Minute)) {
-		t.Fatal("success closes it")
-	}
-}
-
-func TestPlausible(t *testing.T) {
-	for _, c := range []struct {
-		v, ref int
-		ok     bool
-	}{{9, 3, true}, {10, 3, false}, {1, 3, true}, {0, 3, false}, {3, 0, true}, {4, 0, false}} {
-		if Plausible(c.v, c.ref, 3) != c.ok {
-			t.Errorf("Plausible(%d, %d) != %v", c.v, c.ref, c.ok)
-		}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m, err := PoolMode(c.ann, config.ModeActive)
+			if m != c.want || (err != nil) != c.wantErr {
+				t.Fatalf("got %q, %v", m, err)
+			}
+		})
 	}
 }

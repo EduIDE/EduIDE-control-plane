@@ -1,5 +1,6 @@
-// Package prometheus reads claim rates, pool pod ready times, memory usage and
-// the claim history for training from the operator metrics in Prometheus.
+// Package prometheus reads claim rates, pod ready times, memory usage and the
+// claim history for training from the operator metrics in Prometheus. Series
+// are keyed by template, the label of eduide_claim_total (docs/contracts/metrics.md).
 package prometheus
 
 import (
@@ -12,7 +13,7 @@ import (
 	v1 "github.com/prometheus/client_golang/api/prometheus/v1"
 	"github.com/prometheus/common/model"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 // Provider queries one namespace's operator metrics.
@@ -45,31 +46,32 @@ func (p *Provider) query(ctx context.Context, q string, at time.Time) (model.Vec
 	return vec, nil
 }
 
-func byApp(vec model.Vector) map[string]float64 {
+func byTemplate(vec model.Vector) map[string]float64 {
 	out := map[string]float64{}
 	for _, s := range vec {
 		v := float64(s.Value)
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			continue
 		}
-		out[string(s.Metric["app_definition"])] = v
+		out[string(s.Metric["template"])] = v
 	}
 	return out
 }
 
-// ClaimRates returns claims per second over window, per AppDefinition.
+// ClaimRates returns claims per second over window, per template.
 // Every claim counts, whatever its result: all of them are demand.
 func (p *Provider) ClaimRates(ctx context.Context, window time.Duration, at time.Time) (map[string]float64, error) {
-	vec, err := p.query(ctx, fmt.Sprintf(`sum by (app_definition) (rate(eduide_session_claims_total{namespace=%q}[%s]))`,
+	vec, err := p.query(ctx, fmt.Sprintf(`sum by (template) (rate(eduide_claim_total{namespace=%q}[%s]))`,
 		p.Namespace, model.Duration(window)), at)
-	return byApp(vec), err
+	return byTemplate(vec), err
 }
 
-// ReadySeconds returns the p95 time from pool deployment created to pod Ready.
+// ReadySeconds returns the p95 cold start time per template: the time a pool
+// pod needs from creation to Ready.
 func (p *Provider) ReadySeconds(ctx context.Context, at time.Time) (map[string]float64, error) {
-	vec, err := p.query(ctx, fmt.Sprintf(`histogram_quantile(0.95, sum by (app_definition, le) (rate(eduide_pool_instance_ready_seconds_bucket{namespace=%q}[6h])))`,
+	vec, err := p.query(ctx, fmt.Sprintf(`histogram_quantile(0.95, sum by (template, le) (rate(eduide_session_startup_seconds_bucket{namespace=%q,strategy="cold",result="ready"}[6h])))`,
 		p.Namespace), at)
-	return byApp(vec), err
+	return byTemplate(vec), err
 }
 
 // Scalar runs a query that returns one number.
@@ -84,15 +86,15 @@ func (p *Provider) Scalar(ctx context.Context, q string, at time.Time) (float64,
 	return float64(vec[0].Value), nil
 }
 
-// ClaimHistory returns the claims per SlotLength per AppDefinition in
+// ClaimHistory returns the claims per SlotLength per template in
 // [from, to], queried a week at a time to stay under the points limit.
 func (p *Provider) ClaimHistory(ctx context.Context, from, to time.Time) (map[string][]strategy.Sample, error) {
 	return p.History(ctx, from, to, strategy.SlotLength)
 }
 
-// History returns claims per step per AppDefinition in [from, to].
+// History returns claims per step per template in [from, to].
 func (p *Provider) History(ctx context.Context, from, to time.Time, step time.Duration) (map[string][]strategy.Sample, error) {
-	q := fmt.Sprintf(`sum by (app_definition) (increase(eduide_session_claims_total{namespace=%q}[%s]))`, p.Namespace, model.Duration(step))
+	q := fmt.Sprintf(`sum by (template) (increase(eduide_claim_total{namespace=%q}[%s]))`, p.Namespace, model.Duration(step))
 	out := map[string][]strategy.Sample{}
 	chunk := 10000 * step
 	for start := from.Truncate(step); start.Before(to); start = start.Add(chunk) {
@@ -111,7 +113,7 @@ func (p *Provider) History(ctx context.Context, from, to time.Time, step time.Du
 			return nil, fmt.Errorf("claim history: expected a matrix, got %s", v.Type())
 		}
 		for _, series := range m {
-			app := string(series.Metric["app_definition"])
+			app := string(series.Metric["template"])
 			for _, pt := range series.Values {
 				if f := float64(pt.Value); !math.IsNaN(f) {
 					out[app] = append(out[app], strategy.Sample{T: pt.Timestamp.Time(), V: f})

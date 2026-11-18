@@ -1,7 +1,7 @@
 // Package guardrail holds everything that bounds a strategy's wish before it
 // reaches the cluster: floor and ceiling, the reactive lower bound, step
 // limits, hysteresis and cooldown, the fallback chain, the circuit breaker
-// and the manual overrides.
+// and the fixed-target override.
 package guardrail
 
 import (
@@ -10,18 +10,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
-// Annotations read from an AppDefinition. Fixed by the shared contract.
+// Annotations read from an IDEPool (G6). Copied from api/v1alpha1/labels.go;
+// this module does not import the root module.
 const (
-	AnnotationOverride      = "pool-scaler.eduide/override-target-idle"
-	AnnotationOverrideUntil = "pool-scaler.eduide/override-until"
-	AnnotationPaused        = "pool-scaler.eduide/paused"
+	AnnotationMode     = "eduide.github.io/scaler-mode"
+	AnnotationOverride = "eduide.github.io/scaler-override"
 )
 
-// Limits bound targetIdle for one AppDefinition.
+// Limits bound targetIdle for one Pool.
 type Limits struct {
 	Floor   int
 	Ceiling int
@@ -43,7 +43,7 @@ func (l Limits) clamp(v int) int {
 	return v
 }
 
-// Guard applies the movement guardrails. It remembers per AppDefinition the
+// Guard applies the movement guardrails. It remembers per Pool the
 // last decided value and the last increase, so it works the same in shadow
 // mode, where nothing is patched and the live value never moves.
 type Guard struct {
@@ -63,7 +63,7 @@ func NewGuard(cfg config.Guardrails) *Guard {
 	return &Guard{cfg: cfg, state: map[string]*appState{}}
 }
 
-// Seed sets the starting point for an AppDefinition the guard has not seen,
+// Seed sets the starting point for a pool the guard has not seen,
 // normally the live spec.targetIdle. Later calls for the same one are ignored.
 func (g *Guard) Seed(app string, current int) {
 	g.mu.Lock()
@@ -149,7 +149,7 @@ func (g *Guard) Set(app string, now time.Time, v int) {
 	st.current = v
 }
 
-// Choice is the outcome of the fallback chain for one AppDefinition.
+// Choice is the outcome of the fallback chain for one Pool.
 type Choice struct {
 	Value  int
 	Source string
@@ -209,16 +209,9 @@ func Chain(active string) []string {
 	return out
 }
 
-// Override is a manual override read from annotations.
-type Override struct {
-	Value int
-	Until time.Time
-}
-
-// ParseOverride returns the active override, nil when there is none or it has
-// expired, and an error when the annotations are present but unusable. An
-// override without an end time is rejected: it would never expire.
-func ParseOverride(ann map[string]string, now time.Time) (*Override, error) {
+// ParseOverride returns the fixed target from the override annotation, nil
+// when there is none, and an error when it is not a non-negative integer.
+func ParseOverride(ann map[string]string) (*int, error) {
 	raw, ok := ann[AnnotationOverride]
 	if !ok {
 		return nil, nil
@@ -227,22 +220,22 @@ func ParseOverride(ann map[string]string, now time.Time) (*Override, error) {
 	if err != nil || v < 0 {
 		return nil, fmt.Errorf("%s=%q is not a non-negative integer", AnnotationOverride, raw)
 	}
-	untilRaw, ok := ann[AnnotationOverrideUntil]
-	if !ok {
-		return nil, fmt.Errorf("%s is set without %s", AnnotationOverride, AnnotationOverrideUntil)
-	}
-	until, err := time.Parse(time.RFC3339, untilRaw)
-	if err != nil {
-		return nil, fmt.Errorf("%s=%q is not RFC3339", AnnotationOverrideUntil, untilRaw)
-	}
-	if !now.Before(until) {
-		return nil, nil
-	}
-	return &Override{Value: v, Until: until}, nil
+	return &v, nil
 }
 
-// Paused reports whether the scaler must leave the AppDefinition alone.
-func Paused(ann map[string]string) bool { return ann[AnnotationPaused] == "true" }
+// PoolMode returns the mode of one pool: its mode annotation, else def. An
+// unknown value is an error and yields shadow, which never writes.
+func PoolMode(ann map[string]string, def config.Mode) (config.Mode, error) {
+	raw, ok := ann[AnnotationMode]
+	if !ok {
+		return def, nil
+	}
+	switch m := config.Mode(raw); m {
+	case config.ModeShadow, config.ModeActive, config.ModeOff:
+		return m, nil
+	}
+	return config.ModeShadow, fmt.Errorf("%s=%q is not shadow, active or off", AnnotationMode, raw)
+}
 
 // Breaker is a circuit breaker: after `threshold` failures in a row it stays
 // open for `pause`, then lets one test call through.

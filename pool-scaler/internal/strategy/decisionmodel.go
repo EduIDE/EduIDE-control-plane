@@ -14,9 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/guardrail"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/guardrail"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 // Question asks the decision model to pick among Options, given Prompt.
@@ -103,7 +103,7 @@ func (f *FakeDecisionClient) Decide(_ context.Context, q Question) (Answer, erro
 
 // DecisionModel asks an external decision model for a distribution over
 // demand levels and applies the same quantile rule as predictive. It calls the
-// model once per interval and AppDefinition and reuses the answer in between.
+// model once per interval and Pool and reuses the answer in between.
 // An answer counts as failed on timeout, error, an invalid distribution or one
 // more than factor k off predictive; a stale answer (older than two intervals)
 // is not used. Three failures in a row open a circuit breaker.
@@ -200,11 +200,11 @@ func (d *DecisionModel) Recommend(ctx context.Context, s model.Snapshot) ([]mode
 			continue
 		}
 		out = append(out, model.Recommendation{
-			AppDefinition: a.Name,
-			TargetIdle:    ans.target,
-			Distribution:  ans.dist,
-			Forecast:      lambda,
-			Reason:        fmt.Sprintf("decision model answer from %s, q=%.2f", ans.at.In(d.loc).Format(time.TimeOnly), d.cfg.Quantile),
+			Pool:         a.Name,
+			TargetIdle:   ans.target,
+			Distribution: ans.dist,
+			Forecast:     lambda,
+			Reason:       fmt.Sprintf("decision model answer from %s, q=%.2f", ans.at.In(d.loc).Format(time.TimeOnly), d.cfg.Quantile),
 		})
 	}
 	return out, nil
@@ -273,7 +273,7 @@ func (d *DecisionModel) prompt(s model.Snapshot, a *model.App, lambda float64, p
 	b.WriteString("\n")
 	n := 0
 	for _, e := range s.Events {
-		if e.AppDefinition != a.Name || e.Time.Before(s.Now.Add(-6*time.Hour)) || e.Time.After(s.Now.Add(24*time.Hour)) {
+		if e.Pool != a.Name || e.Time.Before(s.Now.Add(-6*time.Hour)) || e.Time.After(s.Now.Add(24*time.Hour)) {
 			continue
 		}
 		if n == 0 {

@@ -45,7 +45,7 @@ func Free(s Sources, idleHeld Resources) Resources {
 	return free
 }
 
-// Demand is one AppDefinition's request for idle pods.
+// Demand is one Pool's request for idle pods.
 type Demand struct {
 	App     string
 	Floor   int
@@ -53,7 +53,7 @@ type Demand struct {
 	Pod     Resources
 }
 
-// Grant is what one AppDefinition gets.
+// Grant is what one Pool gets.
 type Grant struct {
 	Value   int
 	Clamped bool

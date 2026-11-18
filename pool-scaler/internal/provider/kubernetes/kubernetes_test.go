@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -14,95 +13,70 @@ import (
 	dynfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
 )
 
-func dep(name, app string, claimed, ready bool) *appsv1.Deployment {
-	owners := []metav1.OwnerReference{{Kind: "AppDefinition", Name: app}}
-	if claimed {
-		owners = append(owners, metav1.OwnerReference{Kind: "Session", Name: "s-" + name})
-	}
-	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", OwnerReferences: owners}}
-	if ready {
-		d.Status.ReadyReplicas = 1
-	}
-	return d
-}
-
-func appDef(name string, targetIdle any) *unstructured.Unstructured {
-	spec := map[string]any{
-		"minInstances": int64(0), "maxInstances": int64(50),
-		"requestsCpu": "500m", "requestsMemory": "500M",
-		"sidecars": []any{map[string]any{"name": "lsp", "cpuRequest": "100m", "memoryRequest": "100M"}},
-	}
-	if targetIdle != nil {
-		spec["targetIdle"] = targetIdle
-	}
-	u := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "theia.cloud/v1beta11", "kind": "AppDefinition",
-		"metadata": map[string]any{"name": name, "namespace": "ns", "annotations": map[string]any{"x": "y"}},
-		"spec":     spec,
+func pool(name, template string, annotations map[string]any) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "eduide.github.io/v1alpha1", "kind": "IDEPool",
+		"metadata": map[string]any{"name": name, "namespace": "ns", "annotations": annotations},
+		"spec":     map[string]any{"templateRef": template, "minIdle": int64(2), "maxInstances": int64(50), "targetIdle": int64(4)},
+		"status": map[string]any{
+			"idleReady": int64(3), "idleStarting": int64(1), "claimed": int64(5),
+			"conditions": []any{map[string]any{"type": "CapacityPressure", "status": "True"}},
+		},
 	}}
-	return u
 }
 
-func provider(objs ...runtime.Object) (*Provider, *dynfake.FakeDynamicClient) {
-	scheme := runtime.NewScheme()
-	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
-		map[schema.GroupVersionResource]string{AppDefinitionGVR: "AppDefinitionList"},
-		appDef("java-17", int64(4)), appDef("java-17-templates", nil))
-	return &Provider{
-		Dynamic: dyn, Core: fake.NewClientset(objs...), Namespace: "ns",
-		PodOverhead: budget.Resources{CPU: 0.1, Memory: 128 << 20},
-	}, dyn
+func template(name string) *unstructured.Unstructured {
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "eduide.github.io/v1alpha1", "kind": "IDETemplate",
+		"metadata": map[string]any{"name": name, "namespace": "ns"},
+		"spec":     map[string]any{"resources": map[string]any{"requests": map[string]any{"cpu": "500m", "memory": "500M"}}},
+	}}
 }
 
-func TestAppsCountsPoolDeployments(t *testing.T) {
-	p, _ := provider(
-		dep("instance-1-java-17-a", "java-17", false, true),
-		dep("instance-2-java-17-a", "java-17", false, false),
-		dep("instance-3-java-17-a", "java-17", true, true),
-		dep("instance-1-java-17-templates-a", "java-17-templates", false, true),
-		// A cold-start session's Deployment is owned by the Session only.
-		&appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "session-x", Namespace: "ns",
-			OwnerReferences: []metav1.OwnerReference{{Kind: "Session", Name: "x"}}}},
-	)
-	apps, err := p.Apps(context.Background())
+func provider(objs ...runtime.Object) *Provider {
+	dyn := dynfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
+		map[schema.GroupVersionResource]string{PoolGVR: "IDEPoolList", TemplateGVR: "IDETemplateList"}, objs...)
+	return &Provider{Dynamic: dyn, Core: fake.NewClientset(), Namespace: "ns", PodOverhead: budget.Resources{CPU: 0.1, Memory: 128 << 20}}
+}
+
+func TestPoolsReadStatusAndTemplate(t *testing.T) {
+	p := provider(pool("java-17", "java", map[string]any{"x": "y"}), template("java"))
+	pools, err := p.Pools(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	j := apps["java-17"]
-	if j.IdleReady != 1 || j.IdleStarting != 1 || j.Claimed != 1 {
-		t.Fatalf("java-17 %+v", j)
-	}
-	if apps["java-17-templates"].IdleReady != 1 || apps["java-17-templates"].Claimed != 0 {
-		t.Fatalf("templates %+v", apps["java-17-templates"])
-	}
-	if j.TargetIdle == nil || *j.TargetIdle != 4 || apps["java-17-templates"].TargetIdle != nil {
-		t.Fatal("targetIdle not read")
-	}
-	if j.MaxInstances != 50 || j.Annotations["x"] != "y" {
+	j := pools["java-17"]
+	if j.Template != "java" || j.IdleReady != 3 || j.IdleStarting != 1 || j.Claimed != 5 || !j.CapacityPressure {
 		t.Fatalf("%+v", j)
 	}
-	if d := j.PodCPU - 0.7; d > 1e-9 || d < -1e-9 {
-		t.Fatalf("pod cpu %v, want 0.5 + 0.1 sidecar + 0.1 overhead", j.PodCPU)
+	if j.TargetIdle == nil || *j.TargetIdle != 4 || j.MinIdle != 2 || j.MaxInstances != 50 || j.Annotations["x"] != "y" {
+		t.Fatalf("%+v", j)
 	}
-	if j.PodMemory != 600e6+128<<20 {
+	if d := j.PodCPU - 0.6; d > 1e-9 || d < -1e-9 {
+		t.Fatalf("pod cpu %v, want 0.5 + 0.1 overhead", j.PodCPU)
+	}
+	if j.PodMemory != 500e6+128<<20 {
 		t.Fatalf("pod memory %v", j.PodMemory)
 	}
 }
 
-func TestPatchTargetIdle(t *testing.T) {
-	p, _ := provider()
-	if err := p.PatchTargetIdle(context.Background(), "java-17-templates", 7); err != nil {
+func TestPatchTargetIdleUsesScaleSubresource(t *testing.T) {
+	p := provider(pool("java-17", "java", nil), template("java"))
+	dyn := p.Dynamic.(*dynfake.FakeDynamicClient)
+	if err := p.PatchTargetIdle(context.Background(), "java-17", 7); err != nil {
 		t.Fatal(err)
 	}
-	apps, _ := p.Apps(context.Background())
-	if v := apps["java-17-templates"].TargetIdle; v == nil || *v != 7 {
-		t.Fatalf("got %v", v)
+	var found bool
+	for _, a := range dyn.Actions() {
+		if a.GetVerb() == "patch" && a.GetSubresource() == "scale" {
+			found = true
+		}
 	}
-	if apps["java-17-templates"].MaxInstances != 50 {
-		t.Fatal("patch must leave other fields alone")
+	if !found {
+		t.Fatalf("no patch on the scale subresource: %v", dyn.Actions())
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 // Path of the endpoint, fixed by the shared contract.
@@ -25,7 +25,7 @@ type Entry struct {
 	ExerciseID    int64      `json:"exerciseId"`
 	CourseID      int64      `json:"courseId"`
 	ExamID        *int64     `json:"examId"`
-	AppDefinition string     `json:"appDefinition"`
+	Pool          string     `json:"appDefinition"` // wire name of the Artemis endpoint; its value is an IDEPool name
 	ReleaseDate   *time.Time `json:"releaseDate"`
 	StartDate     *time.Time `json:"startDate"`
 	DueDate       *time.Time `json:"dueDate"`
@@ -96,22 +96,22 @@ func (p *Provider) fetch(ctx context.Context) ([]Entry, error) {
 }
 
 // ToEvents maps entries to events. An exam becomes one exam event per
-// AppDefinition, however many of its exercises use it. An exercise becomes a
+// Pool, however many of its exercises use it. An exercise becomes a
 // release event (start date, else release date) and a due event.
 func ToEvents(entries []Entry) []model.Event {
 	var out []model.Event
 	exams := map[string]bool{}
 	for _, e := range entries {
-		if e.AppDefinition == "" {
+		if e.Pool == "" {
 			continue
 		}
 		if e.ExamID != nil {
-			key := fmt.Sprintf("%d/%s", *e.ExamID, e.AppDefinition)
+			key := fmt.Sprintf("%d/%s", *e.ExamID, e.Pool)
 			if exams[key] || e.ExamStartDate == nil {
 				continue
 			}
 			exams[key] = true
-			ev := model.Event{AppDefinition: e.AppDefinition, Kind: model.EventExam, Time: *e.ExamStartDate, Participants: e.StudentCount, Source: "artemis"}
+			ev := model.Event{Pool: e.Pool, Kind: model.EventExam, Time: *e.ExamStartDate, Participants: e.StudentCount, Source: "artemis"}
 			if e.ExamEndDate != nil {
 				ev.End = *e.ExamEndDate
 			}
@@ -123,10 +123,10 @@ func ToEvents(entries []Entry) []model.Event {
 			start = e.ReleaseDate
 		}
 		if start != nil {
-			out = append(out, model.Event{AppDefinition: e.AppDefinition, Kind: model.EventRelease, Time: *start, Participants: e.StudentCount, Source: "artemis"})
+			out = append(out, model.Event{Pool: e.Pool, Kind: model.EventRelease, Time: *start, Participants: e.StudentCount, Source: "artemis"})
 		}
 		if e.DueDate != nil {
-			out = append(out, model.Event{AppDefinition: e.AppDefinition, Kind: model.EventDue, Time: *e.DueDate, Participants: e.StudentCount, Source: "artemis"})
+			out = append(out, model.Event{Pool: e.Pool, Kind: model.EventDue, Time: *e.DueDate, Participants: e.StudentCount, Source: "artemis"})
 		}
 	}
 	return out

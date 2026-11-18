@@ -1,6 +1,6 @@
-// Command pool-scaler decides how many free prewarmed pods each EduIDE
-// AppDefinition keeps, by patching spec.targetIdle. `pool-scaler backtest`
-// replays Prometheus history against the strategies instead.
+// Command pool-scaler decides how many free prewarmed instances each EduIDE
+// IDEPool keeps, by writing spec.targetIdle through the /scale subresource.
+// `pool-scaler backtest` replays Prometheus history against the strategies instead.
 package main
 
 import (
@@ -24,17 +24,17 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/backtest"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/budget"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/config"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/metrics"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/model"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/provider/artemis"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/provider/calendar"
-	kube "github.com/EduIDE/EduIDE-pool-scaler/internal/provider/kubernetes"
-	promprovider "github.com/EduIDE/EduIDE-pool-scaler/internal/provider/prometheus"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/scaler"
-	"github.com/EduIDE/EduIDE-pool-scaler/internal/strategy"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/backtest"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/metrics"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/provider/artemis"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/provider/calendar"
+	kube "github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/provider/kubernetes"
+	promprovider "github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/provider/prometheus"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/scaler"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/strategy"
 )
 
 func main() {
@@ -260,7 +260,7 @@ func runBacktest(args []string) error {
 	reactive := strategy.NewReactive(cfg.Reactive)
 	in := backtest.Input{Claims: claims, Events: events, From: start, To: end, Step: *step, ReadySeconds: *ready}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(w, "STRATEGY\tAPPDEF\tCLAIMS\tWARM_READY\tWARM_STARTING\tCOLD\tWARM_READY_RATIO\tIDLE_POD_HOURS\tMEAN_TARGET")
+	_, _ = fmt.Fprintln(w, "STRATEGY\tPOOL\tCLAIMS\tWARM_READY\tWARM_STARTING\tCOLD\tWARM_READY_RATIO\tIDLE_POD_HOURS\tMEAN_TARGET")
 	for _, name := range strings.Split(*names, ",") {
 		var st strategy.Strategy
 		floor := reactive
@@ -294,7 +294,7 @@ func runBacktest(args []string) error {
 			return err
 		}
 		for _, r := range res {
-			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%.1f\n", r.Strategy, r.AppDefinition, r.Claims, r.WarmReady, r.WarmStarting, r.Cold, r.WarmReadyRatio(), r.IdlePodHours, r.MeanTarget)
+			_, _ = fmt.Fprintf(w, "%s\t%s\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%.1f\n", r.Strategy, r.Pool, r.Claims, r.WarmReady, r.WarmStarting, r.Cold, r.WarmReadyRatio(), r.IdlePodHours, r.MeanTarget)
 		}
 	}
 	return w.Flush()

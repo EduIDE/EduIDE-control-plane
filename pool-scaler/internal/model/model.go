@@ -13,13 +13,19 @@ type Snapshot struct {
 	Events []Event
 }
 
-// App is the state of one AppDefinition and its prewarmed pool.
+// App is the state of one IDEPool.
 type App struct {
 	Name         string
-	MinInstances int
+	MinIdle      int
 	MaxInstances int
 	// TargetIdle is the live spec.targetIdle, nil when unset.
 	TargetIdle *int
+
+	// Template is spec.templateRef, the key of the Prometheus metrics.
+	Template string
+	// CapacityPressure is the pool's CapacityPressure condition: the operator
+	// holds 0 idle instances, whatever targetIdle says.
+	CapacityPressure bool
 
 	IdleReady    int
 	IdleStarting int
@@ -54,22 +60,22 @@ const (
 	EventDue EventKind = "due"
 )
 
-// Event is one date that drives demand for an AppDefinition.
+// Event is one date that drives demand for a pool.
 type Event struct {
-	AppDefinition string
-	Kind          EventKind
-	Time          time.Time
+	Pool string
+	Kind EventKind
+	Time time.Time
 	// End is set for exams, zero otherwise.
 	End          time.Time
 	Participants int
 	Source       string
 }
 
-// Recommendation is one strategy's wish for one AppDefinition.
+// Recommendation is one strategy's wish for one Pool.
 type Recommendation struct {
-	AppDefinition string
-	TargetIdle    int
-	Reason        string
+	Pool       string
+	TargetIdle int
+	Reason     string
 	// Forecast is the expected number of starts within the horizon, if the
 	// strategy forecasts at all.
 	Forecast float64

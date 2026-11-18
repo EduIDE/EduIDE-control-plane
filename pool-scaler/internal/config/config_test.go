@@ -25,7 +25,7 @@ timezone: Europe/Berlin
 activeStrategy: predictive
 prometheus: {url: http://prometheus:9090}
 defaults: {floor: 1}
-appLimits:
+poolLimits:
   java-17: {floor: 3, ceiling: 40}
 switchback:
   enabled: true
