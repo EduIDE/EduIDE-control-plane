@@ -137,12 +137,38 @@ func opts(n int) controller.Options { return controller.Options{MaxConcurrentRec
 type pressure struct {
 	mu    sync.Mutex
 	until map[string]time.Time
-	clock Clock
+	// evicted is the last capacity eviction per node pool, so one pressure window evicts one pod even on a stale cache.
+	evicted map[string]eviction
+	clock   Clock
+}
+
+type eviction struct {
+	pod string
+	at  time.Time
+}
+
+// evictWindow is the pause between two capacity evictions in one node pool.
+const evictWindow = 2 * time.Second
+
+// mayEvict reports whether pod may be evicted from the node pool now.
+func (p *pressure) mayEvict(nodePool, pod string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e, ok := p.evicted[nodePool]
+	return !ok || (e.pod != pod && p.clock.Now().Sub(e.at) >= evictWindow)
+}
+
+func (p *pressure) evictedPod(nodePool, pod string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.evicted[nodePool] = eviction{pod: pod, at: p.clock.Now()}
 }
 
 const pressureTTL = 15 * time.Second
 
-func newPressure(c Clock) *pressure { return &pressure{until: map[string]time.Time{}, clock: c} }
+func newPressure(c Clock) *pressure {
+	return &pressure{until: map[string]time.Time{}, evicted: map[string]eviction{}, clock: c}
+}
 
 func gaugeName(nodePool string) string {
 	if nodePool == "" {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -249,6 +250,11 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		n := min(int(want-have), maxCreatesPerPass)
 		for range n {
 			pod, err := r.createInstance(ctx, tmpl, pool, map[string]string{v1.LabelPool: pool.Name, v1.LabelState: v1.StateIdle}, "")
+			if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
+				// Not a reconciler error: the quota blocks the refill, so log it and retry after the pressure window.
+				slog.InfoContext(ctx, "the pool pod create was refused by the resource quota", "pool", pool.Name)
+				return ctrl.Result{RequeueAfter: pressureTTL}, nil
+			}
 			if err != nil {
 				return ctrl.Result{}, err
 			}

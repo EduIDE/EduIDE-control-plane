@@ -38,7 +38,9 @@ Chosen option: "separate `IDEPool` with `/scale` and bare pods".
 - The pool controller repairs the Service and HTTPRoute of idle pods. A pod without its token Secret is deleted once it has started or its route carries the old token, because the token cannot be restored. A pod that has not started yet, after a create that failed half way, gets a new token.
 - Only the oldest `IDEPool` of a template is active. Another pool of the same template gets `Ready=False` with reason `DuplicateTemplate` and keeps 0 idle pods.
 - Capacity pressure (G8): when a session pod is `Unschedulable` or hits quota, the operator deletes the oldest idle pod of any pool in the same node pool and holds those pools at 0 idle while the pressure lasts.
-  After 45 s (`capacity.exhaustedAfter`) without room the session fails with `capacity-exhausted`.
+  One pressure window evicts one pod per node pool: the operator remembers the last evicted pod and waits 2 s before the next eviction, and every eviction delete carries the resourceVersion as precondition. `eduide_capacity_evictions_total` counts successful deletes only.
+  After 45 s (`capacity.exhaustedAfter`) without room the session fails with `capacity-exhausted`, and the message names the node pool.
+  A quota refusal of the session pod gives one Warning Event (`QuotaExceeded`) and one info log line per session. A quota refusal in the pool controller is logged at info level and retried after 15 s instead of failing the reconcile.
   PriorityClass is not used: the priority of a claimed pool pod cannot change, and quota pressure triggers no preemption.
 - Node pools (U7): a placement profile per deployment (node selector, tolerations, affinity), overridable per template. Pressure and eviction are per node pool, identified by the configurable node label key and recorded in the label `eduide.github.io/node-pool`. Image prepull runs only on nodes of the matching pool.
 - Pressure shows in `eduide_capacity_pressure`, `eduide_capacity_evictions_total` and `eduide_pool_target_idle`. The pool scaler only plans.
