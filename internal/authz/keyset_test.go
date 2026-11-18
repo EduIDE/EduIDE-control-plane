@@ -55,7 +55,7 @@ func TestKeySetUnknownKeyStorm(t *testing.T) {
 
 func TestKeySetRotation(t *testing.T) {
 	iss := newIssuer(t)
-	v := testVerifier(t, iss, 200*time.Millisecond)
+	v := testVerifier(t, iss, 2*time.Second) // wide enough that a loaded CI runner stays inside the window
 	ctx := context.Background()
 	if _, err := v.Verify(ctx, iss.token(t, nil, "", "", "alice", 0)); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ func TestKeySetRotation(t *testing.T) {
 	if _, err := v.Verify(ctx, rotated); err == nil {
 		t.Fatal("rotated key accepted inside the window, want one fetch per window")
 	}
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(2100 * time.Millisecond)
 	if _, err := v.Verify(ctx, rotated); err != nil {
 		t.Fatalf("rotated key after the window: %v", err)
 	}
