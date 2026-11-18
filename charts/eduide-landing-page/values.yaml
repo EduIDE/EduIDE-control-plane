@@ -27,6 +27,10 @@ config:
     realm: eduide
     clientId: eduide-landing
   legacy: false
+  # Optional links to your own legal pages; the footer shows a link only when its URL is set (http or https).
+  # legal:
+  #   imprintUrl: https://example.org/imprint
+  #   privacyUrl: https://example.org/privacy
 
 resources:
   requests: {cpu: 5m, memory: 16Mi}

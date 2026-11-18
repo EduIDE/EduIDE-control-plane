@@ -1,14 +1,3 @@
-export interface PrivacyConfig {
-    workspacePersistent?: boolean;
-    workspaceGarbageCollected?: boolean;
-    workspaceRetentionSeconds?: number;
-    sessionMaxMinutes?: number;
-    sessionIdleMinutes?: number;
-    scientificUse?: boolean;
-    controller?: { organisation?: string; representative?: string; address?: string; email?: string };
-    dataProtectionOfficer?: { name?: string; email?: string };
-}
-
 export interface FooterLinksConfig {
     attribution?: { text?: string; url?: string; version?: string };
     bugReport?: { text: string; url: string; target?: string; rel?: string };
@@ -24,13 +13,28 @@ export interface AppConfig {
     /** Reserved: the deployment still runs the pre control plane API. Not used by this page. */
     legacy?: boolean;
     footerLinks?: FooterLinksConfig;
-    privacy?: PrivacyConfig;
+    /** Links to the operator's legal pages. A footer link shows only when its URL is set. */
+    legal?: { imprintUrl?: string; privacyUrl?: string };
+}
+
+function isHttpUrl(value: unknown): boolean {
+    try {
+        return typeof value === 'string' && /^https?:$/.test(new URL(value).protocol);
+    } catch {
+        return false;
+    }
 }
 
 export function parseConfig(raw: unknown): AppConfig {
     const c = raw as Partial<AppConfig> | undefined;
     if (!c || typeof c.apiBaseUrl !== 'string' || !c.keycloak?.url || !c.keycloak.realm || !c.keycloak.clientId) {
         throw new Error('config.json needs apiBaseUrl and keycloak.url, keycloak.realm, keycloak.clientId');
+    }
+    for (const key of ['imprintUrl', 'privacyUrl'] as const) {
+        const url = c.legal?.[key];
+        if (url !== undefined && !isHttpUrl(url)) {
+            throw new Error(`config.json: legal.${key} must be an http(s) URL`);
+        }
     }
     return c as AppConfig;
 }

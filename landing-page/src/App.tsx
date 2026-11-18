@@ -8,17 +8,15 @@ import { readArtemisToken } from './artemisToken';
 import { ErrorComponent } from './components/ErrorComponent';
 import { Footer } from './components/Footer';
 import { Header } from './components/Header';
-import { Imprint } from './components/Imprint';
 import { Launch } from './components/Launch';
 import { Overview } from './components/Overview';
-import { Privacy } from './components/Privacy';
 import { SelectApp } from './components/SelectApp';
 import type { AppConfig } from './config';
 import { buildLaunchRequest, parseLaunchParams } from './launch';
 
-type Page = 'home' | 'imprint' | 'privacy' | 'overview';
+type Page = 'home' | 'overview';
 
-const PATHS: Record<Page, string> = { home: '/', imprint: '/imprint', privacy: '/privacy', overview: '/me/overview' };
+const PATHS: Record<Page, string> = { home: '/', overview: '/me/overview' };
 
 function pageFromPath(pathname: string): Page {
     const path = pathname.replace(/\/+$/, '');
@@ -52,13 +50,16 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     }, []);
 
     useEffect(() => {
-        api.client.GET('/templates').then(({ data, error: problem }) => {
-            if (data) {
-                setTemplates(data);
-            } else {
-                setError(problem?.detail ?? problem?.title ?? 'Could not load the environments.');
-            }
-        }).catch(console.error);
+        api.client
+            .GET('/templates')
+            .then(({ data, error: problem }) => {
+                if (data) {
+                    setTemplates(data);
+                } else {
+                    setError(problem?.detail ?? problem?.title ?? 'Could not load the environments.');
+                }
+            })
+            .catch(console.error);
     }, [api]);
 
     // A link from Artemis (?appDef=...) starts right away once the templates are known. Launches are idempotent (G14),
@@ -84,11 +85,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     };
 
     let content: React.JSX.Element;
-    if (page === 'imprint') {
-        content = <Imprint onNavigate={navigate} />;
-    } else if (page === 'privacy') {
-        content = <Privacy onNavigate={navigate} privacy={config.privacy} />;
-    } else if (request) {
+    if (request) {
         content = <Launch api={api} request={request} onBack={back} />;
     } else if (page === 'overview') {
         content = (
@@ -116,7 +113,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
         <div className='App'>
             <Header email={user} logoutUrl={logoutUrl} title={config.title} />
             <div className='App__content'>{content}</div>
-            <Footer selectedAppDefinition='' onNavigate={navigate} footerLinks={config.footerLinks} />
+            <Footer selectedAppDefinition='' footerLinks={config.footerLinks} legal={config.legal} />
         </div>
     );
 }

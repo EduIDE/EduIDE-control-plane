@@ -1,9 +1,9 @@
-import type { FooterLinksConfig } from '../config';
+import type { AppConfig, FooterLinksConfig } from '../config';
 
 interface FooterProps {
     selectedAppDefinition: string;
-    onNavigate?: (page: 'home' | 'imprint' | 'privacy') => void;
     footerLinks?: FooterLinksConfig;
+    legal?: AppConfig['legal'];
 }
 
 const ISSUES_URL = 'https://github.com/EduIDE/EduIDE-control-plane/issues';
@@ -22,17 +22,7 @@ const ConfiguredLink = ({ link, fallback, icon = '', className }: ConfiguredLink
     </a>
 );
 
-export const Footer = ({ selectedAppDefinition, onNavigate, footerLinks }: FooterProps): React.JSX.Element => {
-    const handleNavigation = (page: 'home' | 'imprint' | 'privacy'): void => {
-        if (onNavigate) {
-            onNavigate(page);
-        } else {
-            // Fallback to URL navigation
-            window.location.href = page === 'home' ? '/' : `/${page}`;
-        }
-    };
-
-    return (
+export const Footer = ({ selectedAppDefinition, footerLinks, legal }: FooterProps): React.JSX.Element => (
         <div className='App__footer'>
             {selectedAppDefinition !== '' && (
                 <p>
@@ -69,16 +59,23 @@ export const Footer = ({ selectedAppDefinition, onNavigate, footerLinks }: Foote
                         fallback={{ text: 'About', url: 'https://github.com/EduIDE' }}
                         className='App__footer__link'
                     />
-                    <span className='App__footer__separator'>|</span>
-                    <button onClick={() => handleNavigation('imprint')} className='App__footer__link App__footer__button'>
-                        Imprint
-                    </button>
-                    <span className='App__footer__separator'>|</span>
-                    <button onClick={() => handleNavigation('privacy')} className='App__footer__link App__footer__button'>
-                        Privacy
-                    </button>
+                    {legal?.imprintUrl && (
+                        <>
+                            <span className='App__footer__separator'>|</span>
+                            <a href={legal.imprintUrl} className='App__footer__link'>
+                                Imprint
+                            </a>
+                        </>
+                    )}
+                    {legal?.privacyUrl && (
+                        <>
+                            <span className='App__footer__separator'>|</span>
+                            <a href={legal.privacyUrl} className='App__footer__link'>
+                                Privacy
+                            </a>
+                        </>
+                    )}
                 </div>
             </div>
         </div>
     );
-};

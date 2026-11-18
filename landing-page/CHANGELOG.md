@@ -11,6 +11,8 @@ The section of a version becomes the notes of its GitHub Release.
 - New overview at `/me/overview` with running sessions and workspaces
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
 - Runtime config is `/config.json`, served by a small Go static server that replaces nginx
+- Imprint and privacy texts are no longer part of the page: set `legal.imprintUrl` and `legal.privacyUrl` in `config.json` to show footer links to your own pages; the `privacy` config and the `/imprint` and `/privacy` routes are removed
+- The browser tab title comes from `config.title` (index.html says "EduIDE" until then)
 - Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
 
 ## [1.5.1] - 2026-11-18

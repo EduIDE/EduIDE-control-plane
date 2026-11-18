@@ -33,7 +33,7 @@ The server serves `/etc/eduide/landing/config.json` as `GET /config.json` (a Con
 }
 ```
 
-Optional keys: `footerLinks` (attribution, bugReport, featureRequest, about) and `privacy` (see `src/config.ts`). `legacy` is reserved and not used yet.
+Optional keys: `footerLinks` (attribution, bugReport, featureRequest, about) and `legal` (`imprintUrl`, `privacyUrl`: http(s) URLs of the operator's own legal pages; the footer links "Imprint" and "Privacy" appear only when set). `legacy` is reserved and not used yet.
 
 For local development copy that file to `public/config.json` (git-ignored) and run `npm run dev`.
 
