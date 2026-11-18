@@ -13,6 +13,8 @@ gateway:
   name: ""
   namespace: ""
   sectionName: ""
+  # Only listeners on this port; keeps the page off plain HTTP listeners.
+  port: 443
 
 # Served as /config.json
 config:

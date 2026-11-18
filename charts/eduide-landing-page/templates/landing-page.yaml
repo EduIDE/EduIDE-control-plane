@@ -94,6 +94,9 @@ spec:
     {{- with .Values.gateway.sectionName }}
     sectionName: {{ . }}
     {{- end }}
+    {{- with .Values.gateway.port }}
+    port: {{ . }}
+    {{- end }}
   hostnames: [{{ .Values.host | quote }}]
   rules:
   - matches:
