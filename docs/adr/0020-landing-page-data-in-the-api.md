@@ -50,8 +50,8 @@ Chosen option: "The service computes on request, the operator reads the image".
 
 ### U12: image metadata
 
-- The image build writes the OCI annotation `io.eduide.template` (JSON) on the manifest or image index: `imageVersion`, `variants` (`id`, `name`, `description`, `logoUrl`), `includes` (`group`, `items` with `name`, `version`).
-- The operator resolves the tag to a digest (cheap HEAD request) at most every 10 minutes per image reference and reads the annotation once per digest. No running pod is needed. It uses `go-containerregistry` with anonymous pulls. Private registries are not supported yet: the template gets the condition below.
+- The image build writes the OCI annotation `io.eduide.template` (JSON) on the manifest or image index: `imageVersion`, `variants` (`id`, `name`, `description`, `logoUrl`), `includes` (`group`, `items` with `name`, `version`). An index without the annotation falls back to its first image manifest that is not an attestation.
+- The operator resolves the tag to a digest (cheap HEAD request) at most every 10 minutes per image reference and reads the annotation once per digest. No running pod is needed. It uses `go-containerregistry` with anonymous pulls, a 15 s budget per check, every registry response capped at 4 MiB and the library's redirect checks (no cross-host redirect to private addresses). Private registries are not supported yet: the template gets the condition below.
 - The value is validated and capped at 64 KiB: variant ids match `^[a-z0-9][a-z0-9._-]{0,63}$` and are unique, logo URLs are http(s) without credentials, no control characters, at most 32 variants, 32 groups and 256 items per group.
 - Result in `IDETemplate.status.image` (`digest`, `version`, `variants`, `includes`, `lastChecked`), written only when the content changes. `lastChecked` is the time of the last write of the block.
 - Condition `ImageMetadata`: `True` (`Read`), or `False` with `AnnotationMissing`, `AnnotationInvalid` or `RegistryError`. It never affects `Ready`. A registry error keeps the last good metadata; a missing or invalid annotation of a new digest clears it.
@@ -61,6 +61,7 @@ Chosen option: "The service computes on request, the operator reads the image".
 ### U14: delete in one call
 
 `DELETE /workspaces/{name}` deletes the sessions on the workspace, waits until they are gone (at most 30 s, 500 `internal` on timeout and the workspace stays), then deletes the workspace and answers 204.
+A session launched on the workspace during the delete goes with it: the service sets the workspace as owner reference of every session with a workspace, so the garbage collector removes a session whose workspace is gone before it can keep a deleted volume.
 The code `workspace-in-use` is no longer sent. It stays in the enum for compatibility and is documented as unused.
 
 ### Consequences

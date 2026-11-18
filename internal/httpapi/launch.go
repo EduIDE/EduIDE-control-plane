@@ -134,12 +134,16 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 		return nil, false, e
 	}
 
+	var ws *v1alpha1.IDEWorkspace
 	if createWS {
-		if _, perr := s.ensureWorkspace(ctx, wsName, u.Owner, tpl.Name, display); perr != nil {
-			return nil, false, perr
-		}
+		ws, perr = s.ensureWorkspace(ctx, wsName, u.Owner, tpl.Name, display)
+	} else if wsName != "" {
+		ws, perr = s.ownedWorkspace(ctx, wsName, u.Owner)
 	}
-	return s.createSession(ctx, u.Owner, &tpl, wsName, key, data, display)
+	if perr != nil {
+		return nil, false, perr
+	}
+	return s.createSession(ctx, u.Owner, &tpl, ws, key, data, display)
 }
 
 // resolvePersistence returns the workspace name for volume sessions and whether it still has to be created.
@@ -248,14 +252,18 @@ func (s *Server) ensureWorkspace(ctx context.Context, name, owner, template stri
 // createSession names the session after the launch key, so two concurrent launches with the same key
 // create one session: the loser gets AlreadyExists and returns the winner. A Failed or deleting session
 // with that name must not block a relaunch, so the next attempts use random names.
-func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.IDETemplate, wsName, key string, data map[string]string, display v1alpha1.Display) (*v1alpha1.IDESession, bool, *apiError) {
+func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.IDETemplate, ws *v1alpha1.IDEWorkspace, key string, data map[string]string, display v1alpha1.Display) (*v1alpha1.IDESession, bool, *apiError) {
 	extra := map[string]string{v1alpha1.LabelTemplate: tpl.Name, v1alpha1.LabelLaunchKey: key}
-	if wsName != "" {
-		extra[v1alpha1.LabelWorkspace] = wsName
-	}
 	sess := &v1alpha1.IDESession{
 		ObjectMeta: metav1.ObjectMeta{Namespace: s.cfg.Namespace, Labels: managedLabels(owner, extra)},
-		Spec:       v1alpha1.IDESessionSpec{Owner: owner, TemplateRef: tpl.Name, WorkspaceRef: wsName, Display: display},
+		Spec:       v1alpha1.IDESessionSpec{Owner: owner, TemplateRef: tpl.Name, Display: display},
+	}
+	if ws != nil {
+		sess.Labels[v1alpha1.LabelWorkspace] = ws.Name
+		sess.Spec.WorkspaceRef = ws.Name
+		// A session launched while its workspace is deleted (U14) goes with it: the garbage collector removes
+		// sessions whose workspace UID is gone, so none mounts a deleted volume.
+		sess.OwnerReferences = []metav1.OwnerReference{{APIVersion: v1alpha1.GroupVersion.String(), Kind: "IDEWorkspace", Name: ws.Name, UID: ws.UID}}
 	}
 	tc := propagation.MapCarrier{}
 	propagation.TraceContext{}.Inject(ctx, tc)

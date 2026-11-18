@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
 	"regexp"
 	"sync"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
+	ggcrv1 "github.com/google/go-containerregistry/pkg/v1"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -48,7 +51,37 @@ type ImageRegistry interface {
 type remoteRegistry struct{}
 
 func (remoteRegistry) opts(ctx context.Context) []remote.Option {
-	return []remote.Option{remote.WithContext(ctx), remote.WithAuth(authn.Anonymous)}
+	return []remote.Option{remote.WithContext(ctx), remote.WithAuth(authn.Anonymous), remote.WithTransport(cappedTransport{remote.DefaultTransport})}
+}
+
+// maxRegistryResponse caps every registry and token response; the library alone allows manifests of 100 MiB.
+const maxRegistryResponse = 4 << 20
+
+type cappedTransport struct{ next http.RoundTripper }
+
+func (c cappedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := c.next.RoundTrip(req)
+	if err == nil {
+		resp.Body = &cappedBody{ReadCloser: resp.Body, left: maxRegistryResponse}
+	}
+	return resp, err
+}
+
+type cappedBody struct {
+	io.ReadCloser
+	left int64
+}
+
+func (b *cappedBody) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		return 0, fmt.Errorf("registry response is larger than %d bytes", maxRegistryResponse)
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.left -= int64(n)
+	return n, err
 }
 
 func (r remoteRegistry) Digest(ctx context.Context, image string) (string, error) {
@@ -64,6 +97,13 @@ func (r remoteRegistry) Digest(ctx context.Context, image string) (string, error
 }
 
 func (r remoteRegistry) Annotation(ctx context.Context, image, digest, key string) (string, bool, error) {
+	return r.annotation(ctx, image, digest, key, true)
+}
+
+func (r remoteRegistry) annotation(ctx context.Context, image, digest, key string, follow bool) (string, bool, error) {
+	if _, err := ggcrv1.NewHash(digest); err != nil {
+		return "", false, err
+	}
 	ref, err := name.ParseReference(image)
 	if err != nil {
 		return "", false, err
@@ -75,12 +115,26 @@ func (r remoteRegistry) Annotation(ctx context.Context, image, digest, key strin
 	// Image manifests and image indexes both carry top-level annotations.
 	var m struct {
 		Annotations map[string]string `json:"annotations"`
+		Manifests   []struct {
+			Digest   string `json:"digest"`
+			Platform *struct {
+				OS string `json:"os"`
+			} `json:"platform"`
+		} `json:"manifests"`
 	}
 	if err := json.Unmarshal(desc.Manifest, &m); err != nil {
 		return "", false, err
 	}
-	v, ok := m.Annotations[key]
-	return v, ok, nil
+	if v, ok := m.Annotations[key]; ok || !follow || !desc.MediaType.IsIndex() {
+		return v, ok, nil
+	}
+	// A multi-arch build may annotate only the image manifests: read the first one, skipping attestations (os unknown).
+	for _, c := range m.Manifests {
+		if c.Platform != nil && c.Platform.OS != "unknown" {
+			return r.annotation(ctx, image, c.Digest, key, false)
+		}
+	}
+	return "", false, nil
 }
 
 // imageEntry is what the operator knows about one image reference.

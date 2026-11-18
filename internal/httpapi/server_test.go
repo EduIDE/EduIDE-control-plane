@@ -175,6 +175,18 @@ func TestLaunchPersistence(t *testing.T) {
 	if ws.Spec.Owner != "alice" || ws.Spec.Persistence.Mode != "volume" || ws.Labels[v1alpha1.LabelManagedBy] != "eduide" {
 		t.Fatalf("workspace %+v", ws)
 	}
+	ownedByWorkspace := func(name string) {
+		t.Helper()
+		var cr v1alpha1.IDESession
+		if err := e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: name}, &cr); err != nil {
+			t.Fatal(err)
+		}
+		// U14: the garbage collector removes a session whose workspace was deleted during its launch.
+		if refs := cr.OwnerReferences; len(refs) != 1 || refs[0].Kind != "IDEWorkspace" || refs[0].Name != ws.Name || refs[0].UID != ws.UID {
+			t.Fatalf("owner references %+v", refs)
+		}
+	}
+	ownedByWorkspace(s.Name)
 	// A repeat finds the session; stopping and launching again reuses the workspace.
 	if rec := e.do("POST", "/sessions", "alice", launchBody(map[string]any{"persistence": "volume"})); rec.Code != 200 {
 		t.Fatalf("repeat %d", rec.Code)
@@ -191,6 +203,7 @@ func TestLaunchPersistence(t *testing.T) {
 	if rec.Code != 201 || *decode[Session](t, rec).Workspace != *s.Workspace {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
+	ownedByWorkspace(decode[Session](t, rec).Name)
 	if p := problemCode(t, e, "POST", "/sessions", "alice", map[string]any{"template": "java", "workspace": *s.Workspace, "persistence": "none"}, 400); p.Code != CodeInvalidInput {
 		t.Fatalf("code %s", p.Code)
 	}

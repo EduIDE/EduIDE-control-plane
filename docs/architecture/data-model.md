@@ -81,6 +81,7 @@ Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer
 | Service, HTTPRoute, token Secret | the pod |
 | Launch data Secret | the `IDESession` |
 | Workspace PVC | the `IDEWorkspace` |
+| `IDESession` with a workspace | the `IDEWorkspace` (no controller ref), set by the service at launch, so a session launched while its workspace is deleted goes with it (U14) |
 
 Kubernetes garbage collection removes dependents. No manual cleanup.
 

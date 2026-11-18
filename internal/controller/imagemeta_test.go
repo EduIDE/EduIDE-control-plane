@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
 	ggcr "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/random"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
@@ -110,6 +112,60 @@ func TestRemoteRegistryReadsTheManifestAnnotation(t *testing.T) {
 	}
 	if _, err := url.Parse(srv.URL); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRemoteRegistryReadsTheAnnotationOfAMultiArchImage(t *testing.T) {
+	srv := httptest.NewServer(registry.New(registry.Logger(log.New(io.Discard, "", 0))))
+	defer srv.Close()
+	host := strings.TrimPrefix(srv.URL, "http://")
+	img, err := random.Image(256, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img = mutate.Annotations(img, map[string]string{v1.AnnotationImageMetadata: goodAnnotation}).(ggcr.Image)
+	attestation, err := random.Image(64, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The attestation comes first, so the test shows it is skipped.
+	idx := mutate.AppendManifests(empty.Index,
+		mutate.IndexAddendum{Add: attestation, Descriptor: ggcr.Descriptor{Platform: &ggcr.Platform{OS: "unknown", Architecture: "unknown"}}},
+		mutate.IndexAddendum{Add: img, Descriptor: ggcr.Descriptor{Platform: &ggcr.Platform{OS: "linux", Architecture: "amd64"}}},
+	)
+	ref, err := name.ParseReference(host + "/multi:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := remote.WriteIndex(ref, idx); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	var rr remoteRegistry
+	d, err := rr.Digest(ctx, host+"/multi:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val, ok, err := rr.Annotation(ctx, host+"/multi:1", d, v1.AnnotationImageMetadata); err != nil || !ok || val != goodAnnotation {
+		t.Fatalf("annotation: %v %v %q", ok, err, val)
+	}
+	if _, _, err := rr.Annotation(ctx, host+"/multi:1", "../../v2/_catalog", v1.AnnotationImageMetadata); err == nil {
+		t.Error("a digest that is no digest must fail")
+	}
+}
+
+func TestRegistryResponsesAreCapped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(make([]byte, maxRegistryResponse+1))
+	}))
+	defer srv.Close()
+	resp, err := (&http.Client{Transport: cappedTransport{http.DefaultTransport}}).Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if b, err := io.ReadAll(resp.Body); err == nil || len(b) != maxRegistryResponse {
+		t.Errorf("read %d bytes, error %v", len(b), err)
 	}
 }
 
