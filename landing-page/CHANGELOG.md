@@ -12,6 +12,7 @@ The section of a version becomes the notes of its GitHub Release.
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
 - Runtime config is `/config.json`, served by a small Go static server that replaces nginx
 - Imprint and privacy are mandatory: `config.json` needs `legal.imprint` and `legal.privacy` (an external `url` or a hosted Markdown `path`), the chart needs `legal.imprint` and `legal.privacy` values. `legal.imprintUrl` and `legal.privacyUrl` are removed. `/imprint` and `/privacy` render the Markdown without a login
+- New public status page at `/status` (no login) and read-only admin panel at `/admin` (lazy loaded, needs the admin role); the footer links to `/status`
 - `footerLinks.attribution.text` and `.url` are no longer used; the footer shows "EduIDE" plus `attribution.version`
 - The footer is the same on every page (GitHub, bug report, imprint, privacy) and sits at the bottom of the viewport; `footerLinks.github` is new
 - The browser tab title comes from `config.title` (index.html says "EduIDE" until then)

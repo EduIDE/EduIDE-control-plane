@@ -11,6 +11,8 @@ The page a student lands on: it starts an IDE session through the control plane 
 - Tiles show the start time (`startEstimate`), saved or temporary workspace, and a dialog with what the environment includes. Templates with project templates (`variants`) open a picker first
 - Launch from an Artemis link (`?appDef=<template>&gitUri=...`) or from a tile. Progress follows the session event stream (SSE) and redirects when the session is Ready. At the session limit the page lists the running environments to delete or open
 - English and German (browser language, switchable in the avatar menu), colors follow the system light or dark setting
+- `/status` (no login): the overall state in plain language, the three parts (sign in, starting environments, saved workspaces) and the start time per template, split into temporary and saved workspaces. Reads the public `GET /api/v1/status` every 30 s and shows "Status is not available right now" when the request fails
+- `/admin` (login and admin role): a read-only panel with Status, Pools, Sessions (with details and trace link), Workspaces, Problems, Templates and Limits as real paths (`/admin/pools`, `/admin/sessions`, ...). It loads lazily, so students never download it. Live data comes from the admin event streams, other pages reload every 30 s. Charts and figures that need Prometheus are hidden when the service sends none. Users appear only as pseudonymous hash
 - Footer on every page with GitHub, bug report, imprint and privacy. `/imprint` and `/privacy` work without a login
 
 ## Link parameters
@@ -41,6 +43,10 @@ Required: `legal.imprint` and `legal.privacy`, each exactly one of `{ "url": "ht
 Optional keys: `footerLinks` with `attribution.version` (shown as "EduIDE <version>"), `github.url` (default the control plane repository), `bugReport` (`text`, `url`), and `featureRequest` and `about` (not shown unless set). `legacy` is reserved and not used yet.
 
 For local development copy that file (with `legal`) to `public/config.json` (git-ignored) and run `npm run dev`. Put Markdown files for the `path` variant in `public/legal/`.
+
+## Admin panel
+
+The panel needs the Keycloak role that the service config names (`oidc.admin`, see ADR 0021 and the install guide). The service checks the role on every request. The landing page asks `GET /api/v1/admin/status` once: only on `200` the avatar menu shows an "Admin" entry. With `403` or `404` the entry stays hidden, and opening `/admin` directly shows "No access". The check in the browser is a convenience, not a protection.
 
 ## Keycloak
 

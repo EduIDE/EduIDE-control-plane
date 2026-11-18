@@ -16,6 +16,9 @@ src/i18n.ts, I18nProvider.tsx  English and German strings, language choice
 src/legal.ts             /imprint and /privacy routes, sanitized Markdown
 src/templates.ts         start time lines and launch info from templates
 src/api.ts               control plane client and SSE streams
+src/routes.ts            what a path shows: home, legal, status, admin
+src/status/              public status page (no login, lazy)
+src/admin/               admin panel (login and role, lazy, own messages and CSS)
 src/api-client/          committed copy of clients/typescript/src, never edit (npm run sync-client)
 src/components/          presentational and page components
 server/                  Go static server (own module, stdlib only)
@@ -28,6 +31,8 @@ server/                  Go static server (own module, stdlib only)
 - The `display` fields are shown to the user, so they must stay non-secret.
 - Runtime config comes only from the served config.json. Nothing is baked in at build time.
 - The legal pages and the footer render before Keycloak (`main.tsx`), so they work without a login.
+- `/status` and `/admin` are lazy chunks. The admin and status strings live in their own dictionaries (`admin/messages.ts`, `status/messages.ts`), so they stay out of the main bundle.
+- Never run Prettier over `src/api-client` (see `.prettierignore`): `npm run check-client` fails on a reformatted copy.
 - Every UI string exists in English and German in `i18n.ts`; no emojis, icons come from `lucide-react`; the GitHub mark is an inline SVG in `components/Icons.tsx`.
 - Prettier with 4-space indent, `simple-import-sort` and `no-null` are errors, warnings are fatal.
 - Run `npm run lint`, `npm test`, `npm run build` and `cd server && go test ./...`.
