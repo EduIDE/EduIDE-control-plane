@@ -19,7 +19,7 @@ Status: **experimental**.
 | `internal/config/` | Typed deployment config (`config.yaml` from a ConfigMap) | contract |
 | `internal/telemetry/` | Logging, tracing, metrics; metric names in `docs/contracts/metrics.md` | contract |
 | `cmd/operator`, `internal/controller`, `internal/claim` | Template, pool, session and workspace controllers | operator |
-| `cmd/service`, `internal/httpapi`, `internal/auth` | REST API, OIDC, launch, SSE | service |
+| `cmd/service`, `internal/httpapi`, `internal/auth` | REST API, OIDC, launch, SSE, read-only admin API (`admin*.go`), public status (`public_status.go`) | service |
 | `cmd/authz`, `internal/authz` | ext_authz gRPC for session access | authz |
 | `cmd/agent`, `internal/agent`, `internal/agentapi`, `internal/agentclient` | Sidecar in every session pod | agent |
 | `extensions/eduide-session/` | IDE extension, talks to the agent on localhost | IDE |
@@ -58,6 +58,7 @@ API group and label prefix: `eduide.github.io`.
 - **Isolate `KUBECONFIG`** for every local cluster command: `export KUBECONFIG=$(pwd)/.e2e/kubeconfig`, then check `kubectl config current-context` and that the server is `127.0.0.1` before changing anything. The default context on developer machines can be a production cluster. Never rely on a wrapper that sets it only for one command in a pipe.
 - No university-specific defaults in the repo (hosts, realms, node labels). They live in values outside the repo.
 - Launch data (tokens, Git credentials) never appears in CR specs, logs, traces, metrics or status (G18).
+- Admin API responses show users only as `ownerHash` and launch data only as key names; the public `GET /status` answers only the fields of its allowlist test (ADR 0021).
 
 ## Writing style for docs
 

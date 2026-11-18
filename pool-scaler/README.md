@@ -41,8 +41,14 @@ poolScaler:
 
 One replica, `Recreate`, no leader election. RBAC in its namespace:
 `get/list/watch` on `idepools` and `idetemplates`, `get/update/patch` on
-`idepools/scale`, read-only `resourcequotas`; read-only `nodes` and `pods`
+`idepools/scale`, `create` on `events.k8s.io` events, read-only `resourcequotas`; read-only `nodes` and `pods`
 cluster-wide (for the node budget).
+
+## Events
+
+For every change of `targetIdle` the scaler writes a Kubernetes event on the `IDEPool` (reporting controller `pool-scaler`): reason `ScaledUp` or `ScaledDown`, message with strategy, old and new value and the reason.
+When a guardrail withholds a planned change it writes `Held` with the strategy, the wish and the guardrail, once until the message changes.
+Shadow mode and pools without a change write nothing. The admin panel of the service shows these events as scaler decisions.
 
 ## Strategies
 

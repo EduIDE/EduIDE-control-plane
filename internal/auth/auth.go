@@ -22,6 +22,35 @@ type User struct {
 	Owner string
 	Name  string
 	Email string
+	// Roles are the roles of the token at the configured admin role path (U16); nil without oidc.admin.
+	Roles []string
+}
+
+// RolesAt reads the role list of the claims at rolePath, which config.Parse restricts to
+// "realm_access.roles" and "resource_access.<client>.roles". The client id may contain dots. Anything else,
+// and a role list that is not a JSON array, yields no roles.
+func RolesAt(claims map[string]any, rolePath string) []string {
+	var list any
+	if rolePath == "realm_access.roles" {
+		realm, _ := claims["realm_access"].(map[string]any)
+		list = realm["roles"]
+	} else if rest, ok := strings.CutPrefix(rolePath, "resource_access."); ok {
+		client, ok := strings.CutSuffix(rest, ".roles")
+		if !ok || client == "" {
+			return nil
+		}
+		clients, _ := claims["resource_access"].(map[string]any)
+		c, _ := clients[client].(map[string]any)
+		list = c["roles"]
+	}
+	roles, _ := list.([]any)
+	var out []string
+	for _, r := range roles {
+		if s, ok := r.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // Verifier turns a raw bearer token into a User.
@@ -96,6 +125,9 @@ func (o *OIDC) Verify(ctx context.Context, raw string) (User, error) {
 	u := User{Owner: str(o.cfg.UserClaim), Name: str(o.cfg.NameClaim), Email: str(o.cfg.EmailClaim)}
 	if u.Owner == "" {
 		return User{}, fmt.Errorf("token has no %s claim", o.cfg.UserClaim)
+	}
+	if o.cfg.Admin != nil {
+		u.Roles = RolesAt(claims, o.cfg.Admin.RolePath)
 	}
 	return u, nil
 }

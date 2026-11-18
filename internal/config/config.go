@@ -6,6 +6,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -37,6 +38,28 @@ type Config struct {
 	// RateLimit per user for launches on the service.
 	RateLimit RateLimit `json:"rateLimit,omitempty"`
 	Overview  Overview  `json:"overview,omitempty"`
+	// Admin tunes the read-only admin API (U16). The API is on only with oidc.admin.
+	Admin Admin `json:"admin,omitempty"`
+}
+
+// Admin tunes the read-only admin API (U16).
+type Admin struct {
+	// PrometheusURL enables the figures and time series that need Prometheus. Empty hides them.
+	PrometheusURL string     `json:"prometheusURL,omitempty"`
+	Links         AdminLinks `json:"links,omitempty"`
+	// RateLimitPerMinute per admin user over all admin routes. Default 60.
+	RateLimitPerMinute int `json:"rateLimitPerMinute,omitempty"`
+	// ScalerInterval is the decision interval of the pool scaler. Set it when a scaler runs; with PrometheusURL the
+	// status then warns when the scaler's heartbeat metric is older than twice this time or missing.
+	ScalerInterval *metav1.Duration `json:"scalerInterval,omitempty"`
+}
+
+// AdminLinks are shown in the admin panel. All optional.
+type AdminLinks struct {
+	Grafana string `json:"grafana,omitempty"`
+	Jaeger  string `json:"jaeger,omitempty"`
+	// TraceURLTemplate builds the link to one trace; {traceId} is replaced. Default: Jaeger URL + "/trace/{traceId}".
+	TraceURLTemplate string `json:"traceUrlTemplate,omitempty"`
 }
 
 // Overview tunes the landing page overview (G15).
@@ -77,7 +100,20 @@ type OIDC struct {
 	EmailClaim string `json:"emailClaim,omitempty"`
 	// IDTokenCookie is the cookie name the SecurityPolicy stores the ID token in. Default eduide-id.
 	IDTokenCookie string `json:"idTokenCookie,omitempty"`
+	// Admin names the Keycloak role that opens the admin API (U16). Without it the admin API answers 404.
+	Admin *AdminRole `json:"admin,omitempty"`
 }
+
+// AdminRole is a realm role or a client role in the access token.
+type AdminRole struct {
+	// RolePath is "realm_access.roles" or "resource_access.<client>.roles".
+	RolePath string `json:"rolePath"`
+	// Role is the role name that must be in the list at RolePath.
+	Role string `json:"role"`
+}
+
+// A Keycloak client id may contain dots and URL characters, so the client part is any non-blank text.
+var rolePathRE = regexp.MustCompile(`^(realm_access\.roles|resource_access\.\S+\.roles)$`)
 
 type Workspaces struct {
 	StorageClassName string             `json:"storageClassName,omitempty"`
@@ -181,6 +217,9 @@ func (c *Config) defaults() {
 	if c.Capacity.ExhaustedAfter == nil {
 		c.Capacity.ExhaustedAfter = &metav1.Duration{Duration: 45 * time.Second}
 	}
+	if c.Admin.RateLimitPerMinute == 0 {
+		c.Admin.RateLimitPerMinute = 60
+	}
 	if c.RateLimit.LaunchesPerMinute == 0 {
 		c.RateLimit.LaunchesPerMinute = 10
 	}
@@ -220,7 +259,50 @@ func (c *Config) validate() error {
 	if _, err := regexp.Compile(c.Overview.TitleStripPattern); err != nil {
 		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))
 	}
+	errs = append(errs, c.validateAdmin()...)
 	return errors.Join(errs...)
+}
+
+func (c *Config) validateAdmin() []error {
+	var errs []error
+	if a := c.OIDC.Admin; a != nil {
+		if !rolePathRE.MatchString(a.RolePath) {
+			errs = append(errs, errors.New("config: oidc.admin.rolePath must be realm_access.roles or resource_access.<client>.roles"))
+		}
+		if strings.TrimSpace(a.Role) == "" {
+			errs = append(errs, errors.New("config: oidc.admin.role is required"))
+		}
+		// The admin API shows owners as a keyed hash; without a salt the hash of a user name is easy to reverse.
+		if c.Telemetry.UserSaltFile == "" {
+			errs = append(errs, errors.New("config: oidc.admin needs telemetry.userSaltFile (the key of the owner hash)"))
+		}
+	}
+	if u := c.Admin.PrometheusURL; u != "" {
+		p, err := url.Parse(u)
+		if err != nil || (p.Scheme != "http" && p.Scheme != "https") || p.Host == "" || p.User != nil || p.RawQuery != "" || p.Fragment != "" {
+			errs = append(errs, errors.New("config: admin.prometheusURL must be an http(s) URL without credentials, query or fragment"))
+		}
+	}
+	for name, u := range map[string]string{"grafana": c.Admin.Links.Grafana, "jaeger": c.Admin.Links.Jaeger} {
+		if u != "" && !httpURL(u) {
+			errs = append(errs, fmt.Errorf("config: admin.links.%s must be an http(s) URL", name))
+		}
+	}
+	if t := c.Admin.Links.TraceURLTemplate; t != "" && (!strings.Contains(t, "{traceId}") || !httpURL(strings.ReplaceAll(t, "{traceId}", "x"))) {
+		errs = append(errs, errors.New("config: admin.links.traceUrlTemplate must be an http(s) URL with {traceId}"))
+	}
+	if c.Admin.RateLimitPerMinute < 1 {
+		errs = append(errs, errors.New("config: admin.rateLimitPerMinute must be at least 1"))
+	}
+	if d := c.Admin.ScalerInterval; d != nil && d.Duration <= 0 {
+		errs = append(errs, errors.New("config: admin.scalerInterval must be positive"))
+	}
+	return errs
+}
+
+func httpURL(s string) bool {
+	p, err := url.Parse(s)
+	return err == nil && (p.Scheme == "http" || p.Scheme == "https") && p.Host != "" && p.User == nil
 }
 
 // InstanceURL is the URL of a session with the given instance id.

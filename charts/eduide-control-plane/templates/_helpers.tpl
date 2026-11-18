@@ -46,6 +46,9 @@ seccompProfile:
 {{- $c := deepCopy .Values.config -}}
 {{- if not $c.agent.image }}{{ $_ := set $c.agent "image" (include "ecp.image" (dict "ctx" . "name" "agent")) }}{{ end -}}
 {{- $_ := set $c "telemetry" (mergeOverwrite (dict) ($c.telemetry | default dict) (dict "userSaltFile" "/etc/eduide/secrets/user-salt")) -}}
+{{- if .Values.poolScaler.enabled -}}
+{{- $_ := set $c "admin" (mergeOverwrite (dict "scalerInterval" (.Values.poolScaler.config.interval | default "30s")) ($c.admin | default dict)) -}}
+{{- end -}}
 {{- toYaml $c -}}
 {{- end }}
 

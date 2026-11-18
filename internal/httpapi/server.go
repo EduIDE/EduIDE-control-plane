@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -33,15 +34,37 @@ type Server struct {
 	salt       []byte
 	titleStrip *regexp.Regexp
 
-	mu       sync.Mutex
-	limiters map[string]*rate.Limiter // shortcut: one entry per user is never evicted, fine for thousands of users
+	// prom is nil without admin.prometheusURL (U16).
+	prom *promClient
+	now  func() time.Time
+
+	mu            sync.Mutex
+	limiters      map[string]*rate.Limiter // shortcut: one entry per user is never evicted, fine for thousands of users
+	adminLimiters map[string]*rate.Limiter
+	ipLimiters    map[string]*rate.Limiter // public status (U17), per client IP
+
+	// quotaMu guards the storage quota cache; its refresh calls the API server, which must not block mu.
+	quotaMu sync.Mutex
+	quota   *StorageQuota
+	quotaAt time.Time
+
+	// public status (U17): the cached body and the state of the sign-in check. pubMu lets one request rebuild an
+	// expired body while the others wait for it instead of rebuilding it, too.
+	pubMu   sync.Mutex
+	pubAt   time.Time
+	pubBody []byte
+	signIn  atomic.Bool
 }
 
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
-	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}}
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
+	}
+	s.signIn.Store(true) // until the first check says otherwise
+	if cfg.Admin.PrometheusURL != "" {
+		s.prom = newPromClient(cfg.Admin.PrometheusURL)
 	}
 	return s
 }
@@ -50,7 +73,7 @@ func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, s
 func (s *Server) Handler(v auth.Verifier) http.Handler {
 	return secureAndProblemFallback(HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseURL:     basePath,
-		Middlewares: []MiddlewareFunc{auth.Middleware(v), metricsMiddleware}, // last is outermost
+		Middlewares: []MiddlewareFunc{s.adminAuthz, publicWithoutToken(auth.Middleware(v)), s.adminGate, metricsMiddleware}, // last is outermost
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeProblem(w, problem(CodeInvalidInput, "invalid request parameter"))
 		},

@@ -15,7 +15,9 @@ type Snapshot struct {
 
 // App is the state of one IDEPool.
 type App struct {
-	Name         string
+	Name string
+	// UID of the IDEPool, for the events written about it.
+	UID          string
 	MinIdle      int
 	MaxInstances int
 	// TargetIdle is the live spec.targetIdle, nil when unset.

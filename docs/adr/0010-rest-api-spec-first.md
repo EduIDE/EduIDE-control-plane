@@ -30,7 +30,7 @@ Chosen option: "OpenAPI 3.1 first".
 
 - [api/openapi/v1.yaml](../../api/openapi/v1.yaml) is the source. `make generate` produces the server in `internal/httpapi/api.gen.go` and the client in `clients/typescript`. Nobody edits generated files.
 - Base path `/api/v1`. Endpoints: `GET /templates`, `GET|POST /sessions`, `GET|DELETE /sessions/{name}`, `GET /sessions/{name}/events` (SSE), `GET|POST /workspaces`, `DELETE /workspaces/{name}`, `GET /me/overview` and `GET /me/overview/events`.
-- No admin API, no `performance`, no `setConfigValue` in v1. Admin work goes through Helm and the CRDs.
+- No `performance` and no `setConfigValue` in v1. Admin changes go through Helm and the CRDs. The admin API of [0021](0021-admin-api-and-public-status.md) is read-only and was added later (U16); this decision otherwise stands.
 - Auth: OIDC bearer token of the deployment's realm, verified with go-oidc (JWKS cached). The owner comes from the verified token, never from the request.
 - Errors are RFC 9457 Problem Details with a stable `code` such as `capacity-exhausted`, `session-limit-reached`, `unknown-key`, `rate-limited`. New codes are additive.
 - Launch (G14): idempotent, same session for a repeated request. At most `sessionsPerUser` sessions (default 3); beyond it `session-limit-reached` with the list of running sessions. Rate limit per user (`rateLimit.launchesPerMinute`).

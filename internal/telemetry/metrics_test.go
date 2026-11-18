@@ -28,7 +28,8 @@ func TestMetricsContract(t *testing.T) {
 	all := slices.Concat(OperatorMetrics, ServiceMetrics, AuthzMetrics)
 	reg.MustRegister(all...)
 	// Touch every vector so Gather reports it.
-	SessionStartup.WithLabelValues("t", "cold", "ready")
+	SessionStartup.WithLabelValues("t", "cold", "ready", "none")
+	SessionFailures.WithLabelValues("t", "start-failed")
 	SessionPhase.WithLabelValues("claim", "cold")
 	ClaimTotal.WithLabelValues("t", "claimed")
 	PoolInstances.WithLabelValues("p", "idle_ready")

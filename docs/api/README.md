@@ -16,7 +16,10 @@ REST endpoints (operation ids): `listTemplates`, `watchTemplates` (SSE), `listSe
 Since [0020](../adr/0020-landing-page-data-in-the-api.md): `Session.stopsAt` and `stopReason`, `Workspace.deletesAt`, the same on `OverviewItem`, `Template.startEstimate`, `variants`, `includes` and `imageVersion`.
 `DELETE /workspaces/{name}` stops a running session on the workspace first and answers 204. The error code `workspace-in-use` is unused and stays in the enum for compatibility.
 Health and metrics are on a separate port and are not part of the spec.
-There is no admin API in v1. Admin tasks go through Helm values and the CRDs.
+Since [0021](../adr/0021-admin-api-and-public-status.md):
+- Public, no token (U17): `getPublicStatus` (`GET /status`, cached 15 s, rate limited per IP).
+- Admin API, read-only, tag `admin` (U16): `getAdminStatus`, `watchAdminStatus` (SSE), `listAdminPools`, `listAdminSessions`, `watchAdminSessions` (SSE), `getAdminSession`, `listAdminWorkspaces`, `getAdminProblems`, `listAdminTemplates`, `getAdminConfig`. They need the Keycloak role of `oidc.admin` (403 without it) and answer 404 while the deployment configures no role. Users appear only as `ownerHash`, launch data only as key names.
+Admin changes go through Helm values and the CRDs; there is no write endpoint.
 
 ## Errors
 

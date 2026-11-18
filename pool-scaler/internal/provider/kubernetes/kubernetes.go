@@ -7,8 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	eventsv1 "k8s.io/api/events/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -39,6 +43,8 @@ type Provider struct {
 	Namespace    string
 	NodeSelector map[string]string
 	PodOverhead  budget.Resources
+	// Now is the clock of events; nil means time.Now.
+	Now func() time.Time
 }
 
 // Pools returns every IDEPool with its counts from status and the pod size
@@ -65,7 +71,7 @@ func (p *Provider) Pools(ctx context.Context) (map[string]*model.App, error) {
 }
 
 func (p *Provider) poolFromUnstructured(u *unstructured.Unstructured, templates map[string]*unstructured.Unstructured) *model.App {
-	a := &model.App{Name: u.GetName(), Annotations: u.GetAnnotations(), ClaimRate: -1}
+	a := &model.App{Name: u.GetName(), UID: string(u.GetUID()), Annotations: u.GetAnnotations(), ClaimRate: -1}
 	a.Template, _, _ = unstructured.NestedString(u.Object, "spec", "templateRef")
 	a.MinIdle = int(nestedInt(u.Object, "spec", "minIdle"))
 	a.MaxInstances = int(nestedInt(u.Object, "spec", "maxInstances"))
@@ -193,4 +199,37 @@ func (p *Provider) PatchTargetIdle(ctx context.Context, pool string, v int) erro
 	patch, _ := json.Marshal(map[string]any{"spec": map[string]any{"replicas": v}})
 	_, err := p.Dynamic.Resource(PoolGVR).Namespace(p.Namespace).Patch(ctx, pool, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: "pool-scaler"}, "scale")
 	return err
+}
+
+// EventController is the reportingController of the events the scaler writes. The service reads them by it.
+const EventController = "pool-scaler"
+
+// Event writes a Kubernetes event on the IDEPool: ScaledUp, ScaledDown or Held, with strategy and reason in the
+// message. The admin panel of the service shows them as scaler decisions.
+func (p *Provider) Event(ctx context.Context, pool *model.App, reason, message string) error {
+	now := time.Now()
+	if p.Now != nil {
+		now = p.Now()
+	}
+	instance, _ := os.Hostname()
+	ev := &eventsv1.Event{
+		ObjectMeta:          metav1.ObjectMeta{Name: fmt.Sprintf("%s.%s.%x", pool.Name, strings.ToLower(reason), now.UnixNano()), Namespace: p.Namespace},
+		EventTime:           metav1.NewMicroTime(now),
+		ReportingController: EventController,
+		ReportingInstance:   instance,
+		Action:              "Scale",
+		Reason:              reason,
+		Type:                corev1.EventTypeNormal,
+		Note:                truncate(message, 1024),
+		Regarding:           corev1.ObjectReference{APIVersion: PoolGVR.GroupVersion().String(), Kind: "IDEPool", Namespace: p.Namespace, Name: pool.Name, UID: types.UID(pool.UID)},
+	}
+	_, err := p.Core.EventsV1().Events(p.Namespace).Create(ctx, ev, metav1.CreateOptions{})
+	return err
+}
+
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
 }

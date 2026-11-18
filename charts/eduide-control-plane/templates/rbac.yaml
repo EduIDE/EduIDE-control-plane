@@ -8,14 +8,17 @@
   (dict "name" "service" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idetemplates" "idepools" "idesessions" "ideworkspaces") "verbs" (list "get" "list" "watch"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions" "ideworkspaces") "verbs" (list "create" "delete"))
-    (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "get" "delete"))))
+    (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "get" "delete"))
+    (dict "apiGroups" (list "events.k8s.io") "resources" (list "events") "verbs" (list "list" "watch"))
+    (dict "apiGroups" (list "") "resources" (list "resourcequotas") "verbs" (list "get" "list"))))
   (dict "name" "authz" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions") "verbs" (list "list" "watch"))))
   (dict "name" "pool-scaler" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idepools") "verbs" (list "get" "list" "watch" "patch"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idepools/scale") "verbs" (list "get" "patch" "update"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idetemplates") "verbs" (list "get" "list" "watch"))
-    (dict "apiGroups" (list "") "resources" (list "pods" "resourcequotas") "verbs" (list "get" "list" "watch"))))
+    (dict "apiGroups" (list "") "resources" (list "pods" "resourcequotas") "verbs" (list "get" "list" "watch"))
+    (dict "apiGroups" (list "events.k8s.io") "resources" (list "events") "verbs" (list "create"))))
 }}
 {{- if or (ne $c.name "pool-scaler") $.Values.poolScaler.enabled }}
 ---

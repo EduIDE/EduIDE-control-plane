@@ -76,6 +76,34 @@ kubectl -n eduide-<deployment> create secret generic <gateway-secret-name> \
 The Secret name and key are chart values; check `values.yaml`.
 The ID token cookie (`eduide-id` by default) is set for the instance host. The cookie domain covers the webview host.
 
+## Admin role
+
+The read-only admin API (`/api/v1/admin/*`, [ADR 0021](../adr/0021-admin-api-and-public-status.md)) is off until you configure a Keycloak role.
+Without it every admin route answers 404; with it, users without the role get 403.
+
+1. Create the role. Realm role: Realm roles, Create role, name `eduide-admin`. Client role: Clients, the landing page client, Roles, Create role, name `eduide-admin`.
+2. Assign it: Users, the user, Role mapping, Assign role. To manage it by group: create a group, give the group the role, add users to the group.
+3. Make it appear in the access token. A realm role is in `realm_access.roles` by default (the `roles` client scope). A client role is in `resource_access.<client>.roles` once the client scope `roles` is assigned to the landing page client with the mapper "client roles" enabled for access tokens. Decode a token to check.
+4. Set it in the chart values:
+
+```yaml
+config:
+  oidc:
+    admin:
+      rolePath: realm_access.roles          # or resource_access.<client>.roles
+      role: eduide-admin
+  admin:                                    # all optional
+    prometheusURL: http://prometheus-operated.monitoring:9090
+    links: {grafana: https://grafana.example.org, jaeger: https://jaeger.example.org}
+```
+
+`rolePath` is exactly one of the two shapes; the service refuses to start with anything else (for example `groups`).
+A client id may contain dots (`resource_access.eduide.landing.roles` names the client `eduide.landing`).
+The admin API also needs `telemetry.userSaltFile` (the chart sets it): owners appear as a hash keyed with this salt, the same as the user id in spans.
+With `prometheusURL` and the pool scaler, the status warns `scaler-silent` when the scaler's heartbeat metric `pool_scaler_last_decision_timestamp_seconds` is older than two intervals or missing; this needs `monitoring.podMonitor.enabled`.
+With `prometheusURL` the status page also shows start counts, latency, capacity and time series; without it these parts are absent.
+The service needs `list` and `watch` on events and `get` and `list` on resourcequotas; the chart grants both.
+
 ## 4. Secrets overview
 
 | Secret | Created by | Content |

@@ -40,6 +40,9 @@ config:
     gatewayClientID: ""
     userClaim: preferred_username
     idTokenCookie: eduide-id
+    # Optional: Keycloak role that opens the read-only admin API (U16). Without it every /api/v1/admin route answers 404.
+    # rolePath is exactly "realm_access.roles" or "resource_access.<client>.roles". See docs/operations/install.md, "Admin role".
+    # admin: {rolePath: realm_access.roles, role: eduide-admin}
   sessionsPerUser: 3
   allowedHosts: []
   workspaces: {}
@@ -53,6 +56,12 @@ config:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 64Mi}
   rateLimit: {}
+  # Optional, read-only admin API (U16); all keys optional.
+  # admin:
+  #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials
+  #   links: {grafana: "", jaeger: "", traceUrlTemplate: "https://jaeger.example.org/trace/{traceId}"}
+  #   rateLimitPerMinute: 60                                      # per admin user
+  #   scalerInterval: 30s                                         # set by the chart from poolScaler.config.interval; with prometheusURL it drives the scaler-silent warning
 
 oidc:
   # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID

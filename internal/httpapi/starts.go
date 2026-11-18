@@ -27,6 +27,41 @@ type startSample struct {
 type startStats struct {
 	mu   sync.Mutex
 	byTp map[string][]startSample
+	// outcomes are all starts of all templates, Ready or Failed, for the public status (U17).
+	outcomes []startOutcome
+}
+
+type startOutcome struct {
+	at     time.Time
+	dur    time.Duration
+	failed bool
+}
+
+const outcomesCap = 2048
+
+func (st *startStats) addOutcome(o startOutcome) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.outcomes = append(st.outcomes, o)
+	if len(st.outcomes) > outcomesCap {
+		st.outcomes = st.outcomes[len(st.outcomes)-outcomesCap:]
+	}
+}
+
+// recordFailure stores a session that turned Failed, at the time of its Ready=False condition (the replay
+// after a restart then does not count old failures as new). It reports whether it stored one.
+func (st *startStats) recordFailure(s *v1alpha1.IDESession, now time.Time) bool {
+	if s.Status.Phase != v1alpha1.SessionFailed {
+		return false
+	}
+	at := now
+	for _, c := range s.Status.Conditions {
+		if c.Type == v1alpha1.ConditionReady && !c.LastTransitionTime.IsZero() {
+			at = c.LastTransitionTime.Time
+		}
+	}
+	st.addOutcome(startOutcome{at: at, failed: true})
+	return true
 }
 
 func newStartStats() *startStats { return &startStats{byTp: map[string][]startSample{}} }
@@ -41,6 +76,7 @@ func (st *startStats) record(s *v1alpha1.IDESession) bool {
 	if d < 0 {
 		return false
 	}
+	st.addOutcome(startOutcome{at: ready.Time, dur: d})
 	st.add(s.Spec.TemplateRef, startSample{at: ready.Time, dur: d, warm: s.Status.StartStrategy == v1alpha1.StartWarmReady, volume: s.Spec.WorkspaceRef != ""})
 	return true
 }

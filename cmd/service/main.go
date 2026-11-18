@@ -89,6 +89,11 @@ func run() error {
 	if err := hub.Register(ctx, c); err != nil {
 		return err
 	}
+	if cfg.OIDC.Admin != nil { // the events informer needs list and watch on events only for the admin API
+		if err := hub.RegisterEvents(ctx, c); err != nil {
+			return err
+		}
+	}
 	if err := errors.Join(
 		func() error { _, err := c.GetInformer(ctx, &v1alpha1.IDETemplate{}); return err }(),
 		func() error { _, err := c.GetInformer(ctx, &v1alpha1.IDEPool{}); return err }(),
@@ -124,7 +129,11 @@ func run() error {
 			return err
 		}
 	}
+	if cfg.OIDC.Admin != nil && len(salt) == 0 {
+		return errors.New("the admin API needs a non-empty telemetry.userSaltFile")
+	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
+	go api.RunSignInCheck(ctx)
 	// No WriteTimeout: SSE streams stay open.
 	servers := []*http.Server{
 		{Addr: ":8080", Handler: api.Handler(auth.NewOIDC(cfg.OIDC)), ReadHeaderTimeout: 10 * time.Second,

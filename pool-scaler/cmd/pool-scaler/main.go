@@ -90,6 +90,7 @@ func run(args []string, log *slog.Logger) error {
 
 	m := metrics.New()
 	s := scaler.New(cfg, loc, k, m, log)
+	s.Events = k
 	if err := addOptional(s, cfg, loc); err != nil {
 		return err
 	}
