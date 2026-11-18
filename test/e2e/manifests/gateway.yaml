@@ -1,0 +1,65 @@
+# Gateway, entry Service and the test CA wiring. Applied after Envoy Gateway is ready.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata: {name: e2e, namespace: envoy-gateway-system}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService: {type: ClusterIP}
+      envoyDeployment:
+        patch:
+          type: StrategicMerge
+          value:
+            spec:
+              template:
+                spec:
+                  containers:
+                    # Envoy validates the Keycloak certificate of the OIDC token call against this bundle.
+                    - name: envoy
+                      volumeMounts:
+                        - {name: e2e-ca, mountPath: /etc/ssl/certs/ca-certificates.crt, subPath: ca.crt, readOnly: true}
+                  volumes:
+                    - {name: e2e-ca, configMap: {name: e2e-ca}}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata: {name: eduide-e2e}
+spec:
+  controllerName: gateway.envoyproxy.io/gatewayclass-controller
+  parametersRef: {group: gateway.envoyproxy.io, kind: EnvoyProxy, name: e2e, namespace: envoy-gateway-system}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: eduide, namespace: eduide-e2e}
+spec:
+  gatewayClassName: eduide-e2e
+  listeners:
+    - {name: service, hostname: ide.e2e.test, port: 443, protocol: HTTPS, tls: {mode: Terminate, certificateRefs: [{name: e2e-tls}]}, allowedRoutes: {namespaces: {from: Same}}}
+    - {name: instance, hostname: instance.ide.e2e.test, port: 443, protocol: HTTPS, tls: {mode: Terminate, certificateRefs: [{name: e2e-tls}]}, allowedRoutes: {namespaces: {from: Same}}}
+    - {name: webview, hostname: webview.instance.ide.e2e.test, port: 443, protocol: HTTPS, tls: {mode: Terminate, certificateRefs: [{name: e2e-tls}]}, allowedRoutes: {namespaces: {from: Same}}}
+    - {name: keycloak, hostname: keycloak.e2e.test, port: 443, protocol: HTTPS, tls: {mode: Terminate, certificateRefs: [{name: e2e-tls}]}, allowedRoutes: {namespaces: {from: Same}}}
+    - {name: smoke, hostname: smoke.e2e.test, port: 443, protocol: HTTPS, tls: {mode: Terminate, certificateRefs: [{name: e2e-tls}]}, allowedRoutes: {namespaces: {from: Same}}}
+---
+# One stable entry to the Envoy pods of the Gateway (their own Service name is generated).
+# NodePort 30443 is mapped to 127.0.0.1 by kind; CoreDNS rewrites *.e2e.test to this Service.
+apiVersion: v1
+kind: Service
+metadata: {name: gateway-entry, namespace: envoy-gateway-system}
+spec:
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: envoy
+    gateway.envoyproxy.io/owning-gateway-name: eduide
+    gateway.envoyproxy.io/owning-gateway-namespace: eduide-e2e
+  ports:
+    - {name: https, port: 443, targetPort: 10443, nodePort: 30443}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: keycloak, namespace: eduide-e2e}
+spec:
+  parentRefs: [{name: eduide, sectionName: keycloak}]
+  hostnames: [keycloak.e2e.test]
+  rules:
+    - backendRefs: [{name: keycloak, port: 8080}]

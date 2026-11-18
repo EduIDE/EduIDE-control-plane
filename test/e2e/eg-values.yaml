@@ -1,0 +1,10 @@
+# The controller fetches the OIDC discovery document of the Keycloak with the test CA.
+deployment:
+  envoyGateway:
+    extraEnv:
+      - {name: SSL_CERT_FILE, value: /etc/e2e-ca/ca.crt}
+  pod:
+    extraVolumes:
+      - {name: e2e-ca, configMap: {name: e2e-ca}}
+    extraVolumeMounts:
+      - {name: e2e-ca, mountPath: /etc/e2e-ca, readOnly: true}

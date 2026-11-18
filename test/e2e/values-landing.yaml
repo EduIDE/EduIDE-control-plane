@@ -1,0 +1,10 @@
+# Values of the eduide-landing-page chart for the e2e cluster.
+image:
+  tag: e2e
+  pullPolicy: Never
+config:
+  title: EduIDE
+  keycloak:
+    url: https://keycloak.e2e.test
+    realm: eduide
+    clientId: eduide-landing
