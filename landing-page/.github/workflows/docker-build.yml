@@ -1,0 +1,59 @@
+name: Build and Push Docker Image
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+  schedule:
+    - cron: '0 2 * * *'
+
+  # Called by release.yml, which passes the version as image_tag.
+  workflow_call:
+    inputs:
+      image_tag:
+        description: "Image tag, e.g. 2.3.0"
+        required: false
+        default: ""
+        type: string
+
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag override (e.g. my-test-tag, or 2.3.0 for the release train)"
+        required: false
+        default: ""
+        type: string
+      disable_layer_cache:
+        description: "Disable the Docker layer cache (--no-cache) for stress testing"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-push-landing-page:
+    uses: EduIDE/.github/.github/workflows/build-and-push-docker-image.yml@v1
+    with:
+      docker-file: Dockerfile
+      image-name: eduide/eduide-landing-page
+      docker-context: .
+      # release.yml passes the plain version (no leading v). Called from there the
+      # event is workflow_dispatch on main, so without it the shared workflow
+      # would publish `latest` instead of `1.2.0`.
+      image-tag: ${{ inputs.image_tag || '' }}
+      no-cache: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.disable_layer_cache) || false }}
+      # Small nginx + Vite build; the disk-reclaim step is not worth the time.
+      free-disk-space: false
+    secrets: inherit
