@@ -48,6 +48,23 @@ async function start(): Promise<void> {
         }
         const keycloak = await initKeycloak(config);
         const api = createApi(config.apiBaseUrl, tokenProvider(keycloak));
+        if (route.kind === 'admin') {
+            // Lazy: students never download the admin panel. The service decides who may use it.
+            const { AdminApp } = await import('./admin/AdminApp');
+            root.render(
+                <React.StrictMode>
+                    <I18nProvider>
+                        <AdminApp
+                            config={config}
+                            api={api}
+                            user={userFromToken(keycloak.tokenParsed)}
+                            logoutUrl={keycloak.createLogoutUrl()}
+                        />
+                    </I18nProvider>
+                </React.StrictMode>
+            );
+            return;
+        }
         root.render(
             <React.StrictMode>
                 <I18nProvider>

@@ -13,6 +13,9 @@
     --on-accent: #fff;
     --accent-soft: #e8f0fd;
     --ok: #1d7a4c;
+    --ok-soft: #e4f4ec;
+    --warn: #9a5b00;
+    --warn-soft: #fdf1dc;
     --danger: #b42318;
     --danger-soft: #fdecea;
     --danger-solid: #b42318;
@@ -37,6 +40,9 @@
         --on-accent: #0b1220;
         --accent-soft: #1b2a44;
         --ok: #5cc993;
+        --ok-soft: #15291f;
+        --warn: #f0b75c;
+        --warn-soft: #2e2413;
         --danger: #f2877d;
         --danger-soft: #331817;
         --danger-solid: #d9483b;

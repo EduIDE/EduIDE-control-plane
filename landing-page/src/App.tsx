@@ -27,6 +27,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     const [launch, setLaunch] = useState<{ request: LaunchRequest; info: LaunchInfo }>();
     const [templates, setTemplates] = useState<Template[]>();
     const [error, setError] = useState<string>();
+    const [admin, setAdmin] = useState(false);
     const link = useMemo(() => parseLaunchParams(window.location.search), []);
 
     useEffect(() => {
@@ -42,6 +43,18 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
             .catch(console.error);
         // The message language does not need to restart the request.
         // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [api]);
+
+    // The menu entry is a convenience: the service checks the role again on every admin request.
+    useEffect(() => {
+        let cancelled = false;
+        api.client
+            .GET('/admin/status')
+            .then(({ response }) => !cancelled && setAdmin(response.status === 200))
+            .catch(() => undefined);
+        return () => {
+            cancelled = true;
+        };
     }, [api]);
 
     const begin = (request: LaunchRequest, known?: Parameters<typeof buildLaunchInfo>[2]): void =>
@@ -92,7 +105,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     };
 
     return (
-        <Shell config={config} user={user} logoutUrl={logoutUrl}>
+        <Shell config={config} user={user} logoutUrl={logoutUrl} admin={admin}>
             {launch ? (
                 <Launch
                     api={api}
