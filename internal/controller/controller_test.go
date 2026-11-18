@@ -123,7 +123,7 @@ func TestColdStartCreatesInstance(t *testing.T) {
 		t.Errorf("route label: %v", route.Labels)
 	}
 	rs := route.Spec
-	if string(rs.ParentRefs[0].Name) != "gw" || string(*rs.ParentRefs[0].Namespace) != "gateway-system" || string(*rs.ParentRefs[0].SectionName) != "https" {
+	if string(rs.ParentRefs[0].Name) != "gw" || string(*rs.ParentRefs[0].Namespace) != "gateway-system" || string(*rs.ParentRefs[0].SectionName) != "https" || rs.ParentRefs[0].Port == nil || *rs.ParentRefs[0].Port != 443 {
 		t.Errorf("parent: %+v", rs.ParentRefs[0])
 	}
 	if len(rs.Hostnames) != 2 || rs.Hostnames[0] != "ide.example.org" || rs.Hostnames[1] != "webview.ide.example.org" {

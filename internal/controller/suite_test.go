@@ -162,7 +162,7 @@ func runSuite(c *rest.Config, m *testing.M) int {
 deployment: test
 namespace: ` + testNS + `
 hosts: {service: eduide.example.org, instance: ide.example.org}
-gateway: {name: gw, namespace: gateway-system, sectionName: https}
+gateway: {name: gw, namespace: gateway-system, sectionName: https, port: 443}
 oidc: {issuerURL: "https://sso.example.org", clientIDs: [landing], gatewayClientID: gateway}
 agent: {image: "example.org/agent:1"}
 workspaces: {storageClassName: fast, grace: 2s}

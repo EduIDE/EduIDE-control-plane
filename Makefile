@@ -8,7 +8,7 @@ TAG ?= dev
 ENVTEST_K8S ?= 1.37.0
 E2E_CLUSTER ?= eduide-e2e
 KUBECONFIG_E2E := $(CURDIR)/.e2e/kubeconfig
-GENERATED := config api internal/httpapi internal/agentapi clients/typescript/src charts/eduide-control-plane-crds
+GENERATED := config api internal/httpapi internal/agentapi clients/typescript/src charts/eduide-control-plane-crds charts/eduide-control-plane/files/operator-rules.yaml
 
 .PHONY: all generate verify-generate test test-go test-pool-scaler test-ts lint build images e2e e2e-down helm-lint fmt
 
@@ -20,6 +20,7 @@ generate:
 	go tool controller-gen crd paths=./api/... output:crd:artifacts:config=config/crd
 	go tool controller-gen rbac:roleName=eduide-operator paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
 	if [ -d charts/eduide-control-plane-crds/templates ]; then cp config/crd/*.yaml charts/eduide-control-plane-crds/templates/; fi
+	cp config/rbac/role.yaml charts/eduide-control-plane/files/operator-rules.yaml
 	go tool oapi-codegen -config api/openapi/oapi-codegen.yaml api/openapi/v1.yaml
 	go tool oapi-codegen -config api/agent/oapi-codegen.yaml api/agent/v1.yaml
 	cd clients/typescript && npm ci --silent && npm run --silent generate

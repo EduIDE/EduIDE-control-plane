@@ -1,45 +1,20 @@
 {{- $full := include "ecp.fullname" . }}
 {{- /* Rules equal config/rbac/role.yaml; charts/test.sh checks it. */ -}}
 {{- define "ecp.operatorRules" }}
-- apiGroups: [""]
-  resources: [persistentvolumeclaims, pods, secrets, services]
-  verbs: [create, delete, get, list, patch, update, watch]
-- apiGroups: ["", events.k8s.io]
-  resources: [events]
-  verbs: [create, patch]
-- apiGroups: [apps]
-  resources: [daemonsets]
-  verbs: [create, delete, get, list, patch, update, watch]
-- apiGroups: [coordination.k8s.io]
-  resources: [leases]
-  verbs: [create, delete, get, list, patch, update, watch]
-- apiGroups: [eduide.github.io]
-  resources: [idepools, idesessions, idetemplates]
-  verbs: [get, list, patch, update, watch]
-- apiGroups: [eduide.github.io]
-  resources: [idepools/status, idesessions/status, idetemplates/status, ideworkspaces/status]
-  verbs: [get, patch, update]
-- apiGroups: [eduide.github.io]
-  resources: [idesessions/finalizers, ideworkspaces/finalizers]
-  verbs: [update]
-- apiGroups: [eduide.github.io]
-  resources: [ideworkspaces]
-  verbs: [delete, get, list, patch, update, watch]
-- apiGroups: [gateway.networking.k8s.io]
-  resources: [httproutes]
-  verbs: [create, delete, get, list, patch, update, watch]
+{{- (.Files.Get "files/operator-rules.yaml" | fromYaml).rules | toYaml }}
 {{- end }}
 {{- range $c := list
   (dict "name" "operator" "rules" (include "ecp.operatorRules" . | fromYamlArray))
   (dict "name" "service" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idetemplates" "idepools" "idesessions" "ideworkspaces") "verbs" (list "get" "list" "watch"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions" "ideworkspaces") "verbs" (list "create" "delete"))
-    (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create"))))
+    (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "get" "delete"))))
   (dict "name" "authz" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions") "verbs" (list "list" "watch"))))
   (dict "name" "pool-scaler" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idepools") "verbs" (list "get" "list" "watch" "patch"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idepools/scale") "verbs" (list "get" "patch" "update"))
+    (dict "apiGroups" (list "eduide.github.io") "resources" (list "idetemplates") "verbs" (list "get" "list" "watch"))
     (dict "apiGroups" (list "") "resources" (list "pods" "resourcequotas") "verbs" (list "get" "list" "watch"))))
 }}
 {{- if or (ne $c.name "pool-scaler") $.Values.poolScaler.enabled }}

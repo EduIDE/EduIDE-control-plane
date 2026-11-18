@@ -219,6 +219,10 @@ func (d *deps) buildRoute(meta metav1.ObjectMeta, instance, token string) *gatew
 		sn := gatewayv1.SectionName(g.SectionName)
 		parent.SectionName = &sn
 	}
+	if g.Port != 0 {
+		gp := gatewayv1.PortNumber(g.Port)
+		parent.Port = &gp
+	}
 	prefix, root, port := "/"+instance+"/", "/", gatewayv1.PortNumber(8080)
 	return &gatewayv1.HTTPRoute{ObjectMeta: meta, Spec: gatewayv1.HTTPRouteSpec{
 		CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},
