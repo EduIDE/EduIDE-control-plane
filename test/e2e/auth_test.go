@@ -35,8 +35,8 @@ func TestGatewayAuth(t *testing.T) {
 		t.Fatalf("phase %s: %s", s.Phase, s.Message)
 	}
 
-	owner := browserLogin(t, alice, "https://"+instanceHost+"/login/")
-	other := browserLogin(t, bob, "https://"+instanceHost+"/login/")
+	owner := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
+	other := browserLogin(t, bob, "https://"+instanceHost+"/oauth2/login")
 	anon := testHTTPClient(t, false, false)
 
 	t.Run("owner", func(t *testing.T) {
@@ -119,7 +119,7 @@ func TestNetworkPolicyIsolatesSessionPods(t *testing.T) {
 	ip := pod.Status.PodIP
 
 	// Positive control 1: Envoy reaches the pod, the owner sees the IDE.
-	owner := browserLogin(t, alice, "https://"+instanceHost+"/login/")
+	owner := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
 	if status, _, _ := get(t, owner, s.URL); status != 200 {
 		t.Fatalf("through the gateway: %d", status)
 	}

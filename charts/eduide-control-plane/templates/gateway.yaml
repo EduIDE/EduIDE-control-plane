@@ -59,6 +59,9 @@ spec:
     cookieNames:
       idToken: {{ .Values.config.oidc.idTokenCookie | default "eduide-id" | quote }}
     refreshToken: true
+    # authz verifies the ID token cookie itself because ext_authz runs before oauth2 (ADR 0005);
+    # the agent strips these cookies before requests reach the IDE.
+    disableTokenEncryption: true
     scopes: [openid, profile, email]
   extAuth:
     failOpen: false

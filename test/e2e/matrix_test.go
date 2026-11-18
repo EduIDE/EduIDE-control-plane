@@ -48,7 +48,7 @@ func TestMatrix(t *testing.T) {
 				t.Errorf("warm start took %s, budget is 2s p95 (5s hard limit here)", elapsed)
 			}
 
-			hc := browserLogin(t, alice, "https://"+instanceHost+"/login/")
+			hc := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
 			resp, err := hc.Get(s.URL)
 			if err != nil {
 				t.Fatal(err)

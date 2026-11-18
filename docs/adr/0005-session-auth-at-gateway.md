@@ -88,3 +88,10 @@ The decision, per request:
 
 - Good, because it works without changing the shared EnvoyProxy.
 - Bad, because it duplicates token verification that oauth2 also does.
+## Amendment 2026-11-18: token cookies in plain text
+
+Envoy Gateway encrypts the access and ID token cookies by default with a key only Envoy knows.
+authz then sees no JWT and every request ends in a fresh login (found in the kind e2e run).
+The SecurityPolicy therefore sets `oidc.disableTokenEncryption: true`.
+The cookies stay `Secure` and `HttpOnly` and are scoped to the instance host.
+The agent strips all gateway login cookies (`eduide-id`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.

@@ -37,7 +37,7 @@ func TestIdleTimeout(t *testing.T) {
 	if s.Phase != "Ready" {
 		t.Fatalf("phase %s: %s", s.Phase, s.Message)
 	}
-	owner := browserLogin(t, alice, "https://"+instanceHost+"/login/")
+	owner := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
 
 	warned := false
 	eventually(t, 4*time.Minute, "session ended by the idle timeout", func() bool {

@@ -55,7 +55,7 @@ func TestDataReachesIDEAndStaysOutOfLogs(t *testing.T) {
 			}
 			wantHash := hex.EncodeToString(h.Sum(nil))
 
-			hc := browserLogin(t, alice, "https://"+instanceHost+"/login/")
+			hc := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
 			var ds dataState
 			eventually(t, 30*time.Second, "fake IDE has the launch data", func() bool {
 				var status int

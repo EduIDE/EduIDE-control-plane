@@ -112,6 +112,9 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	owner := ""
 	for _, raw := range tokens {
 		o, err := s.owner(ctx, v, raw)
+		if err != nil {
+			slog.DebugContext(ctx, "id token rejected", "err", err)
+		}
 		if err != nil || (owner != "" && o != owner) {
 			return s.login(h, expire), ""
 		}

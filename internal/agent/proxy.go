@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 )
 
@@ -17,6 +18,7 @@ func (a *Agent) ProxyHandler() http.Handler {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.Header.Del(TokenHeader)
+			stripAuthCookies(pr.Out.Header)
 			pr.Out.Host = pr.In.Host
 			// Rewrite drops X-Forwarded-*; keep what the gateway set so the IDE sees the public scheme and host
 			for _, h := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"} {
@@ -73,3 +75,33 @@ var bufs = sync.Pool{New: func() any { b := make([]byte, 16<<10); return &b }}
 
 func (bufPool) Get() []byte  { return *bufs.Get().(*[]byte) }
 func (bufPool) Put(b []byte) { bufs.Put(&b) }
+
+// authCookiePrefixes are the gateway's login cookies (ADR 0005). The IDE never needs them, so code
+// running in the IDE cannot read the user's tokens from requests.
+var authCookiePrefixes = []string{"eduide-id", "IdToken", "AccessToken", "BearerToken", "RefreshToken", "OauthHMAC", "OauthExpires", "OauthNonce", "CodeVerifier"}
+
+func stripAuthCookies(h http.Header) {
+	var keep []string
+	for _, line := range h.Values("Cookie") {
+		for _, c := range strings.Split(line, ";") {
+			c = strings.TrimSpace(c)
+			name, _, _ := strings.Cut(c, "=")
+			if c != "" && !hasAuthPrefix(name) {
+				keep = append(keep, c)
+			}
+		}
+	}
+	h.Del("Cookie")
+	if len(keep) > 0 {
+		h.Set("Cookie", strings.Join(keep, "; "))
+	}
+}
+
+func hasAuthPrefix(name string) bool {
+	for _, p := range authCookiePrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}

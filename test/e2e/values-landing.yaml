@@ -8,3 +8,7 @@ config:
     url: https://keycloak.e2e.test
     realm: eduide
     clientId: eduide-landing
+host: ide.e2e.test
+gateway:
+  name: eduide
+  namespace: eduide-e2e
