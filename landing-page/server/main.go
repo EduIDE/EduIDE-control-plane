@@ -1,4 +1,4 @@
-// Command server serves the built landing page, its runtime config and a health check.
+// Command server serves the built landing page, its runtime config, the legal pages and a health check.
 package main
 
 import (
@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -129,6 +130,20 @@ func newHandler(dist, cfgPath string) (http.Handler, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = w.Write(b)
 	})
+	// Operator-written legal pages sit next to config.json (a ConfigMap). A missing file is a 404, not the SPA fallback.
+	for _, name := range []string{"imprint.md", "privacy.md"} {
+		file := filepath.Join(filepath.Dir(cfgPath), name)
+		mux.HandleFunc("GET /legal/"+name, func(w http.ResponseWriter, r *http.Request) {
+			b, err := os.ReadFile(file) //nolint:gosec // fixed names next to the operator-provided config
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write(b)
+		})
+	}
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
 		if name == "" {

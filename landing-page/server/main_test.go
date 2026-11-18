@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-func setup(t *testing.T, cfg string) http.Handler {
+func setup(t *testing.T, cfg string, extra ...string) http.Handler {
 	t.Helper()
 	dir := t.TempDir()
 	dist := filepath.Join(dir, "dist")
@@ -30,6 +30,11 @@ func setup(t *testing.T, cfg string) http.Handler {
 	cfgPath := filepath.Join(dir, "config.json")
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range extra {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("# "+name), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	h, err := newHandler(dist, cfgPath)
 	if err != nil {
@@ -157,5 +162,40 @@ func TestStartReadyShutdownLines(t *testing.T) {
 func TestRequestsAreLoggedAtDebugOnly(t *testing.T) {
 	if out := runLogged(t, slog.LevelDebug); !strings.Contains(out, `"msg":"request"`) {
 		t.Errorf("no request line at debug:\n%s", out)
+	}
+}
+
+func TestLegalPages(t *testing.T) {
+	h := setup(t, `{"keycloak":{"url":"https://kc.example.org"}}`, "imprint.md")
+	tests := []struct {
+		path string
+		code int
+		body string
+	}{
+		{"/legal/imprint.md", 200, "# imprint.md"},
+		{"/legal/privacy.md", 404, ""},
+		{"/legal/config.json", 404, ""},
+		{"/legal/other.md", 404, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest("GET", tc.path, nil))
+			if rec.Code != tc.code {
+				t.Fatalf("status %d, want %d", rec.Code, tc.code)
+			}
+			if tc.code != 200 {
+				return
+			}
+			if rec.Body.String() != tc.body {
+				t.Errorf("body %q, want %q", rec.Body.String(), tc.body)
+			}
+			if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+				t.Errorf("content-type %q", ct)
+			}
+			if rec.Header().Get("Cache-Control") != "no-store" {
+				t.Errorf("cache-control %q", rec.Header().Get("Cache-Control"))
+			}
+		})
 	}
 }
