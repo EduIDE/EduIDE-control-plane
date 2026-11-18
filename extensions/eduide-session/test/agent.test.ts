@@ -116,7 +116,7 @@ test("heartbeat is throttled, force bypasses", async () => {
 });
 
 test("stop ends the loop while a poll is pending", async () => {
-  const { c, done } = await setup();
+  const { done } = await setup();
   await new Promise((r) => setTimeout(r, 50));
   await done();
 });
