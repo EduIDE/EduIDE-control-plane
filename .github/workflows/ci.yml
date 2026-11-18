@@ -112,7 +112,7 @@ jobs:
       - name: Extension eduide-session
         if: hashFiles('extensions/eduide-session/package.json') != ''
         working-directory: extensions/eduide-session
-        run: npm ci && npm audit --audit-level=high && npm run lint && npm test
+        run: npm ci && npm audit --audit-level=high && npm run lint && npm run build && npm test
 
   landing-page:
     needs: changes
