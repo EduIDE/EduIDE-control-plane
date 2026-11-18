@@ -8,6 +8,7 @@ import { type Row, toRows } from '../overview';
 import { EnvironmentRows } from './EnvironmentRows';
 import { InfoDialog, PickDialog } from './TemplateDialogs';
 import { TemplateTile } from './TemplateTile';
+import { useNow } from './useNow';
 import { useOverview } from './useOverview';
 
 interface HomeProps {
@@ -26,7 +27,8 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow }:
     const { t } = useI18n();
     const { overview, lost } = useOverview(api);
     const [dialog, setDialog] = useState<Dialogs>();
-    const rows = overview ? toRows(overview) : undefined;
+    const now = useNow();
+    const rows = overview ? toRows(overview, now) : undefined;
     const returning = (rows?.length ?? 0) > 0;
     const heading = firstName
         ? t(returning ? 'greeting.back' : 'greeting.new', { name: firstName })
@@ -37,7 +39,9 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow }:
         onLaunch(buildTileRequest(template, variantId), template);
     };
     const pick = (template: Template): void =>
-        template.variants && template.variants.length > 0 ? setDialog({ kind: 'pick', template }) : start(template);
+        template.variants && template.variants.length > 0 && template.injectableKeys.includes('TEMPLATE')
+            ? setDialog({ kind: 'pick', template })
+            : start(template);
 
     return (
         <>
@@ -57,7 +61,7 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow }:
                         {t('loading.mine')}
                     </p>
                 ) : returning ? (
-                    <EnvironmentRows rows={rows} api={api} onStart={onStartRow} />
+                    <EnvironmentRows rows={rows} api={api} onStart={onStartRow} now={now} />
                 ) : (
                     <div className='empty'>{t('empty.mine')}</div>
                 )}

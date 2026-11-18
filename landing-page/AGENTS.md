@@ -28,6 +28,6 @@ server/                  Go static server (own module, stdlib only)
 - The `display` fields are shown to the user, so they must stay non-secret.
 - Runtime config comes only from the served config.json. Nothing is baked in at build time.
 - The legal pages and the footer render before Keycloak (`main.tsx`), so they work without a login.
-- Every UI string exists in English and German in `i18n.ts`; no emojis, icons come from `lucide-react` (pinned to 0.x, 1.x dropped the `Github` icon).
+- Every UI string exists in English and German in `i18n.ts`; no emojis, icons come from `lucide-react`; the GitHub mark is an inline SVG in `components/Icons.tsx`.
 - Prettier with 4-space indent, `simple-import-sort` and `no-null` are errors, warnings are fatal.
 - Run `npm run lint`, `npm test`, `npm run build` and `cd server && go test ./...`.

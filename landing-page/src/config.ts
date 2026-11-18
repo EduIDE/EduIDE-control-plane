@@ -41,11 +41,11 @@ function parseLegalPage(name: string, raw: unknown): LegalPage {
         }
         return { url: entry?.url as string };
     }
-    const path = entry?.path;
-    if (typeof path !== 'string' || !path.startsWith('/legal/') || path.includes('..')) {
-        throw new Error(`config.json: legal.${name}.path must start with /legal/`);
+    // Only the two files the server knows, so a config can never point the page at another path.
+    if (entry?.path !== `/legal/${name}.md`) {
+        throw new Error(`config.json: legal.${name}.path must be /legal/${name}.md`);
     }
-    return { path };
+    return { path: entry.path };
 }
 
 export function parseConfig(raw: unknown): AppConfig {
@@ -53,9 +53,11 @@ export function parseConfig(raw: unknown): AppConfig {
     if (!c || typeof c.apiBaseUrl !== 'string' || !c.keycloak?.url || !c.keycloak.realm || !c.keycloak.clientId) {
         throw new Error('config.json needs apiBaseUrl and keycloak.url, keycloak.realm, keycloak.clientId');
     }
-    const github = c.footerLinks?.github?.url;
-    if (github !== undefined && !isHttpUrl(github)) {
-        throw new Error('config.json: footerLinks.github.url must be an http(s) URL');
+    for (const key of ['github', 'bugReport', 'featureRequest', 'about'] as const) {
+        const url = c.footerLinks?.[key]?.url;
+        if (url !== undefined && !isHttpUrl(url)) {
+            throw new Error(`config.json: footerLinks.${key}.url must be an http(s) URL`);
+        }
     }
     const legal = { imprint: parseLegalPage('imprint', c.legal?.imprint), privacy: parseLegalPage('privacy', c.legal?.privacy) };
     return { ...c, legal } as AppConfig;

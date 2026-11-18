@@ -42,6 +42,10 @@ Optional keys: `footerLinks` with `attribution.version` (shown as "EduIDE <versi
 
 For local development copy that file (with `legal`) to `public/config.json` (git-ignored) and run `npm run dev`. Put Markdown files for the `path` variant in `public/legal/`.
 
+## Keycloak
+
+The greeting uses the token claim `given_name` (else the first word of `name`). Both come from the `profile` client scope, so the landing page client needs that scope. Without it the page greets without a name and shows `?` in the avatar.
+
 ## Commands
 
 ```bash

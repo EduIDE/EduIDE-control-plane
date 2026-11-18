@@ -11,6 +11,7 @@ import { runLaunch } from '../runLaunch';
 import type { LaunchInfo } from '../templates';
 import { EnvironmentRows } from './EnvironmentRows';
 import { Logo } from './Icons';
+import { useNow } from './useNow';
 
 interface LaunchProps {
     api: Api;
@@ -36,7 +37,7 @@ export const Launch = ({ api, request, info, templates, onBack, onStartRow }: La
     const { t } = useI18n();
     const [state, setState] = useState<LaunchState>({ kind: 'creating' });
     const [attempt, setAttempt] = useState(0);
-    const [removed, setRemoved] = useState<string[]>([]);
+    const now = useNow();
 
     useEffect(() => {
         const controller = new AbortController();
@@ -44,33 +45,53 @@ export const Launch = ({ api, request, info, templates, onBack, onStartRow }: La
         return () => controller.abort();
     }, [api, request, attempt]);
 
+    const dropToken = (): void => {
+        try {
+            clearArtemisToken(window.sessionStorage);
+        } catch {
+            // Blocked storage holds no token either.
+        }
+    };
+
     useEffect(() => {
         if (state.kind === 'ready') {
-            try {
-                clearArtemisToken(window.sessionStorage);
-            } catch {
-                // Blocked storage holds no token either.
-            }
+            dropToken();
             window.location.replace(state.url);
         }
     }, [state]);
 
     const backButton = (
-        <button className='btn' onClick={onBack}>
+        <button
+            className='btn'
+            onClick={() => {
+                dropToken();
+                onBack();
+            }}
+        >
             <ArrowLeft aria-hidden />
             {t('back')}
         </button>
     );
 
     if (state.kind === 'failed' && state.code === 'session-limit-reached' && state.sessions) {
-        const rows = state.sessions.map(s => sessionToRow(s, templates)).filter(r => !removed.includes(r.key));
+        const rows = state.sessions.map(s => sessionToRow(s, templates, now));
         return (
             <div className='launch wide'>
                 <div className='alert danger' role='alert'>
-                    <b>{t('limit.title', { n: rows.length })}</b>
+                    <b>{rows.length === 1 ? t('limit.titleOne') : t('limit.title', { n: rows.length })}</b>
                     {t('limit.text')}
                 </div>
-                <EnvironmentRows rows={rows} api={api} onStart={onStartRow} onDeleted={row => setRemoved(r => [...r, row.key])} />
+                <EnvironmentRows
+                    rows={rows}
+                    api={api}
+                    onStart={onStartRow}
+                    now={now}
+                    // A freed slot lets the launch go through, so the Artemis flow continues without another click.
+                    onDeleted={() => {
+                        setState({ kind: 'creating' });
+                        setAttempt(a => a + 1);
+                    }}
+                />
                 <div className='buttons'>{backButton}</div>
             </div>
         );
@@ -104,7 +125,7 @@ export const Launch = ({ api, request, info, templates, onBack, onStartRow }: La
                 {STEPS.map((step, i) => (
                     <li key={step} className={i < active ? 'done' : i === active ? 'now' : undefined}>
                         <span className='dot'>{i < active && <Check aria-hidden />}</span>
-                        {t(step)}
+                        {t(i === 0 && state.kind === 'creating' ? 'launch.sending' : step)}
                     </li>
                 ))}
             </ol>

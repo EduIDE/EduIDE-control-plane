@@ -23,7 +23,7 @@ export const LegalPage = ({ route, page }: { route: LegalRoute; page: LegalConfi
                 if (!res.ok) {
                     throw new Error(`HTTP ${res.status}`);
                 }
-                setHtml(renderMarkdown(await res.text()));
+                setHtml(await renderMarkdown(await res.text()));
             })
             .catch(() => !controller.signal.aborted && setFailed(true));
         return () => controller.abort();

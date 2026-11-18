@@ -15,8 +15,8 @@ describe('legal', () => {
         expect(legalHref('privacy', { path: '/legal/privacy.md' })).toEqual({ href: '/privacy', external: false });
     });
 
-    it('renders Markdown and strips active content', () => {
-        const html = renderMarkdown('# Imprint\n\nSome *text* <script>alert(1)</script> <img src=x onerror=alert(1)>');
+    it('renders Markdown and strips active content', async () => {
+        const html = await renderMarkdown('# Imprint\n\nSome *text* <script>alert(1)</script> <img src=x onerror=alert(1)>');
         expect(html).toContain('<h1>Imprint</h1>');
         expect(html).toContain('<em>text</em>');
         expect(html).not.toContain('<script');

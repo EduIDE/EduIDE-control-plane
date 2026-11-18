@@ -27,7 +27,8 @@ export const Dialog = ({ label, onClose, children }: DialogProps): React.JSX.Ele
             const items = Array.from(ref.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
             const first = items[0];
             const last = items[items.length - 1];
-            if (e.shiftKey && document.activeElement === first) {
+            const active = document.activeElement;
+            if (e.shiftKey && (active === first || active === ref.current)) {
                 e.preventDefault();
                 last?.focus();
             } else if (!e.shiftKey && document.activeElement === last) {
@@ -43,6 +44,7 @@ export const Dialog = ({ label, onClose, children }: DialogProps): React.JSX.Ele
                 className='dialog'
                 role='dialog'
                 aria-modal='true'
+                tabIndex={-1}
                 aria-label={label}
                 ref={el => {
                     ref.current = el ?? undefined;

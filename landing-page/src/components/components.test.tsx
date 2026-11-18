@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Api } from '../api';
@@ -83,15 +83,50 @@ describe('Header', () => {
         expect(avatar.getAttribute('title')).toBe('Alex Schmidt (ga58roj)');
         expect(avatar.textContent).toBe('AS');
         fireEvent.click(avatar);
-        expect(screen.getByRole('menuitem', { name: 'Sign out' }).getAttribute('href')).toBe('https://kc.example/logout');
-        fireEvent.click(screen.getByRole('menuitemradio', { name: /Deutsch/ }));
+        expect(screen.getByRole('link', { name: 'Sign out' }).getAttribute('href')).toBe('https://kc.example/logout');
+        expect(screen.getByRole('button', { name: 'English' }).getAttribute('aria-pressed')).toBe('true');
+        fireEvent.click(screen.getByRole('button', { name: 'Deutsch' }));
         screen.getByRole('button', { name: /Konto/ });
         expect(localStorage.getItem('lang')).toBe('de');
         localStorage.clear();
     });
 });
 
+describe('Header menu', () => {
+    it('closes on Escape and on an outside click, and returns the focus to the avatar', () => {
+        render(wrap(<Header user={{ initials: 'AS', label: 'Alex' }} logoutUrl='https://kc.example/logout' />));
+        const avatar = screen.getByRole('button', { name: /Alex/ });
+        fireEvent.click(avatar);
+        fireEvent.keyDown(document, { key: 'Escape' });
+        expect(screen.queryByRole('link', { name: 'Sign out' })).toBeNull();
+        expect(document.activeElement).toBe(avatar);
+        fireEvent.click(avatar);
+        fireEvent.mouseDown(document.body);
+        expect(screen.queryByRole('link', { name: 'Sign out' })).toBeNull();
+    });
+});
+
 describe('Dialog', () => {
+    it('keeps Escape and the focus trap working after a click on plain text', () => {
+        const onClose = vi.fn();
+        render(
+            <Dialog label='Hello' onClose={onClose}>
+                <p>plain text</p>
+                <button>first</button>
+                <button>last</button>
+            </Dialog>
+        );
+        const dialog = screen.getByRole('dialog');
+        expect(dialog.getAttribute('tabindex')).toBe('-1');
+        dialog.focus();
+        expect(document.activeElement).toBe(dialog);
+        fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'last' }));
+        dialog.focus();
+        fireEvent.keyDown(dialog, { key: 'Escape' });
+        expect(onClose).toHaveBeenCalledOnce();
+    });
+
     it('focuses in, closes on Escape and returns the focus', () => {
         const onClose = vi.fn();
         const Opener = (): React.JSX.Element => (
@@ -209,7 +244,7 @@ describe('EnvironmentRows', () => {
     const api = (del: ReturnType<typeof vi.fn>): Api => ({ client: { DELETE: del } }) as unknown as Api;
 
     it('describes the lifecycle and marks files in danger red', () => {
-        render(wrap(<EnvironmentRows rows={[running, saved]} api={api(vi.fn())} onStart={vi.fn()} />));
+        render(wrap(<EnvironmentRows rows={[running, saved]} api={api(vi.fn())} onStart={vi.fn()} now={now} />));
         const first = screen.getByText('Pointer exercise').closest('.row') as HTMLElement;
         expect(within(first).getByText(/^C · temporary workspace · started 12 minutes ago$/)).toBeTruthy();
         const life = within(first).getByText(/files are deleted then/);
@@ -225,7 +260,7 @@ describe('EnvironmentRows', () => {
 
     it('starts the row through the callback', () => {
         const onStart = vi.fn();
-        render(wrap(<EnvironmentRows rows={[saved]} api={api(vi.fn())} onStart={onStart} />));
+        render(wrap(<EnvironmentRows rows={[saved]} api={api(vi.fn())} onStart={onStart} now={now} />));
         fireEvent.click(screen.getByRole('button', { name: 'Start' }));
         expect(onStart).toHaveBeenCalledWith(saved);
     });
@@ -233,7 +268,7 @@ describe('EnvironmentRows', () => {
     it('confirms before deleting, names the consequences and deletes the workspace', async () => {
         const del = vi.fn(async () => ({ response: { ok: true, status: 204 } }));
         const onDeleted = vi.fn();
-        render(wrap(<EnvironmentRows rows={[saved]} api={api(del)} onStart={vi.fn()} onDeleted={onDeleted} />));
+        render(wrap(<EnvironmentRows rows={[saved]} api={api(del)} onStart={vi.fn()} onDeleted={onDeleted} now={now} />));
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
         const dialog = screen.getByRole('dialog', { name: 'Delete Hello World?' });
         expect(dialog.textContent).toContain('deleted permanently and cannot be restored');
@@ -247,12 +282,12 @@ describe('EnvironmentRows', () => {
 
     it('warns that the IDE stops for a running item, and shows a readable error when deleting times out', async () => {
         const del = vi.fn(async () => ({ response: { ok: false, status: 500 }, error: { code: 'internal' } }));
-        render(wrap(<EnvironmentRows rows={[running]} api={api(del)} onStart={vi.fn()} />));
+        render(wrap(<EnvironmentRows rows={[running]} api={api(del)} onStart={vi.fn()} now={now} />));
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
         const dialog = screen.getByRole('dialog');
         expect(dialog.textContent).toContain('The open IDE stops.');
         fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
-        await screen.findByText('Deleting takes longer than expected. Try again in a moment.');
+        await screen.findByText('Deleting did not work. Try again in a moment.');
         expect(screen.getByRole('dialog')).toBeTruthy();
         fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
         expect(screen.queryByRole('dialog')).toBeNull();
@@ -293,6 +328,49 @@ describe('Home', () => {
         fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Start' }));
         expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17', data: { TEMPLATE: 'gradle' } }, java);
         expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('starts directly when the template does not accept TEMPLATE, even with project templates', async () => {
+        const onLaunch = vi.fn();
+        const noKey = { ...java, injectableKeys: [] };
+        render(wrap(<Home api={overview([])} templates={[noKey]} onLaunch={onLaunch} onStartRow={vi.fn()} />));
+        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
+        expect(screen.queryByRole('dialog')).toBeNull();
+        expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17' }, noKey);
+    });
+
+    it('updates ages and warning colors on a 30 second tick without new events', async () => {
+        vi.useFakeTimers();
+        try {
+            const items: Overview['items'] = [
+                {
+                    kind: 'session',
+                    title: 'Soon',
+                    template: 'java-17',
+                    running: true,
+                    stopsAt: iso(11 * 60_000),
+                    session: session({ stopsAt: iso(11 * 60_000) })
+                }
+            ];
+            const { unmount } = render(wrap(<Home api={overview(items)} templates={[]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            const life = (): HTMLElement => screen.getByText(/^Stops at/);
+            expect(life().className).not.toContain('danger');
+            screen.getByText(/started 12 minutes ago/);
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(90_000);
+            });
+            expect(life().className).toContain('danger');
+            screen.getByText(/started 13 minutes ago/);
+            const cleared = vi.getTimerCount();
+            unmount();
+            expect(vi.getTimerCount()).toBeLessThan(cleared);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('opens the info dialog from the picker', async () => {
@@ -353,6 +431,63 @@ describe('Launch', () => {
         expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
         fireEvent.click(screen.getByRole('button', { name: 'Back' }));
         expect(onBack).toHaveBeenCalledOnce();
+    });
+
+    it('restarts the launch after a delete at the limit, so the flow continues', async () => {
+        const launch = vi
+            .fn()
+            .mockResolvedValueOnce({
+                problem: { code: 'session-limit-reached', sessions: [session({ name: 'a', display: { title: 'One' } })] }
+            })
+            .mockResolvedValue({ session: session({ phase: 'Starting' }) });
+        const del = vi.fn(async () => ({ response: { ok: true, status: 204 } }));
+        const api = { launchDeps: { launch, watch: () => new Promise<void>(() => undefined) }, client: { DELETE: del } } as unknown as Api;
+        render(wrap(<Launch api={api} request={{ template: 'c' }} info={info} templates={[]} onBack={vi.fn()} onStartRow={vi.fn()} />));
+        await screen.findByText('You already have 1 environment running');
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
+        await screen.findByText('Starting your environment');
+        expect(launch).toHaveBeenCalledTimes(2);
+        expect(document.body.textContent).not.toContain('0 environments');
+    });
+
+    it('says Sending request until the session exists, then Request accepted', async () => {
+        let resolve: (v: unknown) => void = () => undefined;
+        const launch = vi.fn(() => new Promise(r => (resolve = r)));
+        render(
+            wrap(
+                <Launch
+                    api={launchApi(launch)}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        screen.getByText('Sending request');
+        expect(screen.queryByText('Request accepted')).toBeNull();
+        await act(async () => resolve({ session: session({ phase: 'Pending' }) }));
+        screen.getByText('Request accepted');
+    });
+
+    it('drops the stored Artemis token when leaving through Back', async () => {
+        sessionStorage.setItem('eduide.artemisToken', 'secret');
+        render(
+            wrap(
+                <Launch
+                    api={launchApi(async () => ({ problem: { code: 'capacity-exhausted' } }))}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        fireEvent.click(await screen.findByRole('button', { name: 'Back' }));
+        expect(sessionStorage.getItem('eduide.artemisToken')).toBeNull();
     });
 
     it('shows a readable message with Try again and Back for other failures', async () => {

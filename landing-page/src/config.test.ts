@@ -29,9 +29,12 @@ describe('parseConfig', () => {
         expect(() => parseConfig({ ...base, legal: { ...base.legal, imprint: { url: bad } } })).toThrow('legal.imprint.url');
     });
 
-    it.each(['/etc/passwd', '/legal/../config.json', 'legal/imprint.md', 7])('rejects the legal path %s', bad => {
-        expect(() => parseConfig({ ...base, legal: { ...base.legal, privacy: { path: bad } } })).toThrow('legal.privacy.path');
-    });
+    it.each(['/etc/passwd', '/legal/../config.json', 'legal/privacy.md', '/legal/imprint.md', '/legal/other.md', 7])(
+        'rejects the legal path %s',
+        bad => {
+            expect(() => parseConfig({ ...base, legal: { ...base.legal, privacy: { path: bad } } })).toThrow('legal.privacy.path');
+        }
+    );
 
     it('rejects an entry with both or neither of url and path', () => {
         const both = { url: 'https://example.org/x', path: '/legal/imprint.md' };
@@ -39,10 +42,13 @@ describe('parseConfig', () => {
         expect(() => parseConfig({ ...base, legal: { ...base.legal, imprint: {} } })).toThrow('exactly one');
     });
 
-    it('validates footerLinks.github', () => {
+    it('accepts http(s) footer links', () => {
         expect(parseConfig({ ...base, footerLinks: { github: { url: 'https://github.com/x/y' } } }).footerLinks?.github?.url).toBe(
             'https://github.com/x/y'
         );
-        expect(() => parseConfig({ ...base, footerLinks: { github: { url: 'javascript:1' } } })).toThrow('footerLinks.github');
+    });
+
+    it.each(['github', 'bugReport', 'featureRequest', 'about'])('rejects a footer link %s that is not http(s)', key => {
+        expect(() => parseConfig({ ...base, footerLinks: { [key]: { text: 't', url: 'javascript:1' } } })).toThrow(`footerLinks.${key}`);
     });
 });

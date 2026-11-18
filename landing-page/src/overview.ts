@@ -97,7 +97,7 @@ export function sessionToRow(session: Session, templates: Template[], now: numbe
     );
 }
 
-export type DeleteResult = { ok: true } | { ok: false; timeout: boolean };
+export type DeleteResult = { ok: true } | { ok: false; retry: boolean };
 
 /** Deleting a workspace stops its running session first, so one call is enough. Without a workspace the session goes. */
 export async function deleteRow(client: Api['client'], row: Row): Promise<DeleteResult> {
@@ -108,8 +108,8 @@ export async function deleteRow(client: Api['client'], row: Row): Promise<Delete
         if (response.ok || response.status === 404) {
             return { ok: true };
         }
-        return { ok: false, timeout: error?.code === 'internal' };
+        return { ok: false, retry: error?.code === 'internal' };
     } catch {
-        return { ok: false, timeout: false };
+        return { ok: false, retry: false };
     }
 }

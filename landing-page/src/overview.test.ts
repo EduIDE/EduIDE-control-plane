@@ -117,10 +117,10 @@ describe('deleteRow', () => {
     });
 
     it('reports a timeout for internal errors, a failure otherwise, and treats a missing item as deleted', async () => {
-        expect(await deleteRow(client(500, 'internal').client, row({}))).toEqual({ ok: false, timeout: true });
-        expect(await deleteRow(client(403, 'forbidden').client, row({}))).toEqual({ ok: false, timeout: false });
+        expect(await deleteRow(client(500, 'internal').client, row({}))).toEqual({ ok: false, retry: true });
+        expect(await deleteRow(client(403, 'forbidden').client, row({}))).toEqual({ ok: false, retry: false });
         expect(await deleteRow(client(404, 'not-found').client, row({}))).toEqual({ ok: true });
         const broken = { DELETE: vi.fn().mockRejectedValue(new Error('network')) } as unknown as Api['client'];
-        expect(await deleteRow(broken, row({}))).toEqual({ ok: false, timeout: false });
+        expect(await deleteRow(broken, row({}))).toEqual({ ok: false, retry: false });
     });
 });

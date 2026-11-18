@@ -14,15 +14,15 @@ interface EnvironmentRowsProps {
     api: Api;
     onStart: (row: Row) => void;
     onDeleted?: (row: Row) => void;
+    now: number;
 }
 
-export const EnvironmentRows = ({ rows, api, onStart, onDeleted }: EnvironmentRowsProps): React.JSX.Element => {
+export const EnvironmentRows = ({ rows, api, onStart, onDeleted, now }: EnvironmentRowsProps): React.JSX.Element => {
     const i18n = useI18n();
     const { t, lang } = i18n;
     const [deleting, setDeleting] = useState<Row>();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string>();
-    const now = Date.now();
 
     const close = (): void => {
         setDeleting(undefined);
@@ -37,7 +37,7 @@ export const EnvironmentRows = ({ rows, api, onStart, onDeleted }: EnvironmentRo
             close();
             onDeleted?.(row);
         } else {
-            setError(t(result.timeout ? 'delete.timeout' : 'delete.failed'));
+            setError(t(result.retry ? 'delete.retry' : 'delete.failed'));
         }
     };
 

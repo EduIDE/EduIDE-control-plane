@@ -25,6 +25,10 @@ legal:
 
 Markdown goes into the ConfigMap as `imprint.md` and `privacy.md`, and `config.json` points the page at `/legal/imprint.md` and `/legal/privacy.md`.
 
+The landing page sends a Content Security Policy that allows images only from its own origin, so logos and images in legal Markdown must be served by the page itself.
+
+Keycloak: the greeting needs the claim `given_name`, which comes from the `profile` client scope of the landing page client. Without it the page greets without a name.
+
 ## Upgrade notes
 
 `config.legal.imprintUrl` and `config.legal.privacyUrl` are removed (hard switch, the chart is experimental). Move them to `legal.imprint.url` and `legal.privacy.url`, or provide the text as `markdown`.

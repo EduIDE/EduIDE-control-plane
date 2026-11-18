@@ -545,6 +545,11 @@ section + section {
     z-index: 10;
 }
 
+/* tabindex -1: a click on plain text keeps the focus inside, so Escape and Tab still reach the dialog. */
+.dialog:focus {
+    outline: none;
+}
+
 .dialog {
     width: 100%;
     max-width: 480px;

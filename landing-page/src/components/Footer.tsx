@@ -1,8 +1,7 @@
-import { Github } from 'lucide-react';
-
 import type { AppConfig } from '../config';
 import { useI18n } from '../i18n';
 import { legalHref, type LegalRoute } from '../legal';
+import { GithubMark } from './Icons';
 
 interface FooterProps {
     footerLinks?: AppConfig['footerLinks'];
@@ -51,7 +50,7 @@ export const Footer = ({ footerLinks, legal }: FooterProps): React.JSX.Element =
                 <span className='flinks'>
                     <External link={{ url: footerLinks?.github?.url ?? GITHUB_URL }}>
                         <span className='gh'>
-                            <Github aria-hidden size={15} />
+                            <GithubMark size={15} />
                             {t('footer.github')}
                         </span>
                     </External>

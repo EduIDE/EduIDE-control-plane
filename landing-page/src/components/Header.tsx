@@ -16,6 +16,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
     const { t, lang, setLang } = useI18n();
     const [open, setOpen] = useState(false);
     const box = useRef<HTMLDivElement | undefined>(undefined);
+    const avatar = useRef<HTMLButtonElement | undefined>(undefined);
 
     useEffect(() => {
         if (!open) {
@@ -29,6 +30,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
         const onKey = (e: KeyboardEvent): void => {
             if (e.key === 'Escape') {
                 setOpen(false);
+                avatar.current?.focus();
             }
         };
         document.addEventListener('mousedown', onDown);
@@ -54,7 +56,9 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
                 >
                     <button
                         className='avatar'
-                        aria-haspopup='menu'
+                        ref={el => {
+                            avatar.current = el ?? undefined;
+                        }}
                         aria-expanded={open}
                         aria-label={user ? t('account', { label: user.label }) : t('language')}
                         title={user?.label}
@@ -63,13 +67,12 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
                         {user ? user.initials : <Languages aria-hidden />}
                     </button>
                     {open && (
-                        <div className='menu' role='menu'>
+                        <div className='menu'>
                             <div className='menu-label'>{t('language')}</div>
                             {LANGS.map(l => (
                                 <button
                                     key={l}
-                                    role='menuitemradio'
-                                    aria-checked={l === lang}
+                                    aria-pressed={l === lang}
                                     onClick={() => {
                                         setLang(l);
                                         setOpen(false);
@@ -80,7 +83,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl }: HeaderProps): Reac
                                 </button>
                             ))}
                             {logoutUrl && (
-                                <a role='menuitem' href={logoutUrl}>
+                                <a href={logoutUrl}>
                                     <LogOut aria-hidden />
                                     {t('signOut')}
                                 </a>
