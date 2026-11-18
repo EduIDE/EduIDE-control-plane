@@ -43,12 +43,14 @@ One SecurityPolicy per deployment selects the session HTTPRoutes by the label `e
 - `extAuth` over gRPC to the `authz` Deployment ([0002](0002-go-single-module-four-binaries.md), G5) with `failOpen: false`.
 
 Because ext_authz runs first, `authz` verifies the ID token cookie itself with go-oidc.
-The JWKS is cached, issuer comes from `oidc.issuerURL`, audience is the gateway client.
+The JWKS is cached and refetched at most once per 30 s per replica, so tokens with forged key ids cannot flood Keycloak; a rotated key is accepted within 30 s.
+Issuer comes from `oidc.issuerURL`, audience is the gateway client.
+The first path segment must be the same before and after unescaping and dot removal, because Envoy routes on the literal path.
 The decision, per request:
 
 | Cookies and token | Answer |
 |---|---|
-| (a) No auth cookie at all: no `eduide-id`, no `BearerToken*`, no `OauthHMAC*` | allow; the following oauth2 filter forces the login, so nothing reaches the IDE without a valid login |
+| (a) No auth cookie at all: no `eduide-id`, no `AccessToken*`, `OauthHMAC*`, `OauthExpires*`, `IdToken*` or `RefreshToken*` (Envoy Gateway names them `<Name>-<suffix>`) | allow; the following oauth2 filter forces the login, so nothing reaches the IDE without a valid login |
 | (b) ID token present but invalid or expired | 302 to the same URL and expire the auth cookies, so oauth2 starts a fresh login, silent through Keycloak SSO |
 | (c) Valid token | allow only if the first path segment is the instance id of a session in phase `Ready` whose `spec.owner` equals the configured user claim (`oidc.userClaim`); otherwise 403 |
 
