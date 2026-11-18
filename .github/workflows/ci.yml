@@ -126,8 +126,14 @@ jobs:
       - run: npm ci
       - run: npm audit --audit-level=high
       - run: npm run lint
+      - run: npm run check-client
       - run: npm run build
       - run: npm test --if-present
+      - uses: actions/setup-go@v7.1.0
+        with: {go-version-file: landing-page/server/go.mod}
+      - name: Static server
+        working-directory: landing-page/server
+        run: go vet ./... && go test -race ./...
 
   charts:
     needs: changes
