@@ -91,6 +91,17 @@ for v in "$cp"/ci/*-values.yaml; do
   echo "$mon" | grep -q 'label_values(eduide_sessions, namespace)' || fail "dashboard lacks the namespace variable"
   ok "alerts and dashboard per namespace ($v)"
 
+  # Admin API (U16): the service may read events and quotas, the scaler may write events, the config carries the role and the scaler interval.
+  svc=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules')
+  echo "$svc" | grep -q '"events.k8s.io"' && echo "$svc" | grep -q '"resourcequotas"' || fail "service Role lacks events or resourcequotas ($v)"
+  [ "$(echo "$svc" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | sort | join(",")')" = "list,watch" ] || fail "service may do more than list and watch events"
+  scl=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-pool-scaler") | .rules')
+  [ "$(echo "$scl" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | join(",")')" = "create" ] || fail "pool-scaler Role must only create events"
+  cfg=$(echo "$out" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]')
+  echo "$cfg" | grep -q 'rolePath: realm_access.roles' || fail "oidc.admin is not rendered ($v)"
+  echo "$cfg" | grep -q 'scalerInterval: 30s' || fail "scalerInterval is not rendered with the pool scaler ($v)"
+  ok "admin API rules and config ($v)"
+
   # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
   total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
   [ "$total" -lt 150 ] || fail "memory requests are ${total}Mi, limit is 150Mi"

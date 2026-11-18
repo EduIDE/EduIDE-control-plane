@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	eventsv1 "k8s.io/api/events/v1"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -22,7 +23,16 @@ type Hub struct {
 	mu     sync.Mutex
 	subs   map[string]map[chan struct{}]struct{}
 	starts *startStats
+	now    func() time.Time
+	// emptySince is when a pool was first seen empty (U16); the admin status warns on it.
+	emptySince map[string]time.Time
 }
+
+// adminKey is the subscription key of the admin streams; it never collides with an owner hash either.
+const adminKey = "**"
+
+// adminEventGap is the shortest time between two events of an admin stream (U16).
+var adminEventGap = 5 * time.Second
 
 // templatesKey is the subscription key of the template stream; owner hashes are hex, so it never collides.
 const templatesKey = "*"
@@ -31,7 +41,7 @@ const templatesKey = "*"
 var templateEventGap = 5 * time.Second
 
 func NewHub() *Hub {
-	return &Hub{subs: map[string]map[chan struct{}]struct{}{}, starts: newStartStats()}
+	return &Hub{subs: map[string]map[chan struct{}]struct{}{}, starts: newStartStats(), now: time.Now, emptySince: map[string]time.Time{}}
 }
 
 func (h *Hub) subscribe(ownerHash string) (<-chan struct{}, func()) {
@@ -68,18 +78,43 @@ func (h *Hub) onEvent(obj any) {
 	if t, ok := obj.(toolscache.DeletedFinalStateUnknown); ok {
 		obj = t.Obj
 	}
+	h.Notify(adminKey)
 	switch o := obj.(type) {
 	case *v1alpha1.IDESession:
 		h.Notify(v1alpha1.OwnerHash(o.Spec.Owner))
 	case *v1alpha1.IDEWorkspace:
 		h.Notify(v1alpha1.OwnerHash(o.Spec.Owner))
-	case *v1alpha1.IDETemplate, *v1alpha1.IDEPool:
+	case *v1alpha1.IDETemplate:
+		h.Notify(templatesKey)
+	case *v1alpha1.IDEPool:
+		h.trackEmpty(o)
 		h.Notify(templatesKey)
 	}
 }
 
+// trackEmpty remembers since when a pool has no idle ready instance although it should have one.
+func (h *Hub) trackEmpty(p *v1alpha1.IDEPool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !poolEmpty(p) {
+		delete(h.emptySince, p.Name)
+	} else if _, ok := h.emptySince[p.Name]; !ok {
+		h.emptySince[p.Name] = h.now()
+	}
+}
+
+func (h *Hub) poolEmptySince(name string) (time.Time, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	t, ok := h.emptySince[name]
+	return t, ok
+}
+
 // onSessionStart records the start duration when a session becomes Ready (old is nil for the first sight of a session).
 func (h *Hub) onSessionStart(old, cur *v1alpha1.IDESession) {
+	if old == nil || old.Status.Phase != v1alpha1.SessionFailed {
+		h.starts.recordFailure(cur, h.now())
+	}
 	if old != nil && old.Status.Phase == v1alpha1.SessionReady && old.Status.Timestamps.Ready != nil {
 		return
 	}
@@ -115,6 +150,17 @@ func (h *Hub) Register(ctx context.Context, c cache.Cache) error {
 		}
 	}
 	return nil
+}
+
+// RegisterEvents wakes the admin streams on Kubernetes events (scaler decisions, session warnings).
+// It is called only when the admin API is on, because it starts an informer for events.
+func (h *Hub) RegisterEvents(ctx context.Context, c cache.Cache) error {
+	inf, err := c.GetInformer(ctx, &eventsv1.Event{})
+	if err != nil {
+		return err
+	}
+	_, err = inf.AddEventHandler(toolscache.ResourceEventHandlerFuncs{AddFunc: func(any) { h.Notify(adminKey) }})
+	return err
 }
 
 // snapshot returns the current payload of a stream and whether the stream ends after it.

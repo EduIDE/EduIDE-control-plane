@@ -4,6 +4,29 @@
  */
 
 export interface paths {
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Public health summary (U17). No token needed. The answer is cached for 15 s (`Cache-Control: public, max-age=15`)
+         *     and rate limited per client IP. `overall` is the worst of `parts`. `starting` is `slow` when the p95 start time of
+         *     the last 15 min exceeds 60 s and `down` when more than half of the starts of the last 5 min failed (at least 4 starts).
+         *     `signIn` is `down` when the OIDC discovery of the issuer is unreachable. `workspaces` is `down` when a workspace is
+         *     Pending for more than 2 min. `warm` is true while the pool of the template has an idle ready instance.
+         */
+        get: operations["getPublicStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates": {
         parameters: {
             query?: never;
@@ -172,6 +195,181 @@ export interface paths {
         };
         /** @description Server-Sent Events. Event `overview` with a full Overview as data on every change, starting with the current state. */
         get: operations["watchOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Admin panel status page (U16). Counts and warnings come from the service cache and Kubernetes events.
+         *     `stats` and `nodePools` are present only when `admin.prometheusURL` is configured and answers.
+         */
+        get: operations["getAdminStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/status/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Server-Sent Events. Event `status` with an AdminStatus as data. Starts with the current state,
+         *     sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+         */
+        get: operations["watchAdminStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminPools"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description All sessions of all users, ordered by name. Users appear only as `ownerHash`. */
+        get: operations["listAdminSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/sessions/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Server-Sent Events. Event `sessions` with the first page of the list (default limit, no filters) as data.
+         *     Starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+         */
+        get: operations["watchAdminSessions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/sessions/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        get: operations["getAdminSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminWorkspaces"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/problems": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminProblems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listAdminTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAdminConfig"];
         put?: never;
         post?: never;
         delete?: never;
@@ -352,6 +550,366 @@ export interface components {
         Overview: {
             items: components["schemas"]["OverviewItem"][];
         };
+        AdminWarning: {
+            /** @enum {string} */
+            code: "pool-empty" | "capacity-pressure" | "scaler-silent";
+            pool?: string;
+            /** Format: date-time */
+            since?: string;
+            message: string;
+        };
+        NodePoolPressure: {
+            name: string;
+            pressure: boolean;
+        };
+        TimePoint: {
+            /** Format: date-time */
+            time: string;
+            /** Format: double */
+            value: number;
+        };
+        AdminStartP95: {
+            template: string;
+            persistence: components["schemas"]["PersistenceMode"];
+            /** Format: double */
+            seconds: number;
+        };
+        AdminStartsBucket: {
+            /** Format: date-time */
+            time: string;
+            /** Format: double */
+            warm: number;
+            /** Format: double */
+            cold: number;
+            /** Format: double */
+            failed: number;
+        };
+        AdminLatencyPoint: {
+            /** Format: date-time */
+            time: string;
+            /** Format: double */
+            p50?: number;
+            /** Format: double */
+            p95?: number;
+        };
+        AdminPoolFree: {
+            pool: string;
+            points: components["schemas"]["TimePoint"][];
+        };
+        /** @description Figures from Prometheus. Every field is absent when its query fails. */
+        AdminStats: {
+            startsLastHour?: number;
+            failuresLastHour?: number;
+            startP95?: components["schemas"]["AdminStartP95"][];
+            /**
+             * Format: double
+             * @description CPU requests over allocatable CPU of the cluster (kube-state-metrics).
+             */
+            cpuRequestsPercent?: number;
+            nodeCount?: number;
+            /** @description Last 12 h, one bucket per hour. */
+            startsPerHour?: components["schemas"]["AdminStartsBucket"][];
+            /** @description Last 12 h, one point per hour. */
+            startLatency?: components["schemas"]["AdminLatencyPoint"][];
+            /** @description Idle ready instances per pool, last 6 h. */
+            poolFree?: components["schemas"]["AdminPoolFree"][];
+        };
+        AdminStatus: {
+            /** @description Sessions in phase Ready. */
+            runningSessions: number;
+            /** @description Sessions in phase Pending or Starting. */
+            startingSessions: number;
+            idleReady: number;
+            /** @description Sum over all pools of the idle target (the larger of minIdle and targetIdle, at most maxInstances). */
+            idleTarget: number;
+            /** @description A pool reports condition CapacityPressure. */
+            capacityPressure: boolean;
+            /** @description Pressure per node pool, from eduide_capacity_pressure. Only with Prometheus. */
+            nodePools?: components["schemas"]["NodePoolPressure"][];
+            warnings: components["schemas"]["AdminWarning"][];
+            stats?: components["schemas"]["AdminStats"];
+        };
+        /** @description A scaler decision, from the Kubernetes event the pool scaler writes on the IDEPool. */
+        AdminDecision: {
+            /** Format: date-time */
+            time: string;
+            pool: string;
+            /** @enum {string} */
+            reason: "ScaledUp" | "ScaledDown" | "Held";
+            message: string;
+        };
+        AdminPool: {
+            name: string;
+            template: string;
+            minIdle: number;
+            targetIdle: number;
+            maxInstances: number;
+            idleReady: number;
+            idleStarting: number;
+            claimed: number;
+            /**
+             * @description empty: a target above 0 and no idle ready instance. pressure: the pool has condition CapacityPressure.
+             * @enum {string}
+             */
+            state: "ok" | "empty" | "pressure";
+            /**
+             * Format: date-time
+             * @description Since when the pool is empty, as far as this service replica has seen it.
+             */
+            emptySince?: string;
+            capacityPressure: boolean;
+            /** @description Annotation eduide.github.io/scaler-mode of the pool, if set. */
+            scalerMode?: string;
+            lastDecision?: components["schemas"]["AdminDecision"];
+        };
+        AdminPools: {
+            pools: components["schemas"]["AdminPool"][];
+            /** @description Newest first. */
+            decisions: components["schemas"]["AdminDecision"][];
+        };
+        AdminSession: {
+            name: string;
+            template: string;
+            persistence: components["schemas"]["PersistenceMode"];
+            workspace?: string;
+            phase: components["schemas"]["SessionPhase"];
+            /** @description warm-ready, warm-starting or cold, see Session.startStrategy. */
+            startStrategy?: string;
+            errorCode?: string;
+            message?: string;
+            /** @description From display.title, else derived from display.source (G15). */
+            title?: string;
+            /** @description Pseudonymous owner id (G17): the label-safe hash of the owner name. */
+            ownerHash: string;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            readyAt?: string;
+            /** Format: date-time */
+            lastActivity?: string;
+            /** Format: date-time */
+            stopsAt?: string;
+            /** @description idle or max, see Session.stopReason. */
+            stopReason?: string;
+            /** @description Trace id of the launch, from the traceparent annotation. */
+            traceId?: string;
+            /** @description Link to the trace, built from admin.links. */
+            traceUrl?: string;
+        };
+        AdminSessionTimestamps: {
+            /** Format: date-time */
+            claimed?: string;
+            /** Format: date-time */
+            podReady?: string;
+            /** Format: date-time */
+            agentReady?: string;
+            /** Format: date-time */
+            ready?: string;
+        };
+        AdminSessionDetail: components["schemas"]["AdminSession"] & {
+            timestamps?: components["schemas"]["AdminSessionTimestamps"];
+            /** @description Names of the keys in the launch data Secret. Never the values (G18). */
+            launchDataKeys: string[];
+        };
+        AdminSessionList: {
+            items: components["schemas"]["AdminSession"][];
+            /** @description Sessions that match the filters, over all pages. */
+            total: number;
+            /** @description Cursor of the next page; absent on the last page. */
+            next?: string;
+        };
+        /**
+         * @description inUse: a session runs on it. expired: phase Expired. expiring: deletion within 3 days. active: all others.
+         * @enum {string}
+         */
+        AdminWorkspaceState: "active" | "inUse" | "expiring" | "expired";
+        AdminWorkspace: {
+            name: string;
+            template: string;
+            phase: components["schemas"]["WorkspacePhase"];
+            state: components["schemas"]["AdminWorkspaceState"];
+            title?: string;
+            ownerHash: string;
+            /**
+             * Format: int64
+             * @description Requested volume size. No usage is measured.
+             */
+            requestedBytes: number;
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: date-time */
+            lastUsed?: string;
+            /** Format: date-time */
+            expiresAt?: string;
+            /** Format: date-time */
+            deletesAt?: string;
+        };
+        StorageQuota: {
+            /** Format: int64 */
+            hardBytes: number;
+            /** Format: int64 */
+            usedBytes: number;
+        };
+        AdminWorkspaceSummary: {
+            total: number;
+            inUse: number;
+            expiringIn3Days: number;
+            expired: number;
+            /** Format: int64 */
+            requestedBytes: number;
+            quota?: components["schemas"]["StorageQuota"];
+        };
+        AdminWorkspaceList: {
+            items: components["schemas"]["AdminWorkspace"][];
+            /** @description Workspaces that match the filters, over all pages. */
+            total: number;
+            next?: string;
+            summary: components["schemas"]["AdminWorkspaceSummary"];
+        };
+        AdminCodeCount: {
+            code: string;
+            count: number;
+        };
+        AdminProblemEvent: {
+            /** Format: date-time */
+            time: string;
+            reason: string;
+            /** @description Stable error code, when the event carries one. */
+            code?: string;
+            message: string;
+            session?: string;
+            template?: string;
+            ownerHash?: string;
+            traceId?: string;
+            traceUrl?: string;
+        };
+        AdminProblems: {
+            /** @enum {string} */
+            since: "1h" | "24h";
+            /** @description Failed sessions per code over `since`. Only with Prometheus. */
+            codes?: components["schemas"]["AdminCodeCount"][];
+            /** @description Warning events on sessions within the last hour, newest first. */
+            events: components["schemas"]["AdminProblemEvent"][];
+        };
+        AdminInjectableKey: {
+            name: string;
+            /** @enum {string} */
+            source: "Request" | "UserName" | "UserEmail";
+            /** @enum {string} */
+            format?: "HTTPSURL" | "Token" | "Enum" | "Pattern";
+            maxLength?: number;
+            required: boolean;
+        };
+        AdminTimeouts: {
+            idleSeconds: number;
+            warningSeconds: number;
+            maxSeconds: number;
+        };
+        AdminPoolRef: {
+            name: string;
+            minIdle: number;
+            targetIdle: number;
+            maxInstances: number;
+        };
+        AdminTemplate: {
+            name: string;
+            displayName: string;
+            logoUrl?: string;
+            image: string;
+            imageDigest?: string;
+            imageVersion?: string;
+            persistence: components["schemas"]["PersistenceMode"][];
+            defaultPersistence: components["schemas"]["PersistenceMode"];
+            injectableKeys: components["schemas"]["AdminInjectableKey"][];
+            timeouts: components["schemas"]["AdminTimeouts"];
+            /** @description Retention override of the template. Absent: the deployment default applies. */
+            retentionSeconds?: number;
+            variants?: components["schemas"]["TemplateVariant"][];
+            includes?: components["schemas"]["TemplateIncludeGroup"][];
+            startEstimate?: components["schemas"]["StartEstimates"];
+            pool?: components["schemas"]["AdminPoolRef"];
+        };
+        /** @description Effective config of the deployment. Contains no secret, token or user data. */
+        AdminConfig: {
+            deployment: string;
+            namespace: string;
+            hosts: {
+                service: string;
+                instance: string;
+                webview: string;
+            };
+            oidc: {
+                issuerURL: string;
+                clientIDs: string[];
+                userClaim: string;
+                adminRolePath: string;
+                adminRole: string;
+            };
+            sessionsPerUser: number;
+            allowedHosts: string[];
+            workspaces: {
+                retentionSeconds: number;
+                graceSeconds: number;
+                /** Format: int64 */
+                defaultSizeBytes: number;
+                storageClassName?: string;
+            };
+            capacity: {
+                exhaustedAfterSeconds: number;
+            };
+            rateLimit: {
+                launchesPerMinute: number;
+                adminPerMinute: number;
+            };
+            launchDataMaxBytes: number;
+            titleStripPattern?: string;
+            telemetry: {
+                otlpEndpoint?: string;
+                userIdsHashed: boolean;
+            };
+            admin: {
+                prometheusConfigured: boolean;
+                prometheusURL?: string;
+                links?: {
+                    grafana?: string;
+                    jaeger?: string;
+                    traceUrlTemplate?: string;
+                };
+            };
+        };
+        /**
+         * @description `signIn` and `workspaces` are only ok or down.
+         * @enum {string}
+         */
+        ServiceLevel: "ok" | "slow" | "down";
+        PublicStatusParts: {
+            signIn: components["schemas"]["ServiceLevel"];
+            starting: components["schemas"]["ServiceLevel"];
+            workspaces: components["schemas"]["ServiceLevel"];
+        };
+        PublicSeconds: {
+            /** Format: double */
+            seconds: number;
+        };
+        PublicStartEstimate: {
+            none?: components["schemas"]["PublicSeconds"];
+            volume?: components["schemas"]["PublicSeconds"];
+        };
+        PublicTemplate: {
+            name: string;
+            displayName: string;
+            logoUrl?: string;
+            startEstimate: components["schemas"]["PublicStartEstimate"];
+            /** @description The pool of the template has an idle ready instance. */
+            warm: boolean;
+        };
+        PublicStatus: {
+            overall: components["schemas"]["ServiceLevel"];
+            /** Format: date-time */
+            updatedAt: string;
+            parts: components["schemas"]["PublicStatusParts"];
+            templates: components["schemas"]["PublicTemplate"][];
+        };
     };
     responses: {
         /** @description Error as RFC 9457 Problem Details. */
@@ -366,6 +924,9 @@ export interface components {
     };
     parameters: {
         Name: string;
+        /** @description `next` of the previous page. */
+        Cursor: string;
+        Limit: number;
     };
     requestBodies: never;
     headers: never;
@@ -373,6 +934,28 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    getPublicStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Status. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicStatus"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     listTemplates: {
         parameters: {
             query?: never;
@@ -652,6 +1235,238 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAdminStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Status. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminStatus"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    watchAdminStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listAdminPools: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pools with the latest scaler decisions (Kubernetes events, kept for about one hour). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminPools"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listAdminSessions: {
+        parameters: {
+            query?: {
+                template?: string;
+                persistence?: components["schemas"]["PersistenceMode"];
+                phase?: components["schemas"]["SessionPhase"];
+                /** @description Case-insensitive part of the session name or title. */
+                q?: string;
+                /** @description `next` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of sessions. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSessionList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    watchAdminSessions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAdminSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session with timeline and the key names of its launch data (never the values, G18). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSessionDetail"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listAdminWorkspaces: {
+        parameters: {
+            query?: {
+                template?: string;
+                state?: components["schemas"]["AdminWorkspaceState"];
+                /** @description Case-insensitive part of the workspace name, title or owner hash. */
+                q?: string;
+                /** @description `next` of the previous page. */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of workspaces and the summary over all workspaces. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminWorkspaceList"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAdminProblems: {
+        parameters: {
+            query?: {
+                /** @description Window of the counts per code. Default 24h. */
+                since?: "1h" | "24h";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Failure counts per code and the Warning events of the last hour. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminProblems"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listAdminTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Templates with timeouts, retention, key formats, image digest and pool. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminTemplate"][];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    getAdminConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Effective deployment config without secrets, and the links of the admin panel. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminConfig"];
                 };
             };
             default: components["responses"]["Problem"];

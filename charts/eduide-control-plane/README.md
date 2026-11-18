@@ -22,8 +22,13 @@ helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-cont
 | SecurityPolicy | OIDC login plus ext_authz (gRPC, `failOpen: false`) on all HTTPRoutes labelled `eduide.github.io/route: session` |
 | HTTPRoutes | `/api/` on `config.hosts.service`; a catch-all `/` with label `eduide.github.io/route=session` on the instance and webview host (unknown ids and the OIDC callback, ADR 0005) |
 | NetworkPolicies | Session pods: default deny, :8080 from Envoy, :8081 from the operator (ADR 0019) |
-| Pool scaler (optional) | Deployment, config, RBAC for `idepools` and `idepools/scale` |
+| Pool scaler (optional) | Deployment, config, RBAC for `idepools` and `idepools/scale`, and `create` on `events.k8s.io` events (decision events on the pool) |
 | PodMonitor, PrometheusRule, dashboard (optional) | Based on `docs/contracts/metrics.md` |
+
+Admin API (U16, optional): `config.oidc.admin` (`rolePath`, `role`) turns it on, `config.admin` sets `prometheusURL`, `links` and `rateLimitPerMinute`.
+The service Role then needs `list` and `watch` on `events.k8s.io` events and `get` and `list` on `resourcequotas`; the chart always grants them.
+With the pool scaler enabled the chart sets `config.admin.scalerInterval` from `poolScaler.config.interval` (default 30s).
+The public status (`GET /api/v1/status`, U17) needs no values.
 
 No Ingress is rendered.
 The memory requests of operator, service and authz add up to 128 MiB.

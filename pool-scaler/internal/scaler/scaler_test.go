@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -321,5 +322,75 @@ func TestDecisionModelErrorsAreCounted(t *testing.T) {
 	// decision model has nothing to export.
 	if n := testutil.CollectAndCount(s.Metrics.DesiredIdle); n != 2 {
 		t.Fatalf("desired_idle series %d, want 2", n)
+	}
+}
+
+type fakeEvents struct{ got []string }
+
+func (f *fakeEvents) Event(_ context.Context, a *model.App, reason, msg string) error {
+	f.got = append(f.got, a.Name+" "+reason+" "+msg)
+	return nil
+}
+
+func TestEventsForChangesAndHeldChanges(t *testing.T) {
+	ten := 10
+	up, down, held := app("up"), app("down"), app("held")
+	down.TargetIdle, held.TargetIdle = &ten, &ten
+	k := &fakeKube{apps: map[string]*model.App{"up": up, "down": down}, patches: map[string]int{}}
+	rates := &fakeProm{rates: map[string]float64{"up": 0.1, "down": 0}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, rates)
+	ev := &fakeEvents{}
+	s.Events = ev
+	if err := s.Tick(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]string{}
+	for _, e := range ev.got {
+		have[e[:strings.Index(e, " ")]] = e
+	}
+	if !strings.Contains(have["up"], "ScaledUp strategy reactive: targetIdle 0 to 8") || !strings.Contains(have["down"], "ScaledDown strategy reactive: targetIdle 10 to") || len(ev.got) != 2 {
+		t.Fatalf("events %v", ev.got)
+	}
+
+	// A wish a guardrail withholds is reported as Held, once.
+	k = &fakeKube{apps: map[string]*model.App{"held": held}, patches: map[string]int{}}
+	s = newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"held": 0}})
+	s.Cfg.Guardrails.Hysteresis = 100
+	s.guard = guardrail.NewGuard(s.Cfg.Guardrails)
+	ev = &fakeEvents{}
+	s.Events = ev
+	for i := 0; i < 3; i++ {
+		_ = s.Tick(context.Background(), now.Add(time.Duration(i)*time.Minute))
+	}
+	if len(k.patches) != 0 || len(ev.got) != 1 || !strings.Contains(ev.got[0], "held Held strategy reactive wants targetIdle") || !strings.Contains(ev.got[0], "within hysteresis") {
+		t.Fatalf("patches %v events %v", k.patches, ev.got)
+	}
+}
+
+func TestNoEventsInShadowModeOrWithoutRecorder(t *testing.T) {
+	k := &fakeKube{apps: map[string]*model.App{"a": app("a")}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeShadow, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"a": 0.1}})
+	ev := &fakeEvents{}
+	s.Events = ev
+	_ = s.Tick(context.Background(), now)
+	if len(ev.got) != 0 {
+		t.Fatalf("shadow wrote %v", ev.got)
+	}
+	s = newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"a": 0.1}})
+	if err := s.Tick(context.Background(), now); err != nil { // Events is nil
+		t.Fatal(err)
+	}
+}
+
+func TestOverrideWritesAnEvent(t *testing.T) {
+	a := app("a")
+	a.Annotations = map[string]string{guardrail.AnnotationOverride: "5"}
+	k := &fakeKube{apps: map[string]*model.App{"a": a}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"a": 0}})
+	ev := &fakeEvents{}
+	s.Events = ev
+	_ = s.Tick(context.Background(), now)
+	if len(ev.got) != 1 || !strings.Contains(ev.got[0], "ScaledUp strategy override") {
+		t.Fatalf("%v", ev.got)
 	}
 }

@@ -138,3 +138,33 @@ func TestMiddleware(t *testing.T) {
 		t.Fatalf("%d %+v", rec.Code, got)
 	}
 }
+
+func TestAdminRoles(t *testing.T) {
+	is := newIssuer(t)
+	claims := map[string]any{
+		"preferred_username": "alice", "aud": "landing", "groups": []string{"eduide-admin"},
+		"realm_access":    map[string]any{"roles": []string{"eduide-admin", "offline_access"}},
+		"resource_access": map[string]any{"landing": map[string]any{"roles": []string{"client-admin"}}},
+	}
+	for name, tt := range map[string]struct {
+		admin *config.AdminRole
+		want  []string
+	}{
+		"no admin config":              {nil, nil},
+		"realm role":                   {&config.AdminRole{RolePath: "realm_access.roles", Role: "eduide-admin"}, []string{"eduide-admin", "offline_access"}},
+		"client role":                  {&config.AdminRole{RolePath: "resource_access.landing.roles", Role: "client-admin"}, []string{"client-admin"}},
+		"client not in token":          {&config.AdminRole{RolePath: "resource_access.other.roles", Role: "x"}, nil},
+		"groups claim is no role path": {&config.AdminRole{RolePath: "groups", Role: "eduide-admin"}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := NewOIDC(config.OIDC{IssuerURL: is.srv.URL, ClientIDs: []string{"landing"}, UserClaim: "preferred_username", Admin: tt.admin})
+			u, err := v.Verify(context.Background(), is.token(t, is.srv.URL, claims))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(u.Roles) != len(tt.want) {
+				t.Fatalf("roles %v, want %v", u.Roles, tt.want)
+			}
+		})
+	}
+}

@@ -9,7 +9,11 @@ var (
 		Name:    "eduide_session_startup_seconds",
 		Help:    "Time from IDESession creation until phase Ready or Failed.",
 		Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 10, 20, 30, 45, 60, 120},
-	}, []string{"template", "strategy", "result"})
+	}, []string{"template", "strategy", "result", "persistence"})
+	SessionFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "eduide_session_failures_total",
+		Help: "Sessions that ended in phase Failed by template and stable error code.",
+	}, []string{"template", "code"})
 	SessionPhase = prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "eduide_session_phase_seconds",
 		Help:    "Duration of one phase of the start path.",
@@ -75,7 +79,7 @@ var (
 
 // OperatorMetrics, ServiceMetrics and AuthzMetrics are registered by the binaries.
 var (
-	OperatorMetrics = []prometheus.Collector{SessionStartup, SessionPhase, ClaimTotal, PoolInstances, PoolTargetIdle, CapacityPressure, CapacityEvictions, Sessions, Workspaces, AgentRequests}
+	OperatorMetrics = []prometheus.Collector{SessionStartup, SessionFailures, SessionPhase, ClaimTotal, PoolInstances, PoolTargetIdle, CapacityPressure, CapacityEvictions, Sessions, Workspaces, AgentRequests}
 	ServiceMetrics  = []prometheus.Collector{APIRequests, APIRequestDuration, Launches}
 	AuthzMetrics    = []prometheus.Collector{AuthzDecisions, AuthzDuration}
 )

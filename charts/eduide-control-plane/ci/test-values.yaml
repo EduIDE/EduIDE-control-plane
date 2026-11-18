@@ -11,6 +11,9 @@ config:
     issuerURL: https://auth.example.org/realms/eduide
     clientIDs: [eduide-landing]
     gatewayClientID: eduide-gateway
+    admin: {rolePath: realm_access.roles, role: eduide-admin}
+  admin:
+    links: {jaeger: "https://jaeger.example.org"}
 oidc:
   clientSecretName: eduide-gateway-oidc
 templates:

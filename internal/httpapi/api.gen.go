@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"compress/flate"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -19,6 +20,156 @@ import (
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/oapi-codegen/runtime"
 )
+
+// Defines values for AdminDecisionReason.
+const (
+	Held       AdminDecisionReason = "Held"
+	ScaledDown AdminDecisionReason = "ScaledDown"
+	ScaledUp   AdminDecisionReason = "ScaledUp"
+)
+
+// Valid indicates whether the value is a known member of the AdminDecisionReason enum.
+func (e AdminDecisionReason) Valid() bool {
+	switch e {
+	case Held:
+		return true
+	case ScaledDown:
+		return true
+	case ScaledUp:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminInjectableKeyFormat.
+const (
+	Enum     AdminInjectableKeyFormat = "Enum"
+	HTTPSURL AdminInjectableKeyFormat = "HTTPSURL"
+	Pattern  AdminInjectableKeyFormat = "Pattern"
+	Token    AdminInjectableKeyFormat = "Token"
+)
+
+// Valid indicates whether the value is a known member of the AdminInjectableKeyFormat enum.
+func (e AdminInjectableKeyFormat) Valid() bool {
+	switch e {
+	case Enum:
+		return true
+	case HTTPSURL:
+		return true
+	case Pattern:
+		return true
+	case Token:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminInjectableKeySource.
+const (
+	Request   AdminInjectableKeySource = "Request"
+	UserEmail AdminInjectableKeySource = "UserEmail"
+	UserName  AdminInjectableKeySource = "UserName"
+)
+
+// Valid indicates whether the value is a known member of the AdminInjectableKeySource enum.
+func (e AdminInjectableKeySource) Valid() bool {
+	switch e {
+	case Request:
+		return true
+	case UserEmail:
+		return true
+	case UserName:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminPoolState.
+const (
+	AdminPoolStateEmpty    AdminPoolState = "empty"
+	AdminPoolStateOk       AdminPoolState = "ok"
+	AdminPoolStatePressure AdminPoolState = "pressure"
+)
+
+// Valid indicates whether the value is a known member of the AdminPoolState enum.
+func (e AdminPoolState) Valid() bool {
+	switch e {
+	case AdminPoolStateEmpty:
+		return true
+	case AdminPoolStateOk:
+		return true
+	case AdminPoolStatePressure:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminProblemsSince.
+const (
+	AdminProblemsSinceN1h  AdminProblemsSince = "1h"
+	AdminProblemsSinceN24h AdminProblemsSince = "24h"
+)
+
+// Valid indicates whether the value is a known member of the AdminProblemsSince enum.
+func (e AdminProblemsSince) Valid() bool {
+	switch e {
+	case AdminProblemsSinceN1h:
+		return true
+	case AdminProblemsSinceN24h:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminWarningCode.
+const (
+	CapacityPressure AdminWarningCode = "capacity-pressure"
+	PoolEmpty        AdminWarningCode = "pool-empty"
+	ScalerSilent     AdminWarningCode = "scaler-silent"
+)
+
+// Valid indicates whether the value is a known member of the AdminWarningCode enum.
+func (e AdminWarningCode) Valid() bool {
+	switch e {
+	case CapacityPressure:
+		return true
+	case PoolEmpty:
+		return true
+	case ScalerSilent:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for AdminWorkspaceState.
+const (
+	AdminWorkspaceStateActive   AdminWorkspaceState = "active"
+	AdminWorkspaceStateExpired  AdminWorkspaceState = "expired"
+	AdminWorkspaceStateExpiring AdminWorkspaceState = "expiring"
+	AdminWorkspaceStateInUse    AdminWorkspaceState = "inUse"
+)
+
+// Valid indicates whether the value is a known member of the AdminWorkspaceState enum.
+func (e AdminWorkspaceState) Valid() bool {
+	switch e {
+	case AdminWorkspaceStateActive:
+		return true
+	case AdminWorkspaceStateExpired:
+		return true
+	case AdminWorkspaceStateExpiring:
+		return true
+	case AdminWorkspaceStateInUse:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for OverviewItemKind.
 const (
@@ -107,6 +258,27 @@ func (e ProblemCode) Valid() bool {
 	case WorkspaceInUse:
 		return true
 	case WorkspaceNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ServiceLevel.
+const (
+	ServiceLevelDown ServiceLevel = "down"
+	ServiceLevelOk   ServiceLevel = "ok"
+	ServiceLevelSlow ServiceLevel = "slow"
+)
+
+// Valid indicates whether the value is a known member of the ServiceLevel enum.
+func (e ServiceLevel) Valid() bool {
+	switch e {
+	case ServiceLevelDown:
+		return true
+	case ServiceLevelOk:
+		return true
+	case ServiceLevelSlow:
 		return true
 	default:
 		return false
@@ -215,6 +387,416 @@ func (e WorkspacePhase) Valid() bool {
 	}
 }
 
+// Defines values for GetAdminProblemsParamsSince.
+const (
+	GetAdminProblemsParamsSinceN1h  GetAdminProblemsParamsSince = "1h"
+	GetAdminProblemsParamsSinceN24h GetAdminProblemsParamsSince = "24h"
+)
+
+// Valid indicates whether the value is a known member of the GetAdminProblemsParamsSince enum.
+func (e GetAdminProblemsParamsSince) Valid() bool {
+	switch e {
+	case GetAdminProblemsParamsSinceN1h:
+		return true
+	case GetAdminProblemsParamsSinceN24h:
+		return true
+	default:
+		return false
+	}
+}
+
+// AdminCodeCount defines model for AdminCodeCount.
+type AdminCodeCount struct {
+	Code  string `json:"code"`
+	Count int    `json:"count"`
+}
+
+// AdminConfig Effective config of the deployment. Contains no secret, token or user data.
+type AdminConfig struct {
+	Admin struct {
+		Links *struct {
+			Grafana          *string `json:"grafana,omitempty"`
+			Jaeger           *string `json:"jaeger,omitempty"`
+			TraceUrlTemplate *string `json:"traceUrlTemplate,omitempty"`
+		} `json:"links,omitempty"`
+		PrometheusConfigured bool    `json:"prometheusConfigured"`
+		PrometheusURL        *string `json:"prometheusURL,omitempty"`
+	} `json:"admin"`
+	AllowedHosts []string `json:"allowedHosts"`
+	Capacity     struct {
+		ExhaustedAfterSeconds int `json:"exhaustedAfterSeconds"`
+	} `json:"capacity"`
+	Deployment string `json:"deployment"`
+	Hosts      struct {
+		Instance string `json:"instance"`
+		Service  string `json:"service"`
+		Webview  string `json:"webview"`
+	} `json:"hosts"`
+	LaunchDataMaxBytes int    `json:"launchDataMaxBytes"`
+	Namespace          string `json:"namespace"`
+	Oidc               struct {
+		AdminRole     string   `json:"adminRole"`
+		AdminRolePath string   `json:"adminRolePath"`
+		ClientIDs     []string `json:"clientIDs"`
+		IssuerURL     string   `json:"issuerURL"`
+		UserClaim     string   `json:"userClaim"`
+	} `json:"oidc"`
+	RateLimit struct {
+		AdminPerMinute    int `json:"adminPerMinute"`
+		LaunchesPerMinute int `json:"launchesPerMinute"`
+	} `json:"rateLimit"`
+	SessionsPerUser int `json:"sessionsPerUser"`
+	Telemetry       struct {
+		OtlpEndpoint  *string `json:"otlpEndpoint,omitempty"`
+		UserIdsHashed bool    `json:"userIdsHashed"`
+	} `json:"telemetry"`
+	TitleStripPattern *string `json:"titleStripPattern,omitempty"`
+	Workspaces        struct {
+		DefaultSizeBytes int64   `json:"defaultSizeBytes"`
+		GraceSeconds     int     `json:"graceSeconds"`
+		RetentionSeconds int     `json:"retentionSeconds"`
+		StorageClassName *string `json:"storageClassName,omitempty"`
+	} `json:"workspaces"`
+}
+
+// AdminDecision A scaler decision, from the Kubernetes event the pool scaler writes on the IDEPool.
+type AdminDecision struct {
+	Message string              `json:"message"`
+	Pool    string              `json:"pool"`
+	Reason  AdminDecisionReason `json:"reason"`
+	Time    time.Time           `json:"time"`
+}
+
+// AdminDecisionReason defines model for AdminDecision.Reason.
+type AdminDecisionReason string
+
+// AdminInjectableKey defines model for AdminInjectableKey.
+type AdminInjectableKey struct {
+	Format    *AdminInjectableKeyFormat `json:"format,omitempty"`
+	MaxLength *int                      `json:"maxLength,omitempty"`
+	Name      string                    `json:"name"`
+	Required  bool                      `json:"required"`
+	Source    AdminInjectableKeySource  `json:"source"`
+}
+
+// AdminInjectableKeyFormat defines model for AdminInjectableKey.Format.
+type AdminInjectableKeyFormat string
+
+// AdminInjectableKeySource defines model for AdminInjectableKey.Source.
+type AdminInjectableKeySource string
+
+// AdminLatencyPoint defines model for AdminLatencyPoint.
+type AdminLatencyPoint struct {
+	P50  *float64  `json:"p50,omitempty"`
+	P95  *float64  `json:"p95,omitempty"`
+	Time time.Time `json:"time"`
+}
+
+// AdminPool defines model for AdminPool.
+type AdminPool struct {
+	CapacityPressure bool `json:"capacityPressure"`
+	Claimed          int  `json:"claimed"`
+
+	// EmptySince Since when the pool is empty, as far as this service replica has seen it.
+	EmptySince   *time.Time `json:"emptySince,omitempty"`
+	IdleReady    int        `json:"idleReady"`
+	IdleStarting int        `json:"idleStarting"`
+
+	// LastDecision A scaler decision, from the Kubernetes event the pool scaler writes on the IDEPool.
+	LastDecision *AdminDecision `json:"lastDecision,omitempty"`
+	MaxInstances int            `json:"maxInstances"`
+	MinIdle      int            `json:"minIdle"`
+	Name         string         `json:"name"`
+
+	// ScalerMode Annotation eduide.github.io/scaler-mode of the pool, if set.
+	ScalerMode *string `json:"scalerMode,omitempty"`
+
+	// State empty: a target above 0 and no idle ready instance. pressure: the pool has condition CapacityPressure.
+	State      AdminPoolState `json:"state"`
+	TargetIdle int            `json:"targetIdle"`
+	Template   string         `json:"template"`
+}
+
+// AdminPoolState empty: a target above 0 and no idle ready instance. pressure: the pool has condition CapacityPressure.
+type AdminPoolState string
+
+// AdminPoolFree defines model for AdminPoolFree.
+type AdminPoolFree struct {
+	Points []TimePoint `json:"points"`
+	Pool   string      `json:"pool"`
+}
+
+// AdminPoolRef defines model for AdminPoolRef.
+type AdminPoolRef struct {
+	MaxInstances int    `json:"maxInstances"`
+	MinIdle      int    `json:"minIdle"`
+	Name         string `json:"name"`
+	TargetIdle   int    `json:"targetIdle"`
+}
+
+// AdminPools defines model for AdminPools.
+type AdminPools struct {
+	// Decisions Newest first.
+	Decisions []AdminDecision `json:"decisions"`
+	Pools     []AdminPool     `json:"pools"`
+}
+
+// AdminProblemEvent defines model for AdminProblemEvent.
+type AdminProblemEvent struct {
+	// Code Stable error code, when the event carries one.
+	Code      *string   `json:"code,omitempty"`
+	Message   string    `json:"message"`
+	OwnerHash *string   `json:"ownerHash,omitempty"`
+	Reason    string    `json:"reason"`
+	Session   *string   `json:"session,omitempty"`
+	Template  *string   `json:"template,omitempty"`
+	Time      time.Time `json:"time"`
+	TraceId   *string   `json:"traceId,omitempty"`
+	TraceUrl  *string   `json:"traceUrl,omitempty"`
+}
+
+// AdminProblems defines model for AdminProblems.
+type AdminProblems struct {
+	// Codes Failed sessions per code over `since`. Only with Prometheus.
+	Codes *[]AdminCodeCount `json:"codes,omitempty"`
+
+	// Events Warning events on sessions within the last hour, newest first.
+	Events []AdminProblemEvent `json:"events"`
+	Since  AdminProblemsSince  `json:"since"`
+}
+
+// AdminProblemsSince defines model for AdminProblems.Since.
+type AdminProblemsSince string
+
+// AdminSession defines model for AdminSession.
+type AdminSession struct {
+	CreatedAt    time.Time  `json:"createdAt"`
+	ErrorCode    *string    `json:"errorCode,omitempty"`
+	LastActivity *time.Time `json:"lastActivity,omitempty"`
+	Message      *string    `json:"message,omitempty"`
+	Name         string     `json:"name"`
+
+	// OwnerHash Pseudonymous owner id (G17): the label-safe hash of the owner name.
+	OwnerHash   string          `json:"ownerHash"`
+	Persistence PersistenceMode `json:"persistence"`
+	Phase       SessionPhase    `json:"phase"`
+	ReadyAt     *time.Time      `json:"readyAt,omitempty"`
+
+	// StartStrategy warm-ready, warm-starting or cold, see Session.startStrategy.
+	StartStrategy *string `json:"startStrategy,omitempty"`
+
+	// StopReason idle or max, see Session.stopReason.
+	StopReason *string    `json:"stopReason,omitempty"`
+	StopsAt    *time.Time `json:"stopsAt,omitempty"`
+	Template   string     `json:"template"`
+
+	// Title From display.title, else derived from display.source (G15).
+	Title *string `json:"title,omitempty"`
+
+	// TraceId Trace id of the launch, from the traceparent annotation.
+	TraceId *string `json:"traceId,omitempty"`
+
+	// TraceUrl Link to the trace, built from admin.links.
+	TraceUrl  *string `json:"traceUrl,omitempty"`
+	Workspace *string `json:"workspace,omitempty"`
+}
+
+// AdminSessionDetail defines model for AdminSessionDetail.
+type AdminSessionDetail struct {
+	CreatedAt    time.Time  `json:"createdAt"`
+	ErrorCode    *string    `json:"errorCode,omitempty"`
+	LastActivity *time.Time `json:"lastActivity,omitempty"`
+
+	// LaunchDataKeys Names of the keys in the launch data Secret. Never the values (G18).
+	LaunchDataKeys []string `json:"launchDataKeys"`
+	Message        *string  `json:"message,omitempty"`
+	Name           string   `json:"name"`
+
+	// OwnerHash Pseudonymous owner id (G17): the label-safe hash of the owner name.
+	OwnerHash   string          `json:"ownerHash"`
+	Persistence PersistenceMode `json:"persistence"`
+	Phase       SessionPhase    `json:"phase"`
+	ReadyAt     *time.Time      `json:"readyAt,omitempty"`
+
+	// StartStrategy warm-ready, warm-starting or cold, see Session.startStrategy.
+	StartStrategy *string `json:"startStrategy,omitempty"`
+
+	// StopReason idle or max, see Session.stopReason.
+	StopReason *string                 `json:"stopReason,omitempty"`
+	StopsAt    *time.Time              `json:"stopsAt,omitempty"`
+	Template   string                  `json:"template"`
+	Timestamps *AdminSessionTimestamps `json:"timestamps,omitempty"`
+
+	// Title From display.title, else derived from display.source (G15).
+	Title *string `json:"title,omitempty"`
+
+	// TraceId Trace id of the launch, from the traceparent annotation.
+	TraceId *string `json:"traceId,omitempty"`
+
+	// TraceUrl Link to the trace, built from admin.links.
+	TraceUrl  *string `json:"traceUrl,omitempty"`
+	Workspace *string `json:"workspace,omitempty"`
+}
+
+// AdminSessionList defines model for AdminSessionList.
+type AdminSessionList struct {
+	Items []AdminSession `json:"items"`
+
+	// Next Cursor of the next page; absent on the last page.
+	Next *string `json:"next,omitempty"`
+
+	// Total Sessions that match the filters, over all pages.
+	Total int `json:"total"`
+}
+
+// AdminSessionTimestamps defines model for AdminSessionTimestamps.
+type AdminSessionTimestamps struct {
+	AgentReady *time.Time `json:"agentReady,omitempty"`
+	Claimed    *time.Time `json:"claimed,omitempty"`
+	PodReady   *time.Time `json:"podReady,omitempty"`
+	Ready      *time.Time `json:"ready,omitempty"`
+}
+
+// AdminStartP95 defines model for AdminStartP95.
+type AdminStartP95 struct {
+	Persistence PersistenceMode `json:"persistence"`
+	Seconds     float64         `json:"seconds"`
+	Template    string          `json:"template"`
+}
+
+// AdminStartsBucket defines model for AdminStartsBucket.
+type AdminStartsBucket struct {
+	Cold   float64   `json:"cold"`
+	Failed float64   `json:"failed"`
+	Time   time.Time `json:"time"`
+	Warm   float64   `json:"warm"`
+}
+
+// AdminStats Figures from Prometheus. Every field is absent when its query fails.
+type AdminStats struct {
+	// CpuRequestsPercent CPU requests over allocatable CPU of the cluster (kube-state-metrics).
+	CpuRequestsPercent *float64 `json:"cpuRequestsPercent,omitempty"`
+	FailuresLastHour   *int     `json:"failuresLastHour,omitempty"`
+	NodeCount          *int     `json:"nodeCount,omitempty"`
+
+	// PoolFree Idle ready instances per pool, last 6 h.
+	PoolFree *[]AdminPoolFree `json:"poolFree,omitempty"`
+
+	// StartLatency Last 12 h, one point per hour.
+	StartLatency   *[]AdminLatencyPoint `json:"startLatency,omitempty"`
+	StartP95       *[]AdminStartP95     `json:"startP95,omitempty"`
+	StartsLastHour *int                 `json:"startsLastHour,omitempty"`
+
+	// StartsPerHour Last 12 h, one bucket per hour.
+	StartsPerHour *[]AdminStartsBucket `json:"startsPerHour,omitempty"`
+}
+
+// AdminStatus defines model for AdminStatus.
+type AdminStatus struct {
+	// CapacityPressure A pool reports condition CapacityPressure.
+	CapacityPressure bool `json:"capacityPressure"`
+	IdleReady        int  `json:"idleReady"`
+
+	// IdleTarget Sum over all pools of the idle target (the larger of minIdle and targetIdle, at most maxInstances).
+	IdleTarget int `json:"idleTarget"`
+
+	// NodePools Pressure per node pool, from eduide_capacity_pressure. Only with Prometheus.
+	NodePools *[]NodePoolPressure `json:"nodePools,omitempty"`
+
+	// RunningSessions Sessions in phase Ready.
+	RunningSessions int `json:"runningSessions"`
+
+	// StartingSessions Sessions in phase Pending or Starting.
+	StartingSessions int `json:"startingSessions"`
+
+	// Stats Figures from Prometheus. Every field is absent when its query fails.
+	Stats    *AdminStats    `json:"stats,omitempty"`
+	Warnings []AdminWarning `json:"warnings"`
+}
+
+// AdminTemplate defines model for AdminTemplate.
+type AdminTemplate struct {
+	DefaultPersistence PersistenceMode         `json:"defaultPersistence"`
+	DisplayName        string                  `json:"displayName"`
+	Image              string                  `json:"image"`
+	ImageDigest        *string                 `json:"imageDigest,omitempty"`
+	ImageVersion       *string                 `json:"imageVersion,omitempty"`
+	Includes           *[]TemplateIncludeGroup `json:"includes,omitempty"`
+	InjectableKeys     []AdminInjectableKey    `json:"injectableKeys"`
+	LogoUrl            *string                 `json:"logoUrl,omitempty"`
+	Name               string                  `json:"name"`
+	Persistence        []PersistenceMode       `json:"persistence"`
+	Pool               *AdminPoolRef           `json:"pool,omitempty"`
+
+	// RetentionSeconds Retention override of the template. Absent: the deployment default applies.
+	RetentionSeconds *int `json:"retentionSeconds,omitempty"`
+
+	// StartEstimate Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent.
+	StartEstimate *StartEstimates    `json:"startEstimate,omitempty"`
+	Timeouts      AdminTimeouts      `json:"timeouts"`
+	Variants      *[]TemplateVariant `json:"variants,omitempty"`
+}
+
+// AdminTimeouts defines model for AdminTimeouts.
+type AdminTimeouts struct {
+	IdleSeconds    int `json:"idleSeconds"`
+	MaxSeconds     int `json:"maxSeconds"`
+	WarningSeconds int `json:"warningSeconds"`
+}
+
+// AdminWarning defines model for AdminWarning.
+type AdminWarning struct {
+	Code    AdminWarningCode `json:"code"`
+	Message string           `json:"message"`
+	Pool    *string          `json:"pool,omitempty"`
+	Since   *time.Time       `json:"since,omitempty"`
+}
+
+// AdminWarningCode defines model for AdminWarning.Code.
+type AdminWarningCode string
+
+// AdminWorkspace defines model for AdminWorkspace.
+type AdminWorkspace struct {
+	CreatedAt time.Time      `json:"createdAt"`
+	DeletesAt *time.Time     `json:"deletesAt,omitempty"`
+	ExpiresAt *time.Time     `json:"expiresAt,omitempty"`
+	LastUsed  *time.Time     `json:"lastUsed,omitempty"`
+	Name      string         `json:"name"`
+	OwnerHash string         `json:"ownerHash"`
+	Phase     WorkspacePhase `json:"phase"`
+
+	// RequestedBytes Requested volume size. No usage is measured.
+	RequestedBytes int64 `json:"requestedBytes"`
+
+	// State inUse: a session runs on it. expired: phase Expired. expiring: deletion within 3 days. active: all others.
+	State    AdminWorkspaceState `json:"state"`
+	Template string              `json:"template"`
+	Title    *string             `json:"title,omitempty"`
+}
+
+// AdminWorkspaceList defines model for AdminWorkspaceList.
+type AdminWorkspaceList struct {
+	Items   []AdminWorkspace      `json:"items"`
+	Next    *string               `json:"next,omitempty"`
+	Summary AdminWorkspaceSummary `json:"summary"`
+
+	// Total Workspaces that match the filters, over all pages.
+	Total int `json:"total"`
+}
+
+// AdminWorkspaceState inUse: a session runs on it. expired: phase Expired. expiring: deletion within 3 days. active: all others.
+type AdminWorkspaceState string
+
+// AdminWorkspaceSummary defines model for AdminWorkspaceSummary.
+type AdminWorkspaceSummary struct {
+	Expired         int           `json:"expired"`
+	ExpiringIn3Days int           `json:"expiringIn3Days"`
+	InUse           int           `json:"inUse"`
+	Quota           *StorageQuota `json:"quota,omitempty"`
+	RequestedBytes  int64         `json:"requestedBytes"`
+	Total           int           `json:"total"`
+}
+
 // Display defines model for Display.
 type Display struct {
 	Source *string `json:"source,omitempty"`
@@ -231,6 +813,12 @@ type LaunchRequest struct {
 
 	// Workspace Start on this existing workspace of the user. Implies persistence volume.
 	Workspace *string `json:"workspace,omitempty"`
+}
+
+// NodePoolPressure defines model for NodePoolPressure.
+type NodePoolPressure struct {
+	Name     string `json:"name"`
+	Pressure bool   `json:"pressure"`
 }
 
 // Overview defines model for Overview.
@@ -283,6 +871,52 @@ type Problem struct {
 
 // ProblemCode Stable machine-readable code. New codes may be added within v1.
 type ProblemCode string
+
+// PublicSeconds defines model for PublicSeconds.
+type PublicSeconds struct {
+	Seconds float64 `json:"seconds"`
+}
+
+// PublicStartEstimate defines model for PublicStartEstimate.
+type PublicStartEstimate struct {
+	None   *PublicSeconds `json:"none,omitempty"`
+	Volume *PublicSeconds `json:"volume,omitempty"`
+}
+
+// PublicStatus defines model for PublicStatus.
+type PublicStatus struct {
+	// Overall `signIn` and `workspaces` are only ok or down.
+	Overall   ServiceLevel      `json:"overall"`
+	Parts     PublicStatusParts `json:"parts"`
+	Templates []PublicTemplate  `json:"templates"`
+	UpdatedAt time.Time         `json:"updatedAt"`
+}
+
+// PublicStatusParts defines model for PublicStatusParts.
+type PublicStatusParts struct {
+	// SignIn `signIn` and `workspaces` are only ok or down.
+	SignIn ServiceLevel `json:"signIn"`
+
+	// Starting `signIn` and `workspaces` are only ok or down.
+	Starting ServiceLevel `json:"starting"`
+
+	// Workspaces `signIn` and `workspaces` are only ok or down.
+	Workspaces ServiceLevel `json:"workspaces"`
+}
+
+// PublicTemplate defines model for PublicTemplate.
+type PublicTemplate struct {
+	DisplayName   string              `json:"displayName"`
+	LogoUrl       *string             `json:"logoUrl,omitempty"`
+	Name          string              `json:"name"`
+	StartEstimate PublicStartEstimate `json:"startEstimate"`
+
+	// Warm The pool of the template has an idle ready instance.
+	Warm bool `json:"warm"`
+}
+
+// ServiceLevel `signIn` and `workspaces` are only ok or down.
+type ServiceLevel string
 
 // Session defines model for Session.
 type Session struct {
@@ -339,6 +973,12 @@ type StartEstimates struct {
 	Volume *StartEstimate `json:"volume,omitempty"`
 }
 
+// StorageQuota defines model for StorageQuota.
+type StorageQuota struct {
+	HardBytes int64 `json:"hardBytes"`
+	UsedBytes int64 `json:"usedBytes"`
+}
+
 // Template defines model for Template.
 type Template struct {
 	DefaultPersistence PersistenceMode `json:"defaultPersistence"`
@@ -386,6 +1026,12 @@ type TemplateVariant struct {
 	Name        string  `json:"name"`
 }
 
+// TimePoint defines model for TimePoint.
+type TimePoint struct {
+	Time  time.Time `json:"time"`
+	Value float64   `json:"value"`
+}
+
 // Workspace defines model for Workspace.
 type Workspace struct {
 	CreatedAt time.Time `json:"createdAt"`
@@ -410,8 +1056,50 @@ type WorkspaceRequest struct {
 	Template string   `json:"template"`
 }
 
+// Cursor defines model for Cursor.
+type Cursor = string
+
+// Limit defines model for Limit.
+type Limit = int
+
 // Name defines model for Name.
 type Name = string
+
+// GetAdminProblemsParams defines parameters for GetAdminProblems.
+type GetAdminProblemsParams struct {
+	// Since Window of the counts per code. Default 24h.
+	Since *GetAdminProblemsParamsSince `form:"since,omitempty" json:"since,omitempty"`
+}
+
+// GetAdminProblemsParamsSince defines parameters for GetAdminProblems.
+type GetAdminProblemsParamsSince string
+
+// ListAdminSessionsParams defines parameters for ListAdminSessions.
+type ListAdminSessionsParams struct {
+	Template    *string          `form:"template,omitempty" json:"template,omitempty"`
+	Persistence *PersistenceMode `form:"persistence,omitempty" json:"persistence,omitempty"`
+	Phase       *SessionPhase    `form:"phase,omitempty" json:"phase,omitempty"`
+
+	// Q Case-insensitive part of the session name or title.
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Cursor `next` of the previous page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// ListAdminWorkspacesParams defines parameters for ListAdminWorkspaces.
+type ListAdminWorkspacesParams struct {
+	Template *string              `form:"template,omitempty" json:"template,omitempty"`
+	State    *AdminWorkspaceState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Q Case-insensitive part of the workspace name, title or owner hash.
+	Q *string `form:"q,omitempty" json:"q,omitempty"`
+
+	// Cursor `next` of the previous page.
+	Cursor *Cursor `form:"cursor,omitempty" json:"cursor,omitempty"`
+	Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+}
 
 // LaunchSessionParams defines parameters for LaunchSession.
 type LaunchSessionParams struct {
@@ -426,6 +1114,36 @@ type CreateWorkspaceJSONRequestBody = WorkspaceRequest
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+
+	// (GET /admin/config)
+	GetAdminConfig(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/pools)
+	ListAdminPools(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/problems)
+	GetAdminProblems(w http.ResponseWriter, r *http.Request, params GetAdminProblemsParams)
+
+	// (GET /admin/sessions)
+	ListAdminSessions(w http.ResponseWriter, r *http.Request, params ListAdminSessionsParams)
+
+	// (GET /admin/sessions/events)
+	WatchAdminSessions(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/sessions/{name})
+	GetAdminSession(w http.ResponseWriter, r *http.Request, name Name)
+
+	// (GET /admin/status)
+	GetAdminStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/status/events)
+	WatchAdminStatus(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/templates)
+	ListAdminTemplates(w http.ResponseWriter, r *http.Request)
+
+	// (GET /admin/workspaces)
+	ListAdminWorkspaces(w http.ResponseWriter, r *http.Request, params ListAdminWorkspacesParams)
 
 	// (GET /me/overview)
 	GetOverview(w http.ResponseWriter, r *http.Request)
@@ -447,6 +1165,9 @@ type ServerInterface interface {
 
 	// (GET /sessions/{name}/events)
 	WatchSession(w http.ResponseWriter, r *http.Request, name Name)
+
+	// (GET /status)
+	GetPublicStatus(w http.ResponseWriter, r *http.Request)
 
 	// (GET /templates)
 	ListTemplates(w http.ResponseWriter, r *http.Request)
@@ -472,6 +1193,332 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAdminConfig operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminConfig(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminConfig(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAdminPools operation middleware
+func (siw *ServerInterfaceWrapper) ListAdminPools(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAdminPools(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminProblems operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminProblems(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminProblemsParams
+
+	// ------------- Optional query parameter "since" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "since", r.URL.Query(), &params.Since, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "since"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "since", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminProblems(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAdminSessions operation middleware
+func (siw *ServerInterfaceWrapper) ListAdminSessions(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdminSessionsParams
+
+	// ------------- Optional query parameter "template" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "template", r.URL.Query(), &params.Template, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "template"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "template", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "persistence" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "persistence", r.URL.Query(), &params.Persistence, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "persistence"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "persistence", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "phase" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "phase", r.URL.Query(), &params.Phase, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "phase"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "phase", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAdminSessions(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WatchAdminSessions operation middleware
+func (siw *ServerInterfaceWrapper) WatchAdminSessions(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WatchAdminSessions(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminSession operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminSession(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "name" -------------
+	var name Name
+
+	err = runtime.BindStyledParameterWithOptions("simple", "name", r.PathValue("name"), &name, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminSession(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// WatchAdminStatus operation middleware
+func (siw *ServerInterfaceWrapper) WatchAdminStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WatchAdminStatus(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAdminTemplates operation middleware
+func (siw *ServerInterfaceWrapper) ListAdminTemplates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAdminTemplates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// ListAdminWorkspaces operation middleware
+func (siw *ServerInterfaceWrapper) ListAdminWorkspaces(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListAdminWorkspacesParams
+
+	// ------------- Optional query parameter "template" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "template", r.URL.Query(), &params.Template, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "template"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "template", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "state" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "state", r.URL.Query(), &params.State, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "state"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "state", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "q" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "q", r.URL.Query(), &params.Q, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "q"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "q", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", r.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "cursor"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "cursor", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.ListAdminWorkspaces(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetOverview operation middleware
 func (siw *ServerInterfaceWrapper) GetOverview(w http.ResponseWriter, r *http.Request) {
@@ -625,6 +1672,20 @@ func (siw *ServerInterfaceWrapper) WatchSession(w http.ResponseWriter, r *http.R
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.WatchSession(w, r, name)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetPublicStatus operation middleware
+func (siw *ServerInterfaceWrapper) GetPublicStatus(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPublicStatus(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -836,6 +1897,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 		ErrorHandlerFunc:   options.ErrorHandlerFunc,
 	}
 
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/status", wrapper.GetPublicStatus)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/templates", wrapper.ListTemplates)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/templates/events", wrapper.WatchTemplates)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions", wrapper.ListSessions)
@@ -848,6 +1910,16 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/workspaces/{name}", wrapper.DeleteWorkspace)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me/overview", wrapper.GetOverview)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/me/overview/events", wrapper.WatchOverview)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/status", wrapper.GetAdminStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/status/events", wrapper.WatchAdminStatus)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/pools", wrapper.ListAdminPools)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/sessions", wrapper.ListAdminSessions)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/sessions/events", wrapper.WatchAdminSessions)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/sessions/{name}", wrapper.GetAdminSession)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/workspaces", wrapper.ListAdminWorkspaces)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/problems", wrapper.GetAdminProblems)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/templates", wrapper.ListAdminTemplates)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/config", wrapper.GetAdminConfig)
 
 	return m
 }
@@ -857,63 +1929,126 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
+	"hgsOKXm1/7JOc+FYnDbYrJkXMfq/AwA=",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

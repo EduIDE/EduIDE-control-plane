@@ -96,4 +96,7 @@ Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egres
 `/etc/eduide/config.yaml` from a ConfigMap, read with `--config`. Typed in [internal/config/config.go](../../internal/config/config.go).
 Required: `deployment`, `namespace` (or `POD_NAMESPACE`), `hosts.service`, `hosts.instance`, `gateway.name`, `oidc.issuerURL`, `oidc.gatewayClientID`, `oidc.clientIDs`, `agent.image`.
 Defaults: `sessionsPerUser` 3, `oidc.userClaim` `preferred_username`, `oidc.idTokenCookie` `eduide-id`, `workspaces.retention` 14 days, `workspaces.grace` 24 h, `capacity.exhaustedAfter` 45 s, `rateLimit.launchesPerMinute` 10.
+Optional admin API (U16, [0021](../adr/0021-admin-api-and-public-status.md)): `oidc.admin` (`rolePath` `realm_access.roles` or `resource_access.<client>.roles`, and `role`; no default, absent means the admin API is off), `admin.prometheusURL`, `admin.links` (`grafana`, `jaeger`, `traceUrlTemplate`), `admin.rateLimitPerMinute` (default 60) and `admin.scalerInterval` (set by the chart when the pool scaler runs).
+The admin API reads the objects above through the cache and shows owners only as the owner hash label value, launch data only as the key names of the data Secret.
+The pool scaler writes Events on `IDEPool` (reporting controller `pool-scaler`, reasons `ScaledUp`, `ScaledDown`, `Held`); the service reads them.
 Secrets come from files or environment variables, never from flags or the config file.

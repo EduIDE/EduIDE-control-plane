@@ -2,7 +2,9 @@ package kubernetes
 
 import (
 	"context"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -14,6 +16,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/budget"
+	"github.com/EduIDE/EduIDE-control-plane/pool-scaler/internal/model"
 )
 
 func pool(name, template string, annotations map[string]any) *unstructured.Unstructured {
@@ -104,5 +107,35 @@ func TestQuotaAndNodeRest(t *testing.T) {
 	n := NodeRest([]corev1.Node{node("a", false), node("b", true)}, []corev1.Pod{running("a"), running("b"), running("elsewhere")})
 	if n.CPU != 14 || n.Memory != 28*(1<<30) {
 		t.Fatalf("%+v", n)
+	}
+}
+
+func TestEventIsWrittenOnThePool(t *testing.T) {
+	p := provider()
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	p.Now = func() time.Time { return now }
+	pool := &model.App{Name: "java-17", UID: "uid-1"}
+	if err := p.Event(context.Background(), pool, "ScaledUp", "strategy reactive: targetIdle 2 to 4: x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Event(context.Background(), pool, "Held", strings.Repeat("x", 2000)); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := p.Core.EventsV1().Events("ns").List(context.Background(), metav1.ListOptions{})
+	if err != nil || len(evs.Items) != 2 {
+		t.Fatalf("%v %v", err, evs)
+	}
+	e := evs.Items[0]
+	if e.Reason != "ScaledUp" {
+		e = evs.Items[1]
+	}
+	if e.ReportingController != EventController || e.Reason != "ScaledUp" || e.Regarding.Kind != "IDEPool" || e.Regarding.Name != "java-17" || string(e.Regarding.UID) != "uid-1" ||
+		e.Regarding.APIVersion != "eduide.github.io/v1alpha1" || e.Type != "Normal" || !e.EventTime.Time.Equal(now) || e.Action == "" {
+		t.Fatalf("%+v", e)
+	}
+	for _, x := range evs.Items {
+		if len(x.Note) > 1024 {
+			t.Fatalf("note of %d bytes", len(x.Note))
+		}
 	}
 }

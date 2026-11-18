@@ -34,6 +34,18 @@ type Prom interface {
 	ClaimHistory(ctx context.Context, from, to time.Time) (map[string][]strategy.Sample, error)
 }
 
+// Recorder writes the scaler's decisions as Kubernetes events on the pool (U16). Events are optional.
+type Recorder interface {
+	Event(ctx context.Context, pool *model.App, reason, message string) error
+}
+
+// Event reasons of the scaler.
+const (
+	ReasonScaledUp   = "ScaledUp"
+	ReasonScaledDown = "ScaledDown"
+	ReasonHeld       = "Held"
+)
+
 // EventSource is a calendar or Artemis.
 type EventSource interface {
 	Name() string
@@ -47,6 +59,7 @@ type Scaler struct {
 	Kube    Kube
 	Prom    Prom // nil without Prometheus
 	Sources []EventSource
+	Events  Recorder // nil writes no events
 	Metrics *metrics.Metrics
 	Log     *slog.Logger
 
@@ -60,6 +73,8 @@ type Scaler struct {
 	lastValid  map[string]int
 	pastEvents map[string]model.Event
 	lastActive string
+	// lastHeld is the message of the last Held event per pool, so a steady hold is reported once.
+	lastHeld map[string]string
 	// templates maps pool to spec.templateRef: Prometheus knows templates only.
 	templates map[string]string
 }
@@ -78,6 +93,7 @@ func New(cfg config.Config, loc *time.Location, kube Kube, m *metrics.Metrics, l
 		guard:      guardrail.NewGuard(cfg.Guardrails),
 		lastValid:  map[string]int{},
 		pastEvents: map[string]model.Event{},
+		lastHeld:   map[string]string{},
 	}
 	m.Mode.WithLabelValues(string(cfg.Mode)).Set(1)
 	return s
@@ -143,6 +159,9 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 	var demands []budget.Demand
 	modes := map[string]config.Mode{}
 	wishes := map[string]string{}
+	sources := map[string]string{}
+	planned := map[string]int{}
+	guarded := map[string][]string{}
 	for name, a := range apps {
 		mode, modeErr := guardrail.PoolMode(a.Annotations, s.Cfg.Mode)
 		if modeErr != nil {
@@ -181,6 +200,7 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 			}
 			demands = append(demands, budget.Demand{App: name, Floor: min(floor, v), Desired: v, Pod: budget.Resources{CPU: a.PodCPU, Memory: a.PodMemory}})
 			wishes[name] = fmt.Sprintf("override %d", *ov)
+			sources[name] = "override"
 			s.Metrics.Decisions.WithLabelValues(name, "override", active).Inc()
 			continue
 		}
@@ -205,6 +225,7 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 		}
 		v, notes := s.guard.Apply(name, now, choice.Value, reactiveFloor, guardrail.Limits{Floor: floor, Ceiling: ceiling, MaxInstances: a.MaxInstances})
 		demands = append(demands, budget.Demand{App: name, Floor: floor, Desired: v, Pod: budget.Resources{CPU: a.PodCPU, Memory: a.PodMemory}})
+		sources[name], planned[name], guarded[name] = choice.Source, choice.Value, notes
 		why := fmt.Sprintf("%s=%d (%s)", choice.Source, choice.Value, choice.Reason)
 		if len(notes) > 0 {
 			why += "; " + strings.Join(notes, "; ")
@@ -228,14 +249,39 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 		s.Metrics.TargetIdle.WithLabelValues(d.App, active).Set(float64(g.Value))
 		s.Log.Info("decision", "pool", d.App, "targetIdle", g.Value, "mode", modes[d.App], "active_strategy", active,
 			"idle_ready", a.IdleReady, "idle_starting", a.IdleStarting, "claimed", a.Claimed, "why", why)
-		s.patch(ctx, a, g.Value, modes[d.App])
+		s.patch(ctx, a, g.Value, modes[d.App], decision{source: sources[d.App], why: why, planned: planned[d.App], notes: guarded[d.App]})
 	}
 	s.Metrics.LastDecision.Set(float64(now.Unix()))
 	return nil
 }
 
-func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mode) {
-	if mode != config.ModeActive || (a.TargetIdle != nil && *a.TargetIdle == v) {
+// decision is what the scaler tells in the events about one pool.
+type decision struct {
+	source  string
+	why     string
+	planned int
+	notes   []string
+}
+
+func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mode, d decision) {
+	if mode != config.ModeActive {
+		return
+	}
+	cur := a.Idle()
+	if a.TargetIdle != nil {
+		cur = *a.TargetIdle
+	}
+	if a.TargetIdle != nil && *a.TargetIdle == v {
+		// A planned change that a guardrail withheld is reported once, not every round.
+		if d.planned != cur && len(d.notes) > 0 {
+			msg := fmt.Sprintf("strategy %s wants targetIdle %d, kept %d: %s", d.source, d.planned, cur, strings.Join(d.notes, "; "))
+			if s.lastHeld[a.Name] != msg {
+				s.lastHeld[a.Name] = msg
+				s.event(ctx, a, ReasonHeld, msg)
+			}
+		} else {
+			delete(s.lastHeld, a.Name)
+		}
 		return
 	}
 	if err := s.Kube.PatchTargetIdle(ctx, a.Name, v); err != nil {
@@ -244,6 +290,21 @@ func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mod
 		return
 	}
 	s.Metrics.Patches.WithLabelValues(a.Name, "success").Inc()
+	delete(s.lastHeld, a.Name)
+	reason := ReasonScaledUp
+	if v < cur {
+		reason = ReasonScaledDown
+	}
+	s.event(ctx, a, reason, fmt.Sprintf("strategy %s: targetIdle %d to %d: %s", d.source, cur, v, d.why))
+}
+
+func (s *Scaler) event(ctx context.Context, a *model.App, reason, msg string) {
+	if s.Events == nil {
+		return
+	}
+	if err := s.Events.Event(ctx, a, reason, msg); err != nil {
+		s.Log.Warn("writing the pool event failed", "pool", a.Name, "reason", reason, "err", err)
+	}
 }
 
 func (s *Scaler) fillPrometheus(ctx context.Context, now time.Time, apps map[string]*model.App) {

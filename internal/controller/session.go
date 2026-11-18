@@ -403,7 +403,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	telemetry.SessionPhase.WithLabelValues("claim", strategy).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
-	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready").Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready", persistenceOf(s)).Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
 	if s.Spec.WorkspaceRef != "" {
 		if err := r.touchWorkspace(ctx, s); err != nil {
 			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
@@ -573,6 +573,14 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 	return ctrl.Result{RequeueAfter: min(left, 2*time.Second)}, nil
 }
 
+// persistenceOf is the value of the persistence label of the startup metric.
+func persistenceOf(s *v1.IDESession) string {
+	if s.Spec.WorkspaceRef != "" {
+		return string(v1.PersistenceVolume)
+	}
+	return string(v1.PersistenceNone)
+}
+
 // fail ends the start path for good and discards the instance.
 func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, msg string) (ctrl.Result, error) {
 	orig := s.DeepCopy()
@@ -586,7 +594,8 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 	if strategy == "" {
 		strategy = "none"
 	}
-	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed").Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionFailures.WithLabelValues(s.Spec.TemplateRef, code).Inc()
 	r.note(ctx, s, corev1.EventTypeWarning, "Failed", code+": "+msg, "result", "failed", "code", code, "message", msg, "strategy", strategy)
 	return r.expire(ctx, s)
 }

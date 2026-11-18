@@ -5,7 +5,7 @@ info:
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
-    All endpoints need an OIDC bearer token of the deployment's realm.
+    All endpoints need an OIDC bearer token of the deployment's realm. The endpoints under `/admin` additionally need the admin role (U16).
   license: {name: EPL-2.0}
 servers:
   - url: /api/v1
@@ -16,7 +16,31 @@ tags:
   - name: sessions
   - name: workspaces
   - name: overview
+  - name: public
+    description: "Unauthenticated health summary for the landing page (U17). Contains no user, session, host or capacity data."
+  - name: admin
+    description: "Read-only admin API (U16). Needs the Keycloak role of `oidc.admin`; answers 404 when the deployment configures none, 403 without the role."
 paths:
+  /status:
+    get:
+      operationId: getPublicStatus
+      tags: [public]
+      security: []
+      description: |
+        Public health summary (U17). No token needed. The answer is cached for 15 s (`Cache-Control: public, max-age=15`)
+        and rate limited per client IP. `overall` is the worst of `parts`. `starting` is `slow` when the p95 start time of
+        the last 15 min exceeds 60 s and `down` when more than half of the starts of the last 5 min failed (at least 4 starts).
+        `signIn` is `down` when the OIDC discovery of the issuer is unreachable. `workspaces` is `down` when a workspace is
+        Pending for more than 2 min. `warm` is true while the pool of the template has an idle ready instance.
+      responses:
+        "200":
+          description: Status.
+          headers:
+            Cache-Control: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PublicStatus"}
+        default: {$ref: "#/components/responses/Problem"}
   /templates:
     get:
       operationId: listTemplates
@@ -187,6 +211,143 @@ paths:
             text/event-stream:
               schema: {type: string}
         default: {$ref: "#/components/responses/Problem"}
+  /admin/status:
+    get:
+      operationId: getAdminStatus
+      tags: [admin]
+      description: |
+        Admin panel status page (U16). Counts and warnings come from the service cache and Kubernetes events.
+        `stats` and `nodePools` are present only when `admin.prometheusURL` is configured and answers.
+      responses:
+        "200":
+          description: Status.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminStatus"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/status/events:
+    get:
+      operationId: watchAdminStatus
+      tags: [admin]
+      description: |
+        Server-Sent Events. Event `status` with an AdminStatus as data. Starts with the current state,
+        sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/pools:
+    get:
+      operationId: listAdminPools
+      tags: [admin]
+      responses:
+        "200":
+          description: Pools with the latest scaler decisions (Kubernetes events, kept for about one hour).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminPools"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/sessions:
+    get:
+      operationId: listAdminSessions
+      tags: [admin]
+      description: All sessions of all users, ordered by name. Users appear only as `ownerHash`.
+      parameters:
+        - {name: template, in: query, required: false, schema: {type: string, maxLength: 63}}
+        - {name: persistence, in: query, required: false, schema: {$ref: "#/components/schemas/PersistenceMode"}}
+        - {name: phase, in: query, required: false, schema: {$ref: "#/components/schemas/SessionPhase"}}
+        - {name: q, in: query, required: false, description: "Case-insensitive part of the session name or title.", schema: {type: string, maxLength: 200}}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of sessions.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminSessionList"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/sessions/events:
+    get:
+      operationId: watchAdminSessions
+      tags: [admin]
+      description: |
+        Server-Sent Events. Event `sessions` with the first page of the list (default limit, no filters) as data.
+        Starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/sessions/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: getAdminSession
+      tags: [admin]
+      responses:
+        "200":
+          description: The session with timeline and the key names of its launch data (never the values, G18).
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminSessionDetail"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/workspaces:
+    get:
+      operationId: listAdminWorkspaces
+      tags: [admin]
+      parameters:
+        - {name: template, in: query, required: false, schema: {type: string, maxLength: 63}}
+        - {name: state, in: query, required: false, schema: {$ref: "#/components/schemas/AdminWorkspaceState"}}
+        - {name: q, in: query, required: false, description: "Case-insensitive part of the workspace name, title or owner hash.", schema: {type: string, maxLength: 200}}
+        - {$ref: "#/components/parameters/Cursor"}
+        - {$ref: "#/components/parameters/Limit"}
+      responses:
+        "200":
+          description: One page of workspaces and the summary over all workspaces.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminWorkspaceList"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/problems:
+    get:
+      operationId: getAdminProblems
+      tags: [admin]
+      parameters:
+        - {name: since, in: query, required: false, description: "Window of the counts per code. Default 24h.", schema: {type: string, enum: [1h, 24h]}}
+      responses:
+        "200":
+          description: Failure counts per code and the Warning events of the last hour.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminProblems"}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/templates:
+    get:
+      operationId: listAdminTemplates
+      tags: [admin]
+      responses:
+        "200":
+          description: Templates with timeouts, retention, key formats, image digest and pool.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/AdminTemplate"}}
+        default: {$ref: "#/components/responses/Problem"}
+  /admin/config:
+    get:
+      operationId: getAdminConfig
+      tags: [admin]
+      responses:
+        "200":
+          description: Effective deployment config without secrets, and the links of the admin panel.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminConfig"}
+        default: {$ref: "#/components/responses/Problem"}
 components:
   securitySchemes:
     bearer: {type: http, scheme: bearer, bearerFormat: JWT}
@@ -196,6 +357,17 @@ components:
       in: path
       required: true
       schema: {type: string, pattern: "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"}
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: "`next` of the previous page."
+      schema: {type: string, maxLength: 200}
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 500, default: 100}
   responses:
     Problem:
       description: Error as RFC 9457 Problem Details.
@@ -377,3 +549,364 @@ components:
       required: [items]
       properties:
         items: {type: array, items: {$ref: "#/components/schemas/OverviewItem"}}
+    AdminWarning:
+      type: object
+      required: [code, message]
+      properties:
+        code: {type: string, enum: [pool-empty, capacity-pressure, scaler-silent]}
+        pool: {type: string}
+        since: {type: string, format: date-time}
+        message: {type: string}
+    NodePoolPressure:
+      type: object
+      required: [name, pressure]
+      properties:
+        name: {type: string}
+        pressure: {type: boolean}
+    TimePoint:
+      type: object
+      required: [time, value]
+      properties:
+        time: {type: string, format: date-time}
+        value: {type: number, format: double}
+    AdminStartP95:
+      type: object
+      required: [template, persistence, seconds]
+      properties:
+        template: {type: string}
+        persistence: {$ref: "#/components/schemas/PersistenceMode"}
+        seconds: {type: number, format: double}
+    AdminStartsBucket:
+      type: object
+      required: [time, warm, cold, failed]
+      properties:
+        time: {type: string, format: date-time}
+        warm: {type: number, format: double}
+        cold: {type: number, format: double}
+        failed: {type: number, format: double}
+    AdminLatencyPoint:
+      type: object
+      required: [time]
+      properties:
+        time: {type: string, format: date-time}
+        p50: {type: number, format: double}
+        p95: {type: number, format: double}
+    AdminPoolFree:
+      type: object
+      required: [pool, points]
+      properties:
+        pool: {type: string}
+        points: {type: array, items: {$ref: "#/components/schemas/TimePoint"}}
+    AdminStats:
+      description: Figures from Prometheus. Every field is absent when its query fails.
+      type: object
+      properties:
+        startsLastHour: {type: integer}
+        failuresLastHour: {type: integer}
+        startP95: {type: array, items: {$ref: "#/components/schemas/AdminStartP95"}}
+        cpuRequestsPercent: {type: number, format: double, description: "CPU requests over allocatable CPU of the cluster (kube-state-metrics)."}
+        nodeCount: {type: integer}
+        startsPerHour: {description: "Last 12 h, one bucket per hour.", type: array, items: {$ref: "#/components/schemas/AdminStartsBucket"}}
+        startLatency: {description: "Last 12 h, one point per hour.", type: array, items: {$ref: "#/components/schemas/AdminLatencyPoint"}}
+        poolFree: {description: "Idle ready instances per pool, last 6 h.", type: array, items: {$ref: "#/components/schemas/AdminPoolFree"}}
+    AdminStatus:
+      type: object
+      required: [runningSessions, startingSessions, idleReady, idleTarget, capacityPressure, warnings]
+      properties:
+        runningSessions: {type: integer, description: "Sessions in phase Ready."}
+        startingSessions: {type: integer, description: "Sessions in phase Pending or Starting."}
+        idleReady: {type: integer}
+        idleTarget: {type: integer, description: "Sum over all pools of the idle target (the larger of minIdle and targetIdle, at most maxInstances)."}
+        capacityPressure: {type: boolean, description: "A pool reports condition CapacityPressure."}
+        nodePools: {description: "Pressure per node pool, from eduide_capacity_pressure. Only with Prometheus.", type: array, items: {$ref: "#/components/schemas/NodePoolPressure"}}
+        warnings: {type: array, items: {$ref: "#/components/schemas/AdminWarning"}}
+        stats: {$ref: "#/components/schemas/AdminStats"}
+    AdminDecision:
+      description: "A scaler decision, from the Kubernetes event the pool scaler writes on the IDEPool."
+      type: object
+      required: [time, pool, reason, message]
+      properties:
+        time: {type: string, format: date-time}
+        pool: {type: string}
+        reason: {type: string, enum: [ScaledUp, ScaledDown, Held]}
+        message: {type: string}
+    AdminPool:
+      type: object
+      required: [name, template, minIdle, targetIdle, maxInstances, idleReady, idleStarting, claimed, state, capacityPressure]
+      properties:
+        name: {type: string}
+        template: {type: string}
+        minIdle: {type: integer}
+        targetIdle: {type: integer}
+        maxInstances: {type: integer}
+        idleReady: {type: integer}
+        idleStarting: {type: integer}
+        claimed: {type: integer}
+        state: {type: string, enum: [ok, empty, pressure], description: "empty: a target above 0 and no idle ready instance. pressure: the pool has condition CapacityPressure."}
+        emptySince: {type: string, format: date-time, description: "Since when the pool is empty, as far as this service replica has seen it."}
+        capacityPressure: {type: boolean}
+        scalerMode: {type: string, description: "Annotation eduide.github.io/scaler-mode of the pool, if set."}
+        lastDecision: {$ref: "#/components/schemas/AdminDecision"}
+    AdminPools:
+      type: object
+      required: [pools, decisions]
+      properties:
+        pools: {type: array, items: {$ref: "#/components/schemas/AdminPool"}}
+        decisions: {description: "Newest first.", type: array, items: {$ref: "#/components/schemas/AdminDecision"}}
+    AdminSession:
+      type: object
+      required: [name, template, persistence, phase, createdAt, ownerHash]
+      properties:
+        name: {type: string}
+        template: {type: string}
+        persistence: {$ref: "#/components/schemas/PersistenceMode"}
+        workspace: {type: string}
+        phase: {$ref: "#/components/schemas/SessionPhase"}
+        startStrategy: {type: string, description: "warm-ready, warm-starting or cold, see Session.startStrategy."}
+        errorCode: {type: string}
+        message: {type: string}
+        title: {type: string, description: "From display.title, else derived from display.source (G15)."}
+        ownerHash: {type: string, description: "Pseudonymous owner id (G17): the label-safe hash of the owner name."}
+        createdAt: {type: string, format: date-time}
+        readyAt: {type: string, format: date-time}
+        lastActivity: {type: string, format: date-time}
+        stopsAt: {type: string, format: date-time}
+        stopReason: {type: string, description: "idle or max, see Session.stopReason."}
+        traceId: {type: string, description: "Trace id of the launch, from the traceparent annotation."}
+        traceUrl: {type: string, description: "Link to the trace, built from admin.links."}
+    AdminSessionTimestamps:
+      type: object
+      properties:
+        claimed: {type: string, format: date-time}
+        podReady: {type: string, format: date-time}
+        agentReady: {type: string, format: date-time}
+        ready: {type: string, format: date-time}
+    AdminSessionDetail:
+      allOf:
+        - $ref: "#/components/schemas/AdminSession"
+        - type: object
+          required: [launchDataKeys]
+          properties:
+            timestamps: {$ref: "#/components/schemas/AdminSessionTimestamps"}
+            launchDataKeys: {description: "Names of the keys in the launch data Secret. Never the values (G18).", type: array, items: {type: string}}
+    AdminSessionList:
+      type: object
+      required: [items, total]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/AdminSession"}}
+        total: {type: integer, description: "Sessions that match the filters, over all pages."}
+        next: {type: string, description: "Cursor of the next page; absent on the last page."}
+    AdminWorkspaceState:
+      type: string
+      enum: [active, inUse, expiring, expired]
+      description: "inUse: a session runs on it. expired: phase Expired. expiring: deletion within 3 days. active: all others."
+    AdminWorkspace:
+      type: object
+      required: [name, template, phase, state, ownerHash, requestedBytes, createdAt]
+      properties:
+        name: {type: string}
+        template: {type: string}
+        phase: {$ref: "#/components/schemas/WorkspacePhase"}
+        state: {$ref: "#/components/schemas/AdminWorkspaceState"}
+        title: {type: string}
+        ownerHash: {type: string}
+        requestedBytes: {type: integer, format: int64, description: "Requested volume size. No usage is measured."}
+        createdAt: {type: string, format: date-time}
+        lastUsed: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        deletesAt: {type: string, format: date-time}
+    StorageQuota:
+      type: object
+      required: [hardBytes, usedBytes]
+      properties:
+        hardBytes: {type: integer, format: int64}
+        usedBytes: {type: integer, format: int64}
+    AdminWorkspaceSummary:
+      type: object
+      required: [total, inUse, expiringIn3Days, expired, requestedBytes]
+      properties:
+        total: {type: integer}
+        inUse: {type: integer}
+        expiringIn3Days: {type: integer}
+        expired: {type: integer}
+        requestedBytes: {type: integer, format: int64}
+        quota: {$ref: "#/components/schemas/StorageQuota"}
+    AdminWorkspaceList:
+      type: object
+      required: [items, total, summary]
+      properties:
+        items: {type: array, items: {$ref: "#/components/schemas/AdminWorkspace"}}
+        total: {type: integer, description: "Workspaces that match the filters, over all pages."}
+        next: {type: string}
+        summary: {$ref: "#/components/schemas/AdminWorkspaceSummary"}
+    AdminCodeCount:
+      type: object
+      required: [code, count]
+      properties:
+        code: {type: string}
+        count: {type: integer}
+    AdminProblemEvent:
+      type: object
+      required: [time, reason, message]
+      properties:
+        time: {type: string, format: date-time}
+        reason: {type: string}
+        code: {type: string, description: "Stable error code, when the event carries one."}
+        message: {type: string}
+        session: {type: string}
+        template: {type: string}
+        ownerHash: {type: string}
+        traceId: {type: string}
+        traceUrl: {type: string}
+    AdminProblems:
+      type: object
+      required: [since, events]
+      properties:
+        since: {type: string, enum: [1h, 24h]}
+        codes: {description: "Failed sessions per code over `since`. Only with Prometheus.", type: array, items: {$ref: "#/components/schemas/AdminCodeCount"}}
+        events: {description: "Warning events on sessions within the last hour, newest first.", type: array, items: {$ref: "#/components/schemas/AdminProblemEvent"}}
+    AdminInjectableKey:
+      type: object
+      required: [name, source, required]
+      properties:
+        name: {type: string}
+        source: {type: string, enum: [Request, UserName, UserEmail]}
+        format: {type: string, enum: [HTTPSURL, Token, Enum, Pattern]}
+        maxLength: {type: integer}
+        required: {type: boolean}
+    AdminTimeouts:
+      type: object
+      required: [idleSeconds, warningSeconds, maxSeconds]
+      properties:
+        idleSeconds: {type: integer}
+        warningSeconds: {type: integer}
+        maxSeconds: {type: integer}
+    AdminPoolRef:
+      type: object
+      required: [name, minIdle, targetIdle, maxInstances]
+      properties:
+        name: {type: string}
+        minIdle: {type: integer}
+        targetIdle: {type: integer}
+        maxInstances: {type: integer}
+    AdminTemplate:
+      type: object
+      required: [name, displayName, image, persistence, defaultPersistence, injectableKeys, timeouts]
+      properties:
+        name: {type: string}
+        displayName: {type: string}
+        logoUrl: {type: string}
+        image: {type: string}
+        imageDigest: {type: string}
+        imageVersion: {type: string}
+        persistence: {type: array, items: {$ref: "#/components/schemas/PersistenceMode"}}
+        defaultPersistence: {$ref: "#/components/schemas/PersistenceMode"}
+        injectableKeys: {type: array, items: {$ref: "#/components/schemas/AdminInjectableKey"}}
+        timeouts: {$ref: "#/components/schemas/AdminTimeouts"}
+        retentionSeconds: {type: integer, description: "Retention override of the template. Absent: the deployment default applies."}
+        variants: {type: array, items: {$ref: "#/components/schemas/TemplateVariant"}}
+        includes: {type: array, items: {$ref: "#/components/schemas/TemplateIncludeGroup"}}
+        startEstimate: {$ref: "#/components/schemas/StartEstimates"}
+        pool: {$ref: "#/components/schemas/AdminPoolRef"}
+    AdminConfig:
+      description: Effective config of the deployment. Contains no secret, token or user data.
+      type: object
+      required: [deployment, namespace, hosts, oidc, sessionsPerUser, allowedHosts, workspaces, capacity, rateLimit, launchDataMaxBytes, telemetry, admin]
+      properties:
+        deployment: {type: string}
+        namespace: {type: string}
+        hosts:
+          type: object
+          required: [service, instance, webview]
+          properties:
+            service: {type: string}
+            instance: {type: string}
+            webview: {type: string}
+        oidc:
+          type: object
+          required: [issuerURL, clientIDs, userClaim, adminRolePath, adminRole]
+          properties:
+            issuerURL: {type: string}
+            clientIDs: {type: array, items: {type: string}}
+            userClaim: {type: string}
+            adminRolePath: {type: string}
+            adminRole: {type: string}
+        sessionsPerUser: {type: integer}
+        allowedHosts: {type: array, items: {type: string}}
+        workspaces:
+          type: object
+          required: [retentionSeconds, graceSeconds, defaultSizeBytes]
+          properties:
+            retentionSeconds: {type: integer}
+            graceSeconds: {type: integer}
+            defaultSizeBytes: {type: integer, format: int64}
+            storageClassName: {type: string}
+        capacity:
+          type: object
+          required: [exhaustedAfterSeconds]
+          properties:
+            exhaustedAfterSeconds: {type: integer}
+        rateLimit:
+          type: object
+          required: [launchesPerMinute, adminPerMinute]
+          properties:
+            launchesPerMinute: {type: integer}
+            adminPerMinute: {type: integer}
+        launchDataMaxBytes: {type: integer}
+        titleStripPattern: {type: string}
+        telemetry:
+          type: object
+          required: [userIdsHashed]
+          properties:
+            otlpEndpoint: {type: string}
+            userIdsHashed: {type: boolean}
+        admin:
+          type: object
+          required: [prometheusConfigured]
+          properties:
+            prometheusConfigured: {type: boolean}
+            prometheusURL: {type: string}
+            links:
+              type: object
+              properties:
+                grafana: {type: string}
+                jaeger: {type: string}
+                traceUrlTemplate: {type: string}
+    ServiceLevel:
+      type: string
+      enum: [ok, slow, down]
+      description: "`signIn` and `workspaces` are only ok or down."
+    PublicStatusParts:
+      type: object
+      required: [signIn, starting, workspaces]
+      properties:
+        signIn: {$ref: "#/components/schemas/ServiceLevel"}
+        starting: {$ref: "#/components/schemas/ServiceLevel"}
+        workspaces: {$ref: "#/components/schemas/ServiceLevel"}
+    PublicSeconds:
+      type: object
+      required: [seconds]
+      properties:
+        seconds: {type: number, format: double}
+    PublicStartEstimate:
+      type: object
+      properties:
+        none: {$ref: "#/components/schemas/PublicSeconds"}
+        volume: {$ref: "#/components/schemas/PublicSeconds"}
+    PublicTemplate:
+      type: object
+      required: [name, displayName, startEstimate, warm]
+      properties:
+        name: {type: string}
+        displayName: {type: string}
+        logoUrl: {type: string}
+        startEstimate: {$ref: "#/components/schemas/PublicStartEstimate"}
+        warm: {type: boolean, description: "The pool of the template has an idle ready instance."}
+    PublicStatus:
+      type: object
+      required: [overall, updatedAt, parts, templates]
+      properties:
+        overall: {$ref: "#/components/schemas/ServiceLevel"}
+        updatedAt: {type: string, format: date-time}
+        parts: {$ref: "#/components/schemas/PublicStatusParts"}
+        templates: {type: array, items: {$ref: "#/components/schemas/PublicTemplate"}}
