@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,8 +35,26 @@ const (
 )
 
 type issuer struct {
-	srv *httptest.Server
-	key *rsa.PrivateKey
+	srv  *httptest.Server
+	mu   sync.Mutex
+	key  *rsa.PrivateKey
+	hits atomic.Int32 // JWKS requests
+}
+
+func (i *issuer) signingKey() *rsa.PrivateKey {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.key
+}
+
+func (i *issuer) rotate(t testing.TB) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i.mu.Lock()
+	i.key = key
+	i.mu.Unlock()
 }
 
 func newIssuer(t testing.TB) *issuer {
@@ -52,7 +72,8 @@ func newIssuer(t testing.TB) *issuer {
 		})
 	})
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &key.PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
+		i.hits.Add(1)
+		_ = json.NewEncoder(w).Encode(jose.JSONWebKeySet{Keys: []jose.JSONWebKey{{Key: &i.signingKey().PublicKey, KeyID: "k1", Algorithm: "RS256", Use: "sig"}}})
 	})
 	i.srv = httptest.NewServer(mux)
 	t.Cleanup(i.srv.Close)
@@ -63,7 +84,7 @@ func newIssuer(t testing.TB) *issuer {
 func (i *issuer) token(t testing.TB, key *rsa.PrivateKey, iss, aud, user string, exp time.Duration) string {
 	t.Helper()
 	if key == nil {
-		key = i.key
+		key = i.signingKey()
 	}
 	if iss == "" {
 		iss = i.srv.URL
@@ -115,7 +136,11 @@ func newServer(t testing.TB, iss *issuer, sessions Sessions) *Server {
 	}
 	s := &Server{Sessions: sessions, UserClaim: "preferred_username", IDTokenCookie: idCookie,
 		InstanceHost: instHost, WebviewHost: "webview." + instHost, Salt: []byte("salt")}
-	s.SetVerifier(p.Verifier(&oidc.Config{ClientID: clientID}))
+	v, err := Verifier(p, clientID, http.DefaultClient, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.SetVerifier(v)
 	return s
 }
 

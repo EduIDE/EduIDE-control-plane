@@ -58,6 +58,8 @@ func run(cfgPath string) error {
 		if salt, err = os.ReadFile(cfg.Telemetry.UserSaltFile); err != nil {
 			return err
 		}
+	} else {
+		slog.Warn("telemetry.userSaltFile is unset: user ids in logs are unsalted hashes")
 	}
 
 	scheme := runtime.NewScheme()
@@ -102,8 +104,9 @@ func run(cfgPath string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	ready := func(ctx context.Context) bool { return srv.Ready() && c.WaitForCacheSync(ctx) }
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		if srv.Ready() && c.WaitForCacheSync(r.Context()) {
+		if ready(r.Context()) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -118,8 +121,8 @@ func run(cfgPath string) error {
 	g := grpc.NewServer()
 	authv3.RegisterAuthorizationServer(g, srv)
 	h := health.NewServer()
-	h.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthpb.RegisterHealthServer(g, h)
+	go serveWhenReady(ctx, h, ready, time.Second)
 
 	errc := make(chan error, 2)
 	go func() { errc <- g.Serve(lis) }()
@@ -144,14 +147,17 @@ func run(cfgPath string) error {
 
 // discover retries OIDC discovery until it works, then arms the verifier.
 func discover(ctx context.Context, cfg *config.Config, srv *authz.Server) {
-	// The provider keeps this client for JWKS refreshes; without a timeout one hung
-	// fetch blocks every later refresh and so every login after a key rotation.
-	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
+	// Without a timeout one hung discovery or JWKS fetch blocks forever.
+	client := &http.Client{Timeout: 10 * time.Second}
+	ctx = oidc.ClientContext(ctx, client)
 	for {
 		p, err := oidc.NewProvider(ctx, cfg.OIDC.IssuerURL)
 		if err == nil {
-			srv.SetVerifier(p.Verifier(&oidc.Config{ClientID: cfg.OIDC.GatewayClientID}))
-			return
+			var v *oidc.IDTokenVerifier
+			if v, err = authz.Verifier(p, cfg.OIDC.GatewayClientID, client, 30*time.Second); err == nil {
+				srv.SetVerifier(v)
+				return
+			}
 		}
 		slog.Warn("oidc discovery failed, retrying", "error", err)
 		select {
@@ -160,4 +166,17 @@ func discover(ctx context.Context, cfg *config.Config, srv *authz.Server) {
 		case <-time.After(5 * time.Second):
 		}
 	}
+}
+
+// serveWhenReady keeps the gRPC health status NOT_SERVING until ready reports true.
+func serveWhenReady(ctx context.Context, h *health.Server, ready func(context.Context) bool, every time.Duration) {
+	h.SetServingStatus("", healthpb.HealthCheckResponse_NOT_SERVING)
+	for !ready(ctx) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(every):
+		}
+	}
+	h.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 }
