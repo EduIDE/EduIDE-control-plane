@@ -144,7 +144,11 @@ func TestDecisionTable(t *testing.T) {
 	}{
 		{"oauth2 path without cookies", "/oauth2/callback?code=x", "", "allow", "oauth2", 0},
 		{"oauth2 path with bad token", "/oauth2/callback", idCookie + "=junk", "allow", "oauth2", 0},
-		{"oauth2 path traversal", "/oauth2/../" + instanceA + "/", good + "x", "login", "invalid-token", typev3.StatusCode_Found},
+		{"oauth2 path traversal", "/oauth2/../" + instanceA + "/", good + "x", "deny", "bad-path", typev3.StatusCode_Forbidden},
+		// With escapedSlashesAction KeepUnchanged Envoy routes these to the first literal segment.
+		{"encoded traversal into oauth2", "/bbbbbbbbbbbbbbbbbbbb/..%2Foauth2/x", idCookie + "=" + iss.token(t, nil, "", "", "mallory", 0), "deny", "bad-path", typev3.StatusCode_Forbidden},
+		{"encoded traversal into own instance", "/zzzzzzzzzzzzzzzzzzzz/..%2F" + instanceA + "/", good, "deny", "bad-path", typev3.StatusCode_Forbidden},
+		{"AccessToken only, no id token", "/" + instanceA + "/", "AccessToken-abc=x", "login", "invalid-token", typev3.StatusCode_Found},
 		{"no cookies", "/" + instanceA + "/", "", "allow", "no-cookie", 0},
 		{"unrelated cookies", "/" + instanceA + "/", "a=b; theme=dark", "allow", "no-cookie", 0},
 		{"BearerToken only, no id token", "/" + instanceA + "/", "BearerToken=x", "login", "invalid-token", typev3.StatusCode_Found},
@@ -162,7 +166,7 @@ func TestDecisionTable(t *testing.T) {
 		{"empty path", "", good, "deny", "bad-path", typev3.StatusCode_Forbidden},
 		{"root path", "/", good, "deny", "unknown-instance", typev3.StatusCode_Forbidden},
 		{"relative path", "x", "", "deny", "bad-path", typev3.StatusCode_Forbidden},
-		{"dot-dot into other instance", "/" + instanceA + "/../bbbbbbbbbbbbbbbbbbbb/", good, "deny", "not-ready", typev3.StatusCode_Forbidden},
+		{"dot-dot into other instance", "/" + instanceA + "/../bbbbbbbbbbbbbbbbbbbb/", good, "deny", "bad-path", typev3.StatusCode_Forbidden},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -288,9 +292,14 @@ func TestSplitPath(t *testing.T) {
 		{"/abc/def?x=1", "/abc/def", "abc", true},
 		{"/abc", "/abc", "abc", true},
 		{"/abc#frag", "/abc", "abc", true},
-		{"//abc//d/", "/abc/d", "abc", true},
-		{"/%61bc/", "/abc", "abc", true},
-		{"/a/../b/", "/b", "b", true},
+		{"/abc//d/", "/abc/d", "abc", true},
+		{"/abc/%2E%2E/abc/x", "/abc/x", "abc", true},
+		{"//abc//d/", "", "", false},
+		{"/%61bc/", "", "", false},
+		{"/a/../b/", "", "", false},
+		{"/a/..%2Fb/", "", "", false},
+		{"/a%2F..%2Fb/", "", "", false},
+		{"/./b/", "", "", false},
 		{"/", "/", "", true},
 		{"", "", "", false},
 		{"abc", "", "", false},

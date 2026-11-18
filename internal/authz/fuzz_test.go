@@ -54,6 +54,8 @@ func FuzzCheck(f *testing.F) {
 	f.Add("/oauth2/callback", "", "", "")
 	f.Add("/"+instanceA+"/", "BearerToken=x", idCookie+"=junk", "evil")
 	f.Add("", `"`, ";", "")
+	f.Add("/zzzzzzzzzzzzzzzzzzzz/..%2F"+instanceA+"/", idCookie+"="+good, "", "")
+	f.Add("/zzzzzzzzzzzzzzzzzzzz/..%2Foauth2/x", idCookie+"="+good, "", "")
 	f.Fuzz(func(t *testing.T, path, cookie, cookie2, host string) {
 		r := &authv3.AttributeContext_HttpRequest{Path: path, Host: host,
 			Headers: map[string]string{"cookie": cookie}, HeaderMap: headerMap("cookie", cookie, "Cookie", cookie2)}
@@ -65,13 +67,15 @@ func FuzzCheck(f *testing.F) {
 			return
 		}
 		all := cookie + ";" + cookie2
-		clean, first, ok := splitPath(path)
+		clean, _, ok := splitPath(path)
+		// Envoy matches the route on the literal path.
+		literal := strings.SplitN(strings.SplitN(path, "?", 2)[0], "/", 3)
 		switch {
 		case !ok:
 			t.Fatalf("allowed bad path %q", path)
-		case strings.HasPrefix(clean, "/oauth2/"):
+		case strings.HasPrefix(path, "/oauth2/") && strings.HasPrefix(clean, "/oauth2/"):
 		case !hasAuthCookie(parseCookies([]string{cookie, cookie2}), s.IDTokenCookie):
-		case first == instanceA && strings.Contains(all, good):
+		case len(literal) > 1 && literal[1] == instanceA && strings.Contains(all, good):
 		default:
 			t.Fatalf("unexpected allow: path %q cookies %q %q", path, cookie, cookie2)
 		}

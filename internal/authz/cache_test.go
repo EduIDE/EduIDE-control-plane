@@ -86,4 +86,23 @@ func TestCacheSessionsEnvtest(t *testing.T) {
 	if got, _ := s.ByInstance(ctx, ""); len(got) != 0 {
 		t.Fatalf("empty instance matched: %v", got)
 	}
+
+	// A released session must drop out of the cache within a moment.
+	if err := c.Delete(ctx, &v1alpha1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-a", Namespace: "default"}}); err != nil {
+		t.Fatal(err)
+	}
+	deadline = time.Now().Add(2 * time.Second)
+	for {
+		got, err := s.ByInstance(ctx, instanceA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("deleted session still visible: %v", got)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }

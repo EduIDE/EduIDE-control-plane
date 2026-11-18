@@ -102,8 +102,8 @@ func run(cfgPath string) error {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if srv.Ready() && c.WaitForCacheSync(ctx) {
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if srv.Ready() && c.WaitForCacheSync(r.Context()) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -144,6 +144,9 @@ func run(cfgPath string) error {
 
 // discover retries OIDC discovery until it works, then arms the verifier.
 func discover(ctx context.Context, cfg *config.Config, srv *authz.Server) {
+	// The provider keeps this client for JWKS refreshes; without a timeout one hung
+	// fetch blocks every later refresh and so every login after a key rotation.
+	ctx = oidc.ClientContext(ctx, &http.Client{Timeout: 10 * time.Second})
 	for {
 		p, err := oidc.NewProvider(ctx, cfg.OIDC.IssuerURL)
 		if err == nil {

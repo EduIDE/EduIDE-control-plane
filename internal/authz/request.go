@@ -7,10 +7,13 @@ import (
 )
 
 // authCookiePrefixes are the cookie name prefixes of the gateway OIDC filter.
-var authCookiePrefixes = []string{"BearerToken", "OauthHMAC", "OauthExpires", "IdToken", "RefreshToken"}
+// Envoy Gateway names the access token cookie AccessToken-<suffix>; Envoy's own default is BearerToken.
+var authCookiePrefixes = []string{"AccessToken", "BearerToken", "OauthHMAC", "OauthExpires", "IdToken", "RefreshToken"}
 
 // splitPath returns the cleaned, unescaped path (without query) and its first
-// segment. ok is false for anything that is not an absolute, sane path.
+// segment. ok is false for anything that is not an absolute, sane path, and when
+// the first segment changes by unescaping or dot removal: Envoy routes on the
+// literal path, so authz must check the instance Envoy routes to.
 func splitPath(raw string) (clean, first string, ok bool) {
 	if i := strings.IndexAny(raw, "?#"); i >= 0 {
 		raw = raw[:i]
@@ -25,6 +28,9 @@ func splitPath(raw string) (clean, first string, ok bool) {
 	clean = path.Clean(p)
 	rest := strings.TrimPrefix(clean, "/")
 	first, _, _ = strings.Cut(rest, "/")
+	if literal, _, _ := strings.Cut(raw[1:], "/"); literal != first {
+		return "", "", false
+	}
 	return clean, first, true
 }
 
