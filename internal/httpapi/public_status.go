@@ -21,7 +21,7 @@ import (
 
 const (
 	publicCacheTTL       = 15 * time.Second
-	publicPerMinute      = 30
+	publicPerMinute      = 600 // high: many students share one campus NAT address, and the answer is cached anyway
 	publicMaxLimiters    = 10000
 	slowP95              = 60 * time.Second
 	slowWindow           = 15 * time.Minute

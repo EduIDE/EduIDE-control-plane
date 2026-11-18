@@ -52,7 +52,7 @@ Chosen option: "Admin routes in the service, access by a Keycloak role".
 
 ### U17: public status
 
-- `GET /api/v1/status`, tag `public`, no token, `security: []`. Answer cached for 15 s in the service and rebuilt by one request at a time (no stampede when it expires), `Cache-Control: public, max-age=15`, rate limited per client IP (30 per minute; the client IP is the last `X-Forwarded-For` entry, which Envoy adds, else the peer address).
+- `GET /api/v1/status`, tag `public`, no token, `security: []`. Answer cached for 15 s in the service and rebuilt by one request at a time (no stampede when it expires), `Cache-Control: public, max-age=15`, rate limited per client IP (600 per minute, because many students share one campus NAT address and the answer is cached; the client IP is the last `X-Forwarded-For` entry, which Envoy adds, else the peer address).
 - Body: `overall` (`ok`, `slow`, `down`: the worst part), `updatedAt`, `parts` (`signIn`, `starting`, `workspaces`) and per template `name`, `displayName`, `logoUrl`, `startEstimate` (`none` and `volume` with `seconds`) and `warm`.
 - `starting`: the service records the outcome of every start (Ready with duration, or Failed) in memory. `slow` when the p95 of the starts of the last 15 minutes is above 60 s; `down` when more than half of the starts of the last 5 minutes failed, with at least 4 starts (else `ok`). No Prometheus.
 - `signIn`: `down` when the OIDC discovery document of the issuer is not reachable. A background check runs every 30 s with a 3 s timeout, so a request never waits for the issuer. Until the first check the value is `ok`.
