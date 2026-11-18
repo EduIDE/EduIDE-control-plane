@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Session, Template } from './api-client';
-import { applySession, buildLaunchRequest, displaySource, failureFromProblem, newTraceparent, parseLaunchParams } from './launch';
+import {
+    applySession,
+    buildLaunchRequest,
+    buildTileRequest,
+    displaySource,
+    failureFromProblem,
+    newTraceparent,
+    parseLaunchParams
+} from './launch';
 import { runLaunch } from './runLaunch';
 
 const template: Template = {
@@ -46,6 +54,13 @@ describe('buildLaunchRequest', () => {
             buildLaunchRequest({ appDef: 'x', persistence: 'volume' }, { ...template, persistence: ['none'] }).persistence
         ).toBeUndefined();
         expect(buildLaunchRequest({ appDef: 'x', persistence: 'weird' }, template).persistence).toBeUndefined();
+    });
+
+    it('sends the chosen project template only when the template accepts TEMPLATE', () => {
+        const withKey = { ...template, injectableKeys: ['TEMPLATE'] };
+        expect(buildTileRequest(withKey, 'maven')).toEqual({ template: 'java-17', data: { TEMPLATE: 'maven' } });
+        expect(buildTileRequest(withKey, '')).toEqual({ template: 'java-17' });
+        expect(buildTileRequest(template, 'maven')).toEqual({ template: 'java-17' });
     });
 
     it('reads the link parameters', () => {
@@ -136,9 +151,9 @@ describe('runLaunch', () => {
         await runLaunch(
             { launch: async () => ({ session: session({}) }), watch: async () => undefined, delay: noDelay },
             { template: 't' },
-            s => (last = s.kind === 'failed' ? s.message : s.kind),
+            s => (last = s.kind === 'failed' ? s.code : s.kind),
             new AbortController().signal
         );
-        expect(last).toContain('Lost the connection');
+        expect(last).toBe('connection-lost');
     });
 });

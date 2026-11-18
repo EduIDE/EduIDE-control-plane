@@ -1,5 +1,3 @@
-import './index.css';
-
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 
@@ -7,8 +5,13 @@ import { createApi } from './api';
 import App from './App';
 import { captureFromWindow } from './artemisToken';
 import { initKeycloak, tokenProvider } from './auth';
+import { LegalPage } from './components/LegalPage';
+import { Shell } from './components/Shell';
 import { loadConfig } from './config';
-import { ThemeProvider } from './contexts/ThemeContext';
+import { loadLang, translate } from './i18n';
+import { I18nProvider } from './I18nProvider';
+import { legalRoute } from './legal';
+import { userFromToken } from './user';
 
 async function start(): Promise<void> {
     const root = createRoot(document.getElementById('root')!);
@@ -17,19 +20,32 @@ async function start(): Promise<void> {
         captureFromWindow();
         const config = await loadConfig();
         document.title = config.title ?? 'EduIDE';
+        // The legal pages and the footer must work without an account, so they render before Keycloak asks for a login.
+        const route = legalRoute(window.location.pathname);
+        if (route) {
+            root.render(
+                <React.StrictMode>
+                    <I18nProvider>
+                        <Shell config={config}>
+                            <LegalPage route={route} page={config.legal[route]} />
+                        </Shell>
+                    </I18nProvider>
+                </React.StrictMode>
+            );
+            return;
+        }
         const keycloak = await initKeycloak(config);
         const api = createApi(config.apiBaseUrl, tokenProvider(keycloak));
-        const user = keycloak.tokenParsed?.preferred_username as string | undefined;
         root.render(
             <React.StrictMode>
-                <ThemeProvider>
-                    <App config={config} api={api} user={user} logoutUrl={keycloak.createLogoutUrl()} />
-                </ThemeProvider>
+                <I18nProvider>
+                    <App config={config} api={api} user={userFromToken(keycloak.tokenParsed)} logoutUrl={keycloak.createLogoutUrl()} />
+                </I18nProvider>
             </React.StrictMode>
         );
     } catch (err) {
         console.error(err);
-        root.render(<strong>The page could not be started. Please reload.</strong>);
+        root.render(<strong>{translate(loadLang(), 'startFailed')}</strong>);
     }
 }
 

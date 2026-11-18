@@ -1,45 +1,115 @@
-import type { Overview } from './api-client';
+import type { Api } from './api';
+import type { Overview, Session, Template } from './api-client';
+import { safeUrl } from './launch';
 
 type Item = Overview['items'][number];
 
-export type RowAction = 'open' | 'stop' | 'start' | 'delete';
+export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
+export const STOP_WARNING_MS = 10 * 60 * 1000;
+
+export type Life = { kind: 'stops'; at: string; reason: 'idle' | 'max' } | { kind: 'deletes'; at: string; soon: boolean };
 
 export interface Row {
     key: string;
     title: string;
-    subtitle: string;
+    template: string;
+    templateName: string;
     logoUrl?: string;
     running: boolean;
-    lastUsed?: string;
-    /** Set when the workspace expires within the warning window. */
-    expiresSoon?: string;
-    actions: RowAction[];
-    item: Item;
+    /** Files stay after the session ends (the environment has a workspace). */
+    saved: boolean;
+    since?: { kind: 'started' | 'lastUsed'; at: string };
+    life?: Life;
+    /** Files are about to be lost: red in the list. */
+    danger: boolean;
+    sessionName?: string;
+    workspaceName?: string;
+    /** Only set for a running session with an http(s) address. */
+    openUrl?: string;
 }
 
-export const EXPIRY_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
+function finish(row: Omit<Row, 'danger'>, now: number): Row {
+    const at = row.life && Date.parse(row.life.at);
+    let danger = false;
+    if (row.life?.kind === 'deletes') {
+        danger = row.life.soon;
+    } else if (row.life?.kind === 'stops' && !row.saved && at !== undefined) {
+        danger = at - now <= STOP_WARNING_MS;
+    }
+    return { ...row, danger };
+}
 
 export function toRow(item: Item, now: number): Row {
-    const name = item.session?.name ?? item.workspace?.name ?? item.title;
-    const expires = item.expiresAt ? Date.parse(item.expiresAt) : NaN;
-    const soon = !item.running && expires - now <= EXPIRY_WARNING_MS;
-    return {
-        key: `${item.kind}:${name}`,
-        title: item.title || item.templateDisplayName || item.template,
-        subtitle: item.templateDisplayName || item.template,
-        logoUrl: item.templateLogoUrl,
-        running: item.running,
-        lastUsed: item.lastUsed,
-        expiresSoon: soon && !Number.isNaN(expires) ? item.expiresAt : undefined,
-        // A running item is a session (with or without workspace): only open and stop. Without a running
-        // session only a workspace remains, which can be started again or deleted.
-        actions: item.running ? ['open', 'stop'] : ['start', 'delete'],
-        item
-    };
+    const session = item.session;
+    const workspaceName = item.workspace?.name ?? session?.workspace;
+    const name = session?.name ?? workspaceName ?? item.title;
+    const stopsAt = item.stopsAt ?? session?.stopsAt;
+    const deletesAt = item.deletesAt ?? item.workspace?.deletesAt;
+    let life: Life | undefined;
+    if (item.running && stopsAt) {
+        life = { kind: 'stops', at: stopsAt, reason: session?.stopReason === 'max' ? 'max' : 'idle' };
+    } else if (!item.running && deletesAt) {
+        life = { kind: 'deletes', at: deletesAt, soon: Date.parse(deletesAt) - now <= EXPIRY_WARNING_MS };
+    }
+    const startedAt = session?.readyAt ?? session?.createdAt;
+    const lastUsed = item.lastUsed;
+    const templateName = item.templateDisplayName || item.template;
+    return finish(
+        {
+            key: `${item.kind}:${name}`,
+            title: item.title || templateName,
+            template: item.template,
+            templateName,
+            logoUrl: item.templateLogoUrl,
+            running: item.running,
+            saved: workspaceName !== undefined,
+            since:
+                item.running && startedAt ? { kind: 'started', at: startedAt } : lastUsed ? { kind: 'lastUsed', at: lastUsed } : undefined,
+            life,
+            sessionName: session?.name,
+            workspaceName,
+            openUrl: item.running ? safeUrl(session?.url) : undefined
+        },
+        now
+    );
 }
 
 export function toRows(overview: Overview, now: number = Date.now()): Row[] {
     return overview.items
         .map(i => toRow(i, now))
-        .sort((a, b) => Number(b.running) - Number(a.running) || (b.lastUsed ?? '').localeCompare(a.lastUsed ?? ''));
+        .sort((a, b) => Number(b.running) - Number(a.running) || (b.since?.at ?? '').localeCompare(a.since?.at ?? ''));
+}
+
+/** A running session from a `session-limit-reached` problem as a list row. */
+export function sessionToRow(session: Session, templates: Template[], now: number = Date.now()): Row {
+    const template = templates.find(t => t.name === session.template);
+    return toRow(
+        {
+            kind: 'session',
+            title: session.display?.title ?? '',
+            template: session.template,
+            templateDisplayName: template?.displayName,
+            templateLogoUrl: template?.logoUrl,
+            running: true,
+            session
+        },
+        now
+    );
+}
+
+export type DeleteResult = { ok: true } | { ok: false; timeout: boolean };
+
+/** Deleting a workspace stops its running session first, so one call is enough. Without a workspace the session goes. */
+export async function deleteRow(client: Api['client'], row: Row): Promise<DeleteResult> {
+    try {
+        const { response, error } = row.workspaceName
+            ? await client.DELETE('/workspaces/{name}', { params: { path: { name: row.workspaceName } } })
+            : await client.DELETE('/sessions/{name}', { params: { path: { name: row.sessionName ?? '' } } });
+        if (response.ok || response.status === 404) {
+            return { ok: true };
+        }
+        return { ok: false, timeout: error?.code === 'internal' };
+    } catch {
+        return { ok: false, timeout: false };
+    }
 }

@@ -1,81 +1,70 @@
-import type { AppConfig, FooterLinksConfig } from '../config';
+import { Github } from 'lucide-react';
+
+import type { AppConfig } from '../config';
+import { useI18n } from '../i18n';
+import { legalHref, type LegalRoute } from '../legal';
 
 interface FooterProps {
-    selectedAppDefinition: string;
-    footerLinks?: FooterLinksConfig;
-    legal?: AppConfig['legal'];
+    footerLinks?: AppConfig['footerLinks'];
+    legal: AppConfig['legal'];
 }
 
-const ISSUES_URL = 'https://github.com/EduIDE/EduIDE-control-plane/issues';
+const GITHUB_URL = 'https://github.com/EduIDE/EduIDE-control-plane';
+const ISSUES_URL = `${GITHUB_URL}/issues`;
 
-interface ConfiguredLinkProps {
-    link?: { text: string; url: string; target?: string; rel?: string };
-    fallback: { text: string; url: string };
-    icon?: string;
-    className?: string;
+interface ConfiguredLink {
+    text: string;
+    url: string;
+    target?: string;
+    rel?: string;
 }
 
-const ConfiguredLink = ({ link, fallback, icon = '', className }: ConfiguredLinkProps): React.JSX.Element => (
-    <a href={(link ?? fallback).url} target={link?.target || '_blank'} rel={link?.rel || 'noreferrer'} className={className}>
-        {icon}
-        {(link ?? fallback).text}
+const External = ({
+    link,
+    children
+}: {
+    link: { url: string; target?: string; rel?: string };
+    children: React.ReactNode;
+}): React.JSX.Element => (
+    <a href={link.url} target={link.target || '_blank'} rel={link.rel || 'noreferrer'}>
+        {children}
     </a>
 );
 
-export const Footer = ({ selectedAppDefinition, footerLinks, legal }: FooterProps): React.JSX.Element => (
-        <div className='App__footer'>
-            {selectedAppDefinition !== '' && (
-                <p>
-                    <label htmlFor='selectapp'> {selectedAppDefinition} </label>
-                </p>
-            )}
-
-            <div className='App__footer__content'>
-                <div className='App__footer__attribution'>
-                    <a href={footerLinks?.attribution?.url || 'https://github.com/EduIDE'} target='_blank' rel='noreferrer'>
-                        {footerLinks?.attribution?.text || 'EduIDE'}
-                    </a>
-                    {footerLinks?.attribution?.version && (
-                        <>
-                            <span className='App__footer__separator'> · </span>
-                            <span>{footerLinks.attribution.version}</span>
-                        </>
-                    )}
-                </div>
-
-                <div className='App__footer__issues'>
-                    <ConfiguredLink link={footerLinks?.bugReport} fallback={{ text: 'Report a bug', url: ISSUES_URL }} icon='🐞 ' />
-                    {' or '}
-                    <ConfiguredLink
-                        link={footerLinks?.featureRequest}
-                        fallback={{ text: 'Request a feature', url: ISSUES_URL }}
-                        icon='💡 '
-                    />
-                </div>
-
-                <div className='App__footer__legal'>
-                    <ConfiguredLink
-                        link={footerLinks?.about}
-                        fallback={{ text: 'About', url: 'https://github.com/EduIDE' }}
-                        className='App__footer__link'
-                    />
-                    {legal?.imprintUrl && (
-                        <>
-                            <span className='App__footer__separator'>|</span>
-                            <a href={legal.imprintUrl} className='App__footer__link'>
-                                Imprint
-                            </a>
-                        </>
-                    )}
-                    {legal?.privacyUrl && (
-                        <>
-                            <span className='App__footer__separator'>|</span>
-                            <a href={legal.privacyUrl} className='App__footer__link'>
-                                Privacy
-                            </a>
-                        </>
-                    )}
-                </div>
+export const Footer = ({ footerLinks, legal }: FooterProps): React.JSX.Element => {
+    const { t } = useI18n();
+    const version = footerLinks?.attribution?.version;
+    const bug: ConfiguredLink = footerLinks?.bugReport ?? { text: t('footer.bug'), url: ISSUES_URL };
+    const optional = [footerLinks?.featureRequest, footerLinks?.about].filter((l): l is ConfiguredLink => l !== undefined);
+    const legalLink = (route: LegalRoute): React.JSX.Element => {
+        const { href, external } = legalHref(route, legal[route]);
+        return (
+            <a href={href} {...(external && { target: '_blank', rel: 'noreferrer' })}>
+                {t(route === 'imprint' ? 'footer.imprint' : 'footer.privacy')}
+            </a>
+        );
+    };
+    return (
+        <footer>
+            <div className='bar'>
+                <span>{version ? t('footer.version', { version }) : 'EduIDE'}</span>
+                <span className='flinks'>
+                    <External link={{ url: footerLinks?.github?.url ?? GITHUB_URL }}>
+                        <span className='gh'>
+                            <Github aria-hidden size={15} />
+                            {t('footer.github')}
+                        </span>
+                    </External>
+                    <External link={bug}>{bug.text}</External>
+                    {optional.map(l => (
+                        <External key={l.url} link={l}>
+                            {l.text}
+                        </External>
+                    ))}
+                    {legalLink('imprint')}
+                    {legalLink('privacy')}
+                </span>
             </div>
-        </div>
+        </footer>
     );
+};

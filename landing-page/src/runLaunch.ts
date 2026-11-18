@@ -24,7 +24,7 @@ export async function runLaunch(
         created = await deps.launch(request);
     } catch {
         if (!signal.aborted) {
-            onState({ kind: 'failed', code: 'internal', message: 'The service could not be reached.' });
+            onState({ kind: 'failed', code: 'unreachable' });
         }
         return;
     }
@@ -36,7 +36,7 @@ export async function runLaunch(
     onState(state);
     for (let attempt = 0; !isFinal(state) && !signal.aborted; attempt += 1) {
         if (attempt > MAX_RECONNECTS) {
-            onState({ kind: 'failed', code: 'internal', message: 'Lost the connection to the service.' });
+            onState({ kind: 'failed', code: 'connection-lost' });
             return;
         }
         try {

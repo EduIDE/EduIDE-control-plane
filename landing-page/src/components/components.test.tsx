@@ -1,207 +1,406 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
 
-import { ThemeProvider } from '../contexts/ThemeContext';
-import { useTheme } from '../contexts/useTheme';
-import { AppLogo } from './AppLogo';
-import { ErrorComponent } from './ErrorComponent';
+import type { Api } from '../api';
+import type { Overview, Session, Template } from '../api-client';
+import type { AppConfig } from '../config';
+import { I18nProvider } from '../I18nProvider';
+import { toRow } from '../overview';
+import { Dialog } from './Dialog';
+import { EnvironmentRows } from './EnvironmentRows';
 import { Footer } from './Footer';
 import { Header } from './Header';
-import { Loading } from './Loading';
-import { Spinner } from './Spinner';
-import { ThemeToggle } from './ThemeToggle';
+import { Home } from './Home';
+import { Launch } from './Launch';
+import { LegalPage } from './LegalPage';
+import { InfoDialog, PickDialog } from './TemplateDialogs';
+import { TemplateTile } from './TemplateTile';
 
-function stubLocation(): { href: string } {
-    const location = { href: '' };
-    vi.stubGlobal('location', location);
-    return location;
-}
+const wrap = (ui: React.ReactNode): React.JSX.Element => <I18nProvider initial='en'>{ui}</I18nProvider>;
+const legal: AppConfig['legal'] = { imprint: { url: 'https://example.org/imprint' }, privacy: { path: '/legal/privacy.md' } };
 
-describe('ErrorComponent', () => {
-    it('shows a message, and nothing without one', () => {
-        const { container, rerender } = render(<ErrorComponent />);
-        expect(container.innerHTML).toBe('');
-        rerender(<ErrorComponent message='kaputt' />);
-        screen.getByText('ERROR: kaputt');
-    });
-});
+const java: Template = {
+    name: 'java-17',
+    displayName: 'Java 17',
+    persistence: ['none', 'volume'],
+    defaultPersistence: 'volume',
+    injectableKeys: ['TEMPLATE'],
+    imageVersion: 'EduIDE 2026.11.2',
+    startEstimate: { volume: { seconds: 25, strategy: 'cold', samples: 3 } },
+    variants: [
+        { id: 'maven', name: 'Maven', description: 'pom.xml' },
+        { id: 'gradle', name: 'Gradle' }
+    ],
+    includes: [{ group: 'Language', items: [{ name: 'OpenJDK', version: '17' }, { name: 'git' }] }]
+};
+const python: Template = {
+    name: 'python',
+    displayName: 'Python',
+    persistence: ['none'],
+    defaultPersistence: 'none',
+    injectableKeys: [],
+    startEstimate: { none: { seconds: 5, strategy: 'warm', samples: 3 } }
+};
 
 describe('Footer', () => {
-    it('falls back to the default links and shows no made-up version', () => {
-        render(<Footer selectedAppDefinition='' />);
-        expect(screen.getByRole('link', { name: /EduIDE/ }).getAttribute('href')).toBe('https://github.com/EduIDE');
-        expect(screen.getByRole('link', { name: /Report a bug/ }).getAttribute('href')).toBe(
+    it('shows the same links everywhere: GitHub, bug report, imprint, privacy, and no feature request or about by default', () => {
+        render(wrap(<Footer legal={legal} />));
+        expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://github.com/EduIDE/EduIDE-control-plane');
+        expect(screen.getByRole('link', { name: 'Report a bug' }).getAttribute('href')).toBe(
             'https://github.com/EduIDE/EduIDE-control-plane/issues'
         );
-        screen.getByRole('link', { name: /Request a feature/ });
-        screen.getByRole('link', { name: 'About' });
-        expect(screen.queryByText('·')).toBeNull();
+        expect(screen.getByRole('link', { name: 'Imprint' }).getAttribute('href')).toBe('https://example.org/imprint');
+        expect(screen.getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('/privacy');
+        expect(screen.queryByText(/feature/i)).toBeNull();
+        expect(screen.queryByRole('link', { name: 'About' })).toBeNull();
     });
 
-    it('uses the configured links and version', () => {
+    it('uses configured links and the version', () => {
         render(
-            <Footer
-                selectedAppDefinition=''
-                footerLinks={{
-                    attribution: { text: 'Built by us', url: 'https://us.example', version: 'v9' },
-                    bugReport: { text: 'Bugs', url: 'https://bugs.example' },
-                    featureRequest: { text: 'Ideas', url: 'https://ideas.example', target: '_self', rel: 'nofollow' },
-                    about: { text: 'Us', url: 'https://about.example' }
-                }}
-            />
+            wrap(
+                <Footer
+                    legal={legal}
+                    footerLinks={{
+                        attribution: { version: 'v9' },
+                        github: { url: 'https://git.example.org/x' },
+                        bugReport: { text: 'Bugs', url: 'https://bugs.example' },
+                        about: { text: 'Us', url: 'https://about.example' }
+                    }}
+                />
+            )
         );
-        expect(screen.getByRole('link', { name: 'Built by us' }).getAttribute('href')).toBe('https://us.example');
-        screen.getByText('v9');
-        const bugs = screen.getByRole('link', { name: /Bugs/ });
-        expect([bugs.getAttribute('href'), bugs.getAttribute('target'), bugs.getAttribute('rel')]).toEqual([
-            'https://bugs.example',
-            '_blank',
-            'noreferrer'
-        ]);
-        const ideas = screen.getByRole('link', { name: /Ideas/ });
-        expect([ideas.getAttribute('target'), ideas.getAttribute('rel')]).toEqual(['_self', 'nofollow']);
-        expect(screen.getByRole('link', { name: 'Us' }).getAttribute('href')).toBe('https://about.example');
-    });
-
-    it('labels the selected app definition only when there is one', () => {
-        const { rerender } = render(<Footer selectedAppDefinition='' />);
-        expect(screen.queryByText('java-17')).toBeNull();
-        rerender(<Footer selectedAppDefinition='java-17' />);
-        screen.getByText('java-17');
-    });
-
-    it('shows Imprint and Privacy links only when configured', () => {
-        const { rerender } = render(<Footer selectedAppDefinition='' />);
-        expect(screen.queryByRole('link', { name: 'Imprint' })).toBeNull();
-        expect(screen.queryByRole('link', { name: 'Privacy' })).toBeNull();
-        rerender(<Footer selectedAppDefinition='' legal={{ privacyUrl: 'https://legal.example/privacy' }} />);
-        expect(screen.queryByRole('link', { name: 'Imprint' })).toBeNull();
-        expect(screen.getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('https://legal.example/privacy');
-        rerender(
-            <Footer
-                selectedAppDefinition=''
-                legal={{ imprintUrl: 'https://legal.example/imprint', privacyUrl: 'https://legal.example/privacy' }}
-            />
-        );
-        expect(screen.getByRole('link', { name: 'Imprint' }).getAttribute('href')).toBe('https://legal.example/imprint');
+        screen.getByText('EduIDE v9');
+        expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://git.example.org/x');
+        expect(screen.getByRole('link', { name: 'Bugs' }).getAttribute('href')).toBe('https://bugs.example');
+        screen.getByRole('link', { name: 'Us' });
     });
 });
 
 describe('Header', () => {
-    const renderHeader = (props: React.ComponentProps<typeof Header>): void => {
-        render(
-            <ThemeProvider>
-                <Header {...props} />
-            </ThemeProvider>
-        );
-    };
-
-    it('shows neither login nor user without Keycloak', () => {
-        renderHeader({});
-        screen.getByRole('heading', { name: 'EduIDE Cloud' });
-        expect(screen.queryByRole('button', { name: 'Login' })).toBeNull();
-        expect(screen.queryByRole('button', { name: 'Logout' })).toBeNull();
-    });
-
-    it('offers login until the user is known', () => {
-        const authenticate = vi.fn();
-        renderHeader({ authenticate });
-        fireEvent.click(screen.getByRole('button', { name: 'Login' }));
-        expect(authenticate).toHaveBeenCalledOnce();
-    });
-
-    it('shows the user instead of login, and logs out through the logout URL', () => {
-        const location = stubLocation();
-        renderHeader({ email: 'ada@example.org', authenticate: vi.fn(), logoutUrl: 'https://keycloak.example/logout' });
-        screen.getByText('ada@example.org');
-        expect(screen.queryByRole('button', { name: 'Login' })).toBeNull();
-        fireEvent.click(screen.getByRole('button', { name: 'Logout' }));
-        expect(location.href).toBe('https://keycloak.example/logout');
-    });
-});
-
-describe('Loading and Spinner', () => {
-    it('shows the default or the configured text with a spinner', () => {
-        const { container, rerender } = render(<Loading />);
-        screen.getByText(/hang in tight/);
-        expect(container.querySelector('.circular-spinner')).not.toBeNull();
-        rerender(<Loading text='Please wait' />);
-        screen.getByText('Please wait');
-    });
-
-    it('Spinner renders on its own', () => {
-        const { container } = render(<Spinner />);
-        expect(container.querySelector('.circular-spinner')).not.toBeNull();
-    });
-});
-
-describe('AppLogo', () => {
-    it('uses the configured file extension', () => {
-        const { container } = render(<AppLogo fileExtension='png' />);
-        expect(container.querySelector('img')?.getAttribute('src')).toBe('/images/logos/theia-logo.png');
-    });
-});
-
-describe('ThemeToggle', () => {
-    const renderToggle = (): void => {
-        render(
-            <ThemeProvider>
-                <ThemeToggle />
-            </ThemeProvider>
-        );
-    };
-
-    beforeEach(() => {
+    it('shows initials with the tooltip and switches the language and signs out through the menu', () => {
+        render(wrap(<Header user={{ initials: 'AS', label: 'Alex Schmidt (ga58roj)' }} logoutUrl='https://kc.example/logout' />));
+        const avatar = screen.getByRole('button', { name: /Alex Schmidt/ });
+        expect(avatar.getAttribute('title')).toBe('Alex Schmidt (ga58roj)');
+        expect(avatar.textContent).toBe('AS');
+        fireEvent.click(avatar);
+        expect(screen.getByRole('menuitem', { name: 'Sign out' }).getAttribute('href')).toBe('https://kc.example/logout');
+        fireEvent.click(screen.getByRole('menuitemradio', { name: /Deutsch/ }));
+        screen.getByRole('button', { name: /Konto/ });
+        expect(localStorage.getItem('lang')).toBe('de');
         localStorage.clear();
-        document.documentElement.removeAttribute('data-theme');
+    });
+});
+
+describe('Dialog', () => {
+    it('focuses in, closes on Escape and returns the focus', () => {
+        const onClose = vi.fn();
+        const Opener = (): React.JSX.Element => (
+            <>
+                <button>open</button>
+            </>
+        );
+        const { rerender } = render(<Opener />);
+        const opener = screen.getByRole('button', { name: 'open' });
+        opener.focus();
+        rerender(
+            <>
+                <Opener />
+                <Dialog label='Hello' onClose={onClose}>
+                    <button>first</button>
+                    <button data-autofocus>second</button>
+                </Dialog>
+            </>
+        );
+        const dialog = screen.getByRole('dialog', { name: 'Hello' });
+        expect(dialog.getAttribute('aria-modal')).toBe('true');
+        expect(document.activeElement).toBe(screen.getByRole('button', { name: 'second' }));
+        fireEvent.keyDown(dialog, { key: 'Escape' });
+        expect(onClose).toHaveBeenCalledOnce();
+        rerender(<Opener />);
+        expect(document.activeElement).toBe(opener);
+    });
+});
+
+describe('TemplateTile', () => {
+    it('shows the start time, the persistence tag with its sentence, and the info button only with includes', () => {
+        const onPick = vi.fn();
+        const onInfo = vi.fn();
+        const { rerender } = render(wrap(<TemplateTile template={java} onPick={onPick} onInfo={onInfo} />));
+        screen.getByText('Ready in about 25 s');
+        const tag = screen.getByLabelText(/Saved workspace\. Your files are kept after the environment stops/);
+        expect(tag.getAttribute('data-tip')).toBe('Your files are kept after the environment stops, so you can continue later.');
+        fireEvent.click(screen.getByRole('button', { name: 'What Java 17 includes' }));
+        expect(onInfo).toHaveBeenCalledWith(java);
+        expect(onPick).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
+        expect(onPick).toHaveBeenCalledWith(java);
+
+        rerender(wrap(<TemplateTile template={python} onPick={onPick} onInfo={onInfo} />));
+        screen.getByText('Ready instantly');
+        screen.getByLabelText(/Temporary workspace\. Your files are deleted when the environment stops\./);
+        expect(screen.queryByRole('button', { name: /includes/ })).toBeNull();
     });
 
-    it('starts light and toggles back and forth, remembering the choice', () => {
-        renderToggle();
-        expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    it('shows no start time without an estimate', () => {
+        render(wrap(<TemplateTile template={{ ...python, startEstimate: undefined }} onPick={vi.fn()} onInfo={vi.fn()} />));
+        expect(screen.queryByText(/Ready/)).toBeNull();
+    });
+});
 
-        fireEvent.click(screen.getByRole('button', { name: 'Switch to dark mode' }));
-        expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-        expect(localStorage.getItem('theme')).toBe('dark');
-
-        fireEvent.click(screen.getByRole('button', { name: 'Switch to light mode' }));
-        expect(document.documentElement.getAttribute('data-theme')).toBe('light');
-        expect(localStorage.getItem('theme')).toBe('light');
+describe('template dialogs', () => {
+    it('lists include groups as name version chips, project templates and the image version', () => {
+        const onStart = vi.fn();
+        render(wrap(<InfoDialog template={java} onClose={vi.fn()} onStart={onStart} />));
+        screen.getByText('OpenJDK 17');
+        screen.getByText('git');
+        screen.getByText('Project templates');
+        screen.getByText('EduIDE 2026.11.2');
+        fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+        expect(onStart).toHaveBeenCalledWith(java);
     });
 
-    it('still works when the browser blocks storage', () => {
-        const blocked = (): never => {
-            throw new DOMException('blocked', 'SecurityError');
-        };
-        vi.stubGlobal('localStorage', { getItem: blocked, setItem: blocked, clear: () => undefined });
-        renderToggle();
-        fireEvent.click(screen.getByRole('button', { name: 'Switch to dark mode' }));
-        expect(document.documentElement.getAttribute('data-theme')).toBe('dark');
-        vi.unstubAllGlobals();
+    it('preselects the first project template, offers an empty project and starts with the choice', () => {
+        const onStart = vi.fn();
+        render(wrap(<PickDialog template={java} onClose={vi.fn()} onInfo={vi.fn()} onStart={onStart} />));
+        screen.getByRole('dialog', { name: 'New Java 17 environment' });
+        expect((screen.getByRole('radio', { name: /Maven/ }) as HTMLInputElement).checked).toBe(true);
+        fireEvent.click(screen.getByRole('radio', { name: /Gradle/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+        expect(onStart).toHaveBeenLastCalledWith(java, 'gradle');
+        fireEvent.click(screen.getByRole('radio', { name: /Empty project/ }));
+        fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+        expect(onStart).toHaveBeenLastCalledWith(java, '');
+        screen.getByText('Saved workspace.');
+    });
+});
+
+const now = Date.now();
+const iso = (ms: number): string => new Date(now + ms).toISOString();
+const session = (over: Partial<Session> = {}): Session => ({
+    name: 's-1',
+    template: 'java-17',
+    phase: 'Ready',
+    createdAt: iso(-12 * 60_000),
+    url: 'https://ide.example.org/s-1/',
+    ...over
+});
+
+describe('EnvironmentRows', () => {
+    const rowFor = (item: Overview['items'][number]): ReturnType<typeof toRow> => toRow(item, now);
+    const running = rowFor({
+        kind: 'session',
+        title: 'Pointer exercise',
+        template: 'c',
+        templateDisplayName: 'C',
+        running: true,
+        stopsAt: iso(5 * 60_000),
+        session: session({ name: 's-2', template: 'c', stopsAt: iso(5 * 60_000) })
+    });
+    const saved = rowFor({
+        kind: 'workspace',
+        title: 'Hello World',
+        template: 'java-17',
+        templateDisplayName: 'Java 17',
+        running: false,
+        lastUsed: iso(-11 * 24 * 3600_000),
+        deletesAt: iso(2 * 24 * 3600_000),
+        workspace: { name: 'w-1', template: 'java-17', phase: 'Ready', createdAt: iso(-20 * 24 * 3600_000) }
+    });
+    const api = (del: ReturnType<typeof vi.fn>): Api => ({ client: { DELETE: del } }) as unknown as Api;
+
+    it('describes the lifecycle and marks files in danger red', () => {
+        render(wrap(<EnvironmentRows rows={[running, saved]} api={api(vi.fn())} onStart={vi.fn()} />));
+        const first = screen.getByText('Pointer exercise').closest('.row') as HTMLElement;
+        expect(within(first).getByText(/^C · temporary workspace · started 12 minutes ago$/)).toBeTruthy();
+        const life = within(first).getByText(/files are deleted then/);
+        expect(life.textContent).toMatch(/^Stops at \d\d:\d\d if inactive, files are deleted then$/);
+        expect(life.className).toContain('danger');
+        const second = screen.getByText('Hello World').closest('.row') as HTMLElement;
+        expect(within(second).getByText(/saved workspace · last used 11 days ago/)).toBeTruthy();
+        const del = within(second).getByText(/unless you start it/);
+        expect(del.className).toContain('danger');
+        expect(within(second).getByRole('button', { name: 'Delete' })).toBeTruthy();
+        expect(within(second).getByRole('button', { name: 'Start' })).toBeTruthy();
     });
 
-    it('ignores a saved theme it does not know', () => {
-        localStorage.setItem('theme', 'neon');
-        renderToggle();
-        expect(document.documentElement.getAttribute('data-theme')).toBe('light');
+    it('starts the row through the callback', () => {
+        const onStart = vi.fn();
+        render(wrap(<EnvironmentRows rows={[saved]} api={api(vi.fn())} onStart={onStart} />));
+        fireEvent.click(screen.getByRole('button', { name: 'Start' }));
+        expect(onStart).toHaveBeenCalledWith(saved);
     });
 
-    it('follows the system preference without a saved choice', () => {
-        vi.stubGlobal('matchMedia', () => ({ matches: true }));
-        renderToggle();
-        screen.getByRole('button', { name: 'Switch to light mode' });
+    it('confirms before deleting, names the consequences and deletes the workspace', async () => {
+        const del = vi.fn(async () => ({ response: { ok: true, status: 204 } }));
+        const onDeleted = vi.fn();
+        render(wrap(<EnvironmentRows rows={[saved]} api={api(del)} onStart={vi.fn()} onDeleted={onDeleted} />));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        const dialog = screen.getByRole('dialog', { name: 'Delete Hello World?' });
+        expect(dialog.textContent).toContain('deleted permanently and cannot be restored');
+        expect(dialog.textContent).not.toContain('open IDE');
+        expect(del).not.toHaveBeenCalled();
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+        await waitFor(() => expect(onDeleted).toHaveBeenCalledWith(saved));
+        expect(del).toHaveBeenCalledWith('/workspaces/{name}', { params: { path: { name: 'w-1' } } });
+        expect(screen.queryByRole('dialog')).toBeNull();
     });
 
-    it('prefers the saved choice over the system preference', () => {
-        localStorage.setItem('theme', 'light');
-        vi.stubGlobal('matchMedia', () => ({ matches: true }));
-        renderToggle();
-        screen.getByRole('button', { name: 'Switch to dark mode' });
+    it('warns that the IDE stops for a running item, and shows a readable error when deleting times out', async () => {
+        const del = vi.fn(async () => ({ response: { ok: false, status: 500 }, error: { code: 'internal' } }));
+        render(wrap(<EnvironmentRows rows={[running]} api={api(del)} onStart={vi.fn()} />));
+        fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+        const dialog = screen.getByRole('dialog');
+        expect(dialog.textContent).toContain('The open IDE stops.');
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Delete' }));
+        await screen.findByText('Deleting takes longer than expected. Try again in a moment.');
+        expect(screen.getByRole('dialog')).toBeTruthy();
+        fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
+        expect(screen.queryByRole('dialog')).toBeNull();
+    });
+});
+
+describe('Home', () => {
+    const overview = (items: Overview['items']): Api =>
+        ({
+            client: {},
+            watchOverview: async (on: (o: Overview) => void) => {
+                on({ items });
+                await new Promise(() => undefined);
+            }
+        }) as unknown as Api;
+
+    it('greets a new user, shows the empty hint and starts a template without variants directly', async () => {
+        const onLaunch = vi.fn();
+        render(wrap(<Home api={overview([])} templates={[python]} firstName='Alex' onLaunch={onLaunch} onStartRow={vi.fn()} />));
+        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        screen.getByRole('heading', { level: 1, name: 'Welcome, Alex' });
+        fireEvent.click(screen.getByRole('button', { name: 'Start Python' }));
+        expect(onLaunch).toHaveBeenCalledWith({ template: 'python' }, python);
     });
 
-    it('useTheme refuses to work outside the provider', () => {
-        vi.spyOn(console, 'error').mockImplementation(() => undefined);
-        const Consumer = (): React.JSX.Element => <span>{useTheme().theme}</span>;
-        expect(() => render(<Consumer />)).toThrow('useTheme must be used within a ThemeProvider');
+    it('greets a returning user, lists the environments on top and starts a variant through the picker', async () => {
+        const onLaunch = vi.fn();
+        const items: Overview['items'] = [
+            { kind: 'session', title: 'Linked lists', template: 'java-17', running: true, session: session() }
+        ];
+        render(wrap(<Home api={overview(items)} templates={[java]} firstName='Alex' onLaunch={onLaunch} onStartRow={vi.fn()} />));
+        await screen.findByText('Linked lists');
+        screen.getByRole('heading', { level: 1, name: 'Welcome back, Alex' });
+        const sections = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent);
+        expect(sections[0]).toContain('Your environments');
+        fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
+        fireEvent.click(screen.getByRole('radio', { name: /Gradle/ }));
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Start' }));
+        expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17', data: { TEMPLATE: 'gradle' } }, java);
+        expect(screen.queryByRole('dialog')).toBeNull();
+    });
+
+    it('opens the info dialog from the picker', async () => {
+        render(wrap(<Home api={overview([])} templates={[java]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
+        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        screen.getByRole('heading', { level: 1, name: 'Welcome' });
+        fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
+        fireEvent.click(screen.getByRole('button', { name: "What's included" }));
+        screen.getByRole('dialog', { name: 'What this environment includes' });
+    });
+});
+
+describe('Launch', () => {
+    const info = { title: 'Hello World', templateName: 'C', seconds: 5 };
+    const launchApi = (launch: () => Promise<unknown>, watch = async (): Promise<void> => new Promise<void>(() => undefined)): Api =>
+        ({ launchDeps: { launch, watch }, client: { DELETE: vi.fn() } }) as unknown as Api;
+
+    it('shows the API phases and the time estimate, never that the tab can be closed', async () => {
+        render(
+            wrap(
+                <Launch
+                    api={launchApi(async () => ({ session: session({ phase: 'Starting' }) }))}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        await screen.findByText('Starting your environment');
+        screen.getByText('Request accepted');
+        screen.getByText('Opening the IDE');
+        screen.getByText('Usually ready in about 5 seconds.');
+        expect(document.body.textContent).not.toMatch(/close/i);
+    });
+
+    it('lists the running environments at the session limit with the actual count and a Back button, without the code', async () => {
+        const onBack = vi.fn();
+        const sessions = [session({ name: 'a', display: { title: 'One' } }), session({ name: 'b', display: { title: 'Two' } })];
+        render(
+            wrap(
+                <Launch
+                    api={launchApi(async () => ({ problem: { code: 'session-limit-reached', sessions } }))}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[java]}
+                    onBack={onBack}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        await screen.findByText('You already have 2 environments running');
+        screen.getByText('Delete one to start a new one, or continue in one of these.');
+        screen.getByText('One');
+        screen.getByText('Two');
+        expect(document.body.textContent).not.toContain('session-limit-reached');
+        expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(2);
+        fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+        expect(onBack).toHaveBeenCalledOnce();
+    });
+
+    it('shows a readable message with Try again and Back for other failures', async () => {
+        render(
+            wrap(
+                <Launch
+                    api={launchApi(async () => ({ problem: { code: 'capacity-exhausted' } }))}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        await screen.findByText('The cluster is full right now. Please try again in a few minutes.');
+        screen.getByRole('button', { name: 'Try again' });
+        screen.getByRole('button', { name: 'Back' });
+        expect(document.body.textContent).not.toContain('capacity-exhausted');
+    });
+});
+
+describe('LegalPage', () => {
+    it('renders sanitized Markdown from the hosted file', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response('# Privacy\n\n<script>alert(1)</script>Hello', { status: 200 }))
+        );
+        const { container } = render(wrap(<LegalPage route='privacy' page={{ path: '/legal/privacy.md' }} />));
+        await waitFor(() => expect(container.querySelector('.prose')).not.toBeNull());
+        expect(container.querySelector('.prose script')).toBeNull();
+        expect(container.querySelector('.prose')?.textContent).toContain('Hello');
+        expect(fetch).toHaveBeenCalledWith('/legal/privacy.md', expect.anything());
+    });
+
+    it('says so when the file is missing', async () => {
+        vi.stubGlobal(
+            'fetch',
+            vi.fn(async () => new Response('', { status: 404 }))
+        );
+        render(wrap(<LegalPage route='imprint' page={{ path: '/legal/imprint.md' }} />));
+        await screen.findByText('This page is not available.');
+    });
+
+    it('sends the browser to an external page', () => {
+        const replace = vi.fn();
+        vi.stubGlobal('location', { replace });
+        render(wrap(<LegalPage route='imprint' page={{ url: 'https://example.org/imprint' }} />));
+        expect(replace).toHaveBeenCalledWith('https://example.org/imprint');
     });
 });
