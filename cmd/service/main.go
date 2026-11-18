@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -49,11 +50,12 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	shutdownTelemetry, err := telemetry.Setup(ctx, "service", cfg.Telemetry.OTLPEndpoint)
+	shutdownTelemetry, err := telemetry.Setup(ctx, "eduide-service", cfg.Telemetry.OTLPEndpoint)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = shutdownTelemetry(context.Background()) }()
+	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
 	scheme := runtime.NewScheme()
 	if err := errors.Join(clientgoscheme.AddToScheme(scheme), v1alpha1.AddToScheme(scheme)); err != nil {

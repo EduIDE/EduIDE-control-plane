@@ -402,3 +402,25 @@ func TestProxyKeepsForwardedHeaders(t *testing.T) {
 		t.Errorf("code %d, ide saw %v", code, seen)
 	}
 }
+
+func TestHeartbeatDropsIdleWarnings(t *testing.T) {
+	a := newAgent(t, "1")
+	for _, kind := range []string{"idle-warning", "max-warning"} {
+		body := `{"kind":"` + kind + `","message":"soon"}`
+		if w := do(t, a.ControlHandler(), "POST", "/v1/notify", body, bearer); w.Code != 204 {
+			t.Fatalf("notify %s: %d", kind, w.Code)
+		}
+	}
+	before, _ := poll(t, a, "after=0&timeout=0")
+	if before.Notices == nil || len(*before.Notices) != 2 {
+		t.Fatalf("notices before: %+v", before.Notices)
+	}
+	do(t, a.LocalHandler(), "POST", "/v1/heartbeat", "", nil)
+	after, _ := poll(t, a, "after=0&timeout=0")
+	if after.Version <= before.Version {
+		t.Errorf("version did not grow: %d -> %d", before.Version, after.Version)
+	}
+	if after.Notices == nil || len(*after.Notices) != 1 || (*after.Notices)[0].Kind != agentapi.MaxWarning {
+		t.Errorf("notices after: %+v", after.Notices)
+	}
+}

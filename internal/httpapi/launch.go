@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strings"
@@ -54,6 +55,7 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 			}
 			span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.session", sess.Name), attribute.String("eduide.launch_result", res))
 			telemetry.Launches.WithLabelValues(template, res).Inc()
+			slog.InfoContext(ctx, "launch", "session", sess.Name, "template", template, "result", res, "user", s.userID(u.Owner))
 			writeJSON(w, status, sessionToAPI(sess))
 			return
 		}
@@ -64,6 +66,7 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 	span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.launch_result", "rejected"))
 	span.SetStatus(codes.Error, string(perr.code)) // the code only: details may name launch data keys
 	telemetry.Launches.WithLabelValues(template, "rejected").Inc()
+	slog.InfoContext(ctx, "launch", "template", template, "result", "rejected", "code", string(perr.code), "user", s.userID(u.Owner))
 	writeProblem(w, perr)
 }
 
@@ -303,3 +306,6 @@ func (s *Server) createSession(ctx context.Context, owner string, tpl *v1alpha1.
 }
 
 func randomName() string { return "s-" + strings.ToLower(rand.Text()[:10]) }
+
+// userID is the pseudonymous user id of logs and spans (G17).
+func (s *Server) userID(owner string) string { return telemetry.UserID(s.salt, owner) }

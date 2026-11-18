@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -42,6 +43,8 @@ type Options struct {
 	Agent *agentclient.Client
 	// AgentURL resolves the control address of a pod's agent. Default: http://<podIP>:8081.
 	AgentURL func(*corev1.Pod) (string, error)
+	// Salt keys the pseudonymous user id in logs (telemetry.userSaltFile).
+	Salt []byte
 	// PollInterval between agent status polls of a session. Default 60s.
 	PollInterval time.Duration
 }
@@ -57,6 +60,8 @@ type deps struct {
 	agent    *agentclient.Client
 	agentURL func(*corev1.Pod) (string, error)
 	poll     time.Duration
+	salt     []byte
+	events   record.EventRecorder
 }
 
 // NewScheme returns a scheme with core Kubernetes, Gateway API and EduIDE types.
@@ -73,6 +78,7 @@ func SetupWithManager(mgr ctrl.Manager, o Options) error {
 	d := &deps{
 		Client: mgr.GetClient(), reader: mgr.GetAPIReader(), scheme: mgr.GetScheme(),
 		cfg: o.Config, clock: o.Clock, agent: o.Agent, agentURL: o.AgentURL, poll: o.PollInterval,
+		salt: o.Salt, events: mgr.GetEventRecorderFor(fieldManager),
 	}
 	if d.clock == nil {
 		d.clock = realClock{}

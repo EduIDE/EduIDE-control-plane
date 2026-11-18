@@ -146,3 +146,28 @@ func TestNewInstanceID(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+func TestStuckWaiting(t *testing.T) {
+	waiting := func(reason string) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: "ide", State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason}}}
+	}
+	tests := []struct {
+		name         string
+		p            corev1.Pod
+		wantContName string
+		want         string
+	}{
+		{"pulling is fine", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("ContainerCreating")}}}, "", ""},
+		{"image pull backoff", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("ImagePullBackOff")}}}, "ide", "ImagePullBackOff"},
+		{"init container", corev1.Pod{Status: corev1.PodStatus{InitContainerStatuses: []corev1.ContainerStatus{waiting("ErrImagePull")}}}, "ide", "ErrImagePull"},
+		{"config error", corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{waiting("CreateContainerConfigError")}}}, "ide", "CreateContainerConfigError"},
+		{"no status", corev1.Pod{}, "", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if c, r := StuckWaiting(&tc.p); c != tc.wantContName || r != tc.want {
+				t.Errorf("got %q %q", c, r)
+			}
+		})
+	}
+}

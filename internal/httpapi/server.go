@@ -46,14 +46,55 @@ func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, s
 
 // Handler serves the API under /api/v1; every route needs a valid bearer token.
 func (s *Server) Handler(v auth.Verifier) http.Handler {
-	return HandlerWithOptions(s, StdHTTPServerOptions{
+	return secureAndProblemFallback(HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseURL:     basePath,
 		Middlewares: []MiddlewareFunc{auth.Middleware(v), metricsMiddleware}, // last is outermost
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeProblem(w, problem(CodeInvalidInput, "invalid request parameter"))
 		},
+	}))
+}
+
+// secureAndProblemFallback adds the transport security headers to every response and turns the
+// plain text 404 and 405 of the mux (unknown path or method) into Problem Details.
+func secureAndProblemFallback(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("X-Content-Type-Options", "nosniff")
+		next.ServeHTTP(&fallbackWriter{ResponseWriter: w}, r)
 	})
 }
+
+type fallbackWriter struct {
+	http.ResponseWriter
+	swallow bool
+}
+
+func (f *fallbackWriter) WriteHeader(code int) {
+	if (code == http.StatusNotFound || code == http.StatusMethodNotAllowed) && strings.HasPrefix(f.Header().Get("Content-Type"), "text/plain") {
+		f.swallow = true
+		f.Header().Del("Content-Length")
+		e := problem(CodeNotFound, "no such endpoint")
+		if code == http.StatusMethodNotAllowed {
+			e = problem(CodeInvalidInput, "method not allowed")
+			e.status, e.title = code, http.StatusText(code)
+		}
+		writeProblem(f.ResponseWriter, e)
+		return
+	}
+	f.ResponseWriter.WriteHeader(code)
+}
+
+func (f *fallbackWriter) Write(p []byte) (int, error) {
+	if f.swallow {
+		return len(p), nil
+	}
+	return f.ResponseWriter.Write(p)
+}
+
+// Unwrap lets http.ResponseController reach Flush for SSE.
+func (f *fallbackWriter) Unwrap() http.ResponseWriter { return f.ResponseWriter }
 
 func user(r *http.Request) auth.User {
 	u, _ := auth.FromContext(r.Context())

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -45,6 +46,13 @@ func run(cfgPath string) error {
 		return err
 	}
 	defer func() { _ = shutdown(context.Background()) }()
+	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
+	var salt []byte
+	if cfg.Telemetry.UserSaltFile != "" {
+		if salt, err = os.ReadFile(cfg.Telemetry.UserSaltFile); err != nil {
+			return err
+		}
+	}
 	metrics.Registry.MustRegister(telemetry.OperatorMetrics...)
 
 	restCfg := ctrl.GetConfigOrDie()
@@ -82,7 +90,7 @@ func run(cfgPath string) error {
 	if err != nil {
 		return err
 	}
-	if err := controller.SetupWithManager(mgr, controller.Options{Config: cfg}); err != nil {
+	if err := controller.SetupWithManager(mgr, controller.Options{Config: cfg, Salt: salt}); err != nil {
 		return err
 	}
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

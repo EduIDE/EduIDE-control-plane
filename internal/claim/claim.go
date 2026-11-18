@@ -31,6 +31,21 @@ func Usable(p *corev1.Pod) bool {
 	return p.DeletionTimestamp == nil && p.Status.Phase != corev1.PodFailed && p.Status.Phase != corev1.PodSucceeded
 }
 
+// stuckWaiting are container waiting reasons that do not heal by waiting: a wrong image name or tag, no pull access, a broken container config.
+var stuckWaiting = map[string]bool{"ErrImagePull": true, "ImagePullBackOff": true, "InvalidImageName": true, "CreateContainerConfigError": true}
+
+// StuckWaiting returns the container and the waiting reason of a container that waits for a reason that does not heal, or "".
+func StuckWaiting(p *corev1.Pod) (container, reason string) {
+	for _, list := range [][]corev1.ContainerStatus{p.Status.InitContainerStatuses, p.Status.ContainerStatuses} {
+		for _, cs := range list {
+			if w := cs.State.Waiting; w != nil && stuckWaiting[w.Reason] {
+				return cs.Name, w.Reason
+			}
+		}
+	}
+	return "", ""
+}
+
 // Unschedulable reports whether the scheduler could not place the pod.
 func Unschedulable(p *corev1.Pod) bool {
 	for _, c := range p.Status.Conditions {

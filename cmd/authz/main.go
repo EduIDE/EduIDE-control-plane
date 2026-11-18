@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/go-logr/logr"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -47,11 +48,12 @@ func run(cfgPath string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	shutdownTel, err := telemetry.Setup(ctx, "authz", cfg.Telemetry.OTLPEndpoint)
+	shutdownTel, err := telemetry.Setup(ctx, "eduide-authz", cfg.Telemetry.OTLPEndpoint)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = shutdownTel(context.Background()) }()
+	ctrl.SetLogger(logr.FromSlogHandler(slog.Default().Handler()))
 
 	var salt []byte
 	if cfg.Telemetry.UserSaltFile != "" {

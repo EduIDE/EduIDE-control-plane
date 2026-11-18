@@ -89,11 +89,12 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: mount}},
 	}
 	podSec := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
+	yes, no := true, false
+	ide.SecurityContext = &corev1.SecurityContext{AllowPrivilegeEscalation: &no, Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}
 	if u := t.Spec.RunAsUser; u != nil {
-		ide.SecurityContext = &corev1.SecurityContext{RunAsUser: u, RunAsNonRoot: new(*u != 0)}
+		ide.SecurityContext.RunAsUser, ide.SecurityContext.RunAsNonRoot = u, new(*u != 0)
 		podSec.FSGroup = u
 	}
-	yes, no := true, false
 	agent := corev1.Container{
 		Name: "agent", Image: d.cfg.Agent.Image, Resources: d.cfg.Agent.Resources,
 		Ports: []corev1.ContainerPort{{Name: "proxy", ContainerPort: 8080}, {Name: "control", ContainerPort: 8081}},
@@ -234,6 +235,9 @@ func (d *deps) buildRoute(meta metav1.ObjectMeta, instance, token string) *gatew
 					Set: []gatewayv1.HTTPHeader{{Name: v1.InstanceTokenHeader, Value: token}}}},
 				{Type: gatewayv1.HTTPRouteFilterURLRewrite, URLRewrite: &gatewayv1.HTTPURLRewriteFilter{
 					Path: &gatewayv1.HTTPPathModifier{Type: gatewayv1.PrefixMatchHTTPPathModifier, ReplacePrefixMatch: &root}}},
+				// Only HSTS: the IDE sets its own CSP and frame options.
+				{Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier, ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+					Set: []gatewayv1.HTTPHeader{{Name: "Strict-Transport-Security", Value: "max-age=31536000"}}}},
 			},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 				Name: gatewayv1.ObjectName(podName(instance)), Port: &port}}}},

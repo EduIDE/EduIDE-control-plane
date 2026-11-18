@@ -46,6 +46,7 @@ const (
 	ErrorTemplateNotFound  = "template-not-found"
 	ErrorWorkspaceNotFound = "workspace-not-found"
 	ErrorStartFailed       = "start-failed"
+	ErrorWorkspaceInUse    = "workspace-in-use"
 )
 
 type SessionTimestamps struct {

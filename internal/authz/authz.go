@@ -14,6 +14,10 @@ import (
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	authv3 "github.com/envoyproxy/go-control-plane/envoy/service/auth/v3"
 	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc/codes"
 
@@ -62,6 +66,9 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (resp *aut
 	start := time.Now()
 	d := deny("internal")
 	user := ""
+	// A span only when the caller's trace is sampled, so unsampled checks cost nothing.
+	var span trace.Span
+	ctx, span = checkSpan(ctx, req.GetAttributes().GetRequest().GetHttp())
 	defer func() {
 		if r := recover(); r != nil {
 			d, user = deny("internal"), ""
@@ -69,6 +76,8 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (resp *aut
 		}
 		telemetry.AuthzDecisions.WithLabelValues(d.result, d.reason).Inc()
 		telemetry.AuthzDuration.Observe(time.Since(start).Seconds())
+		span.SetAttributes(attribute.String("eduide.authz_result", d.result), attribute.String("eduide.authz_reason", d.reason))
+		span.End()
 		slog.DebugContext(ctx, "authz decision", "result", d.result, "reason", d.reason, "user", user)
 	}()
 	d, user = s.decide(ctx, req.GetAttributes().GetRequest().GetHttp())
@@ -229,4 +238,18 @@ func header(k, v string) *corev3.HeaderValueOption {
 		Header:       &corev3.HeaderValue{Key: k, Value: v},
 		AppendAction: corev3.HeaderValueOption_APPEND_IF_EXISTS_OR_ADD,
 	}
+}
+
+// checkSpan starts the span "authz.check" below the traceparent of the request when that is sampled.
+// Otherwise it returns a span that records nothing.
+func checkSpan(ctx context.Context, h *authv3.AttributeContext_HttpRequest) (context.Context, trace.Span) {
+	tp := h.GetHeaders()["traceparent"]
+	if tp == "" {
+		return ctx, trace.SpanFromContext(context.Background())
+	}
+	pctx := propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": tp})
+	if !trace.SpanContextFromContext(pctx).IsSampled() {
+		return ctx, trace.SpanFromContext(context.Background())
+	}
+	return otel.Tracer("eduide-authz").Start(pctx, "authz.check")
 }

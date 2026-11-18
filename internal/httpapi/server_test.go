@@ -1,9 +1,12 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -345,6 +348,81 @@ func TestMetricsOperationID(t *testing.T) {
 	} {
 		if got := operationID(pattern); got != want {
 			t.Errorf("%s: %s, want %s", pattern, got, want)
+		}
+	}
+}
+
+func TestUnknownRoutesAnswerProblemJSON(t *testing.T) {
+	e := newEnv(t)
+	for _, tc := range []struct {
+		method, path string
+		status       int
+	}{
+		{"GET", "/nope", 404},
+		{"GET", "/sessions/a/b/c", 404},
+		{"PUT", "/sessions", 405},
+	} {
+		req := httptest.NewRequest(tc.method, basePath+tc.path, nil)
+		rec := httptest.NewRecorder()
+		e.handler.ServeHTTP(rec, req)
+		if rec.Code != tc.status || rec.Header().Get("Content-Type") != "application/problem+json" {
+			t.Errorf("%s %s: %d %q %s", tc.method, tc.path, rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+			continue
+		}
+		var p Problem
+		if err := json.Unmarshal(rec.Body.Bytes(), &p); err != nil || p.Status != tc.status || p.Code == "" {
+			t.Errorf("%s %s: body %s", tc.method, tc.path, rec.Body)
+		}
+		if tc.status == 405 && rec.Header().Get("Allow") == "" {
+			t.Error("Allow header lost")
+		}
+	}
+	rec := httptest.NewRecorder()
+	e.handler.ServeHTTP(rec, httptest.NewRequest("GET", "/elsewhere", nil))
+	if rec.Code != 404 || rec.Header().Get("Content-Type") != "application/problem+json" {
+		t.Errorf("outside the base path: %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestResponsesCarryHSTS(t *testing.T) {
+	e := newEnv(t)
+	for name, rec := range map[string]*httptest.ResponseRecorder{
+		"unauthorized": e.do("GET", "/sessions", "", nil),
+		"ok":           e.do("GET", "/sessions", "alice", nil),
+		"unknown": func() *httptest.ResponseRecorder {
+			rec := httptest.NewRecorder()
+			e.handler.ServeHTTP(rec, httptest.NewRequest("GET", basePath+"/nope", nil))
+			return rec
+		}(),
+	} {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+			t.Errorf("%s: HSTS %q", name, got)
+		}
+		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+			t.Errorf("%s: no nosniff", name)
+		}
+	}
+}
+
+func TestLaunchIsLoggedWithoutLaunchData(t *testing.T) {
+	var buf bytes.Buffer
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+	defer slog.SetDefault(old)
+	e := newEnv(t)
+	if rec := e.do("POST", "/sessions", "alice", launchBody(nil)); rec.Code != 201 {
+		t.Fatal(rec.Body)
+	}
+	e.do("POST", "/sessions", "alice", map[string]any{"template": "nope"})
+	out := buf.String()
+	for _, want := range []string{`"msg":"launch"`, `"result":"created"`, `"template":"java"`, `"result":"rejected"`, `"code":"template-not-found"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log lacks %s:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"alice", "secret-token-value", gitURI} {
+		if strings.Contains(out, bad) {
+			t.Errorf("log contains %q", bad)
 		}
 	}
 }
