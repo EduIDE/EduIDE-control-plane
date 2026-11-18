@@ -1,0 +1,67 @@
+{{- $full := include "ecp.fullname" . }}
+{{- $host := .Values.config.hosts.instance }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $full }}-api
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    {{- include "ecp.parentRef" . | nindent 4 }}
+  hostnames: [{{ .Values.config.hosts.service | quote }}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /api/}
+    backendRefs:
+    - {name: {{ $full }}-service, port: 8080}
+---
+# Gives the OIDC callback a route; the service answers 404 for it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $full }}-oauth2
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+    eduide.github.io/route: session
+spec:
+  parentRefs:
+    {{- include "ecp.parentRef" . | nindent 4 }}
+  hostnames: [{{ $host | quote }}]
+  rules:
+  - matches:
+    - path: {type: PathPrefix, value: /oauth2/}
+    backendRefs:
+    - {name: {{ $full }}-service, port: 8080}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: {{ $full }}-session
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  targetSelectors:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    matchLabels:
+      eduide.github.io/route: session
+  oidc:
+    provider:
+      issuer: {{ .Values.config.oidc.issuerURL | quote }}
+    clientID: {{ .Values.config.oidc.gatewayClientID | quote }}
+    clientSecret:
+      name: {{ .Values.oidc.clientSecretName }}
+    redirectURL: https://{{ $host }}/oauth2/callback
+    logoutPath: /oauth2/logout
+    cookieDomain: {{ $host | quote }}
+    cookieNames:
+      idToken: {{ .Values.config.oidc.idTokenCookie | default "eduide-id" | quote }}
+    refreshToken: true
+    scopes: [openid, profile, email]
+  extAuth:
+    failOpen: false
+    grpc:
+      backendRefs:
+      - {name: {{ $full }}-authz, port: 9001}

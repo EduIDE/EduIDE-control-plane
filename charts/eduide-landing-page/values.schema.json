@@ -1,0 +1,9 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["host", "gateway"],
+  "properties": {
+    "host": {"type": "string", "minLength": 1},
+    "gateway": {"type": "object", "required": ["name"], "properties": {"name": {"type": "string", "minLength": 1}}}
+  }
+}

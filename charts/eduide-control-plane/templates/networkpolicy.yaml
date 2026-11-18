@@ -1,0 +1,150 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $full := include "ecp.fullname" . }}
+{{- $np := .Values.networkPolicy }}
+{{- $envoy := list (dict "namespaceSelector" $np.envoy.namespaceSelector "podSelector" $np.envoy.podSelector) }}
+{{- $mon := list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $np.monitoringNamespace))) }}
+{{- $session := dict "eduide.github.io/component" "session" }}
+---
+# Default deny for ingress of session pods: no session pod can reach another one.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-session-default-deny
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $session | nindent 6 }}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-session-from-envoy
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $session | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    {{- toYaml $envoy | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 8080}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-session-from-operator
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $session | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- include "ecp.selector" (dict "ctx" . "component" "operator") | nindent 10 }}
+    ports:
+    - {protocol: TCP, port: 8081}
+{{- with $np.sessionEgress }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-session-egress
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $session | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-service
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "service") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    {{- toYaml $envoy | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 8080}
+  - from:
+    {{- toYaml $mon | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9090}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-authz
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "authz") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    {{- toYaml $envoy | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9001}
+  - from:
+    {{- toYaml $mon | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9090}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-operator
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "operator") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    {{- toYaml $mon | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9464}
+{{- if .Values.poolScaler.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-pool-scaler
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "pool-scaler") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    {{- toYaml $mon | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9090}
+{{- end }}
+{{- end }}

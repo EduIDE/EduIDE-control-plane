@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["config", "oidc"],
+  "properties": {
+    "config": {
+      "type": "object",
+      "required": ["deployment", "hosts", "gateway", "oidc"],
+      "properties": {
+        "deployment": {"type": "string", "minLength": 1},
+        "hosts": {
+          "type": "object",
+          "required": ["service", "instance"],
+          "properties": {
+            "service": {"type": "string", "minLength": 1},
+            "instance": {"type": "string", "minLength": 1},
+            "webview": {"type": "string"}
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {"name": {"type": "string", "minLength": 1}}
+        },
+        "oidc": {
+          "type": "object",
+          "required": ["issuerURL", "clientIDs", "gatewayClientID"],
+          "properties": {
+            "issuerURL": {"type": "string", "minLength": 1},
+            "clientIDs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "gatewayClientID": {"type": "string", "minLength": 1},
+            "idTokenCookie": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "oidc": {
+      "type": "object",
+      "required": ["clientSecretName"],
+      "properties": {"clientSecretName": {"type": "string", "minLength": 1}}
+    },
+    "templates": {
+      "type": "array",
+      "items": {"type": "object", "required": ["name", "spec"]}
+    },
+    "operator": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}},
+    "service": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}},
+    "authz": {"type": "object", "properties": {"replicas": {"type": "integer", "minimum": 1}}}
+  }
+}

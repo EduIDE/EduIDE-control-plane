@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ecp.fullname" . }}-config
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    {{- include "ecp.config" . | nindent 4 }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: eduide-control-plane-crds
+description: CustomResourceDefinitions of the EduIDE control plane (install once per cluster, before the control plane chart)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
