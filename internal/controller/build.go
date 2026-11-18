@@ -220,7 +220,7 @@ func (d *deps) buildRoute(meta metav1.ObjectMeta, instance, token string) *gatew
 		parent.SectionName = &sn
 	}
 	if g.Port != 0 {
-		gp := gatewayv1.PortNumber(g.Port)
+		gp := g.Port
 		parent.Port = &gp
 	}
 	prefix, root, port := "/"+instance+"/", "/", gatewayv1.PortNumber(8080)
