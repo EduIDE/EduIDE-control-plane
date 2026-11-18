@@ -577,3 +577,17 @@ func TestPoolExpectations(t *testing.T) {
 		t.Fatalf("after the TTL: %d", n)
 	}
 }
+
+// The service creates the workspace right before the session, so the operator can see the session first.
+func TestSessionWaitsForLateWorkspace(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-late"))
+	createSession(t, "s-late", "tpl-late", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-late" })
+	time.Sleep(time.Second)
+	if st := sessionStatus("s-late"); st.Phase == v1.SessionFailed {
+		t.Fatalf("session failed before the workspace arrived: %+v", st)
+	}
+	mustCreate(t, &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-late", Namespace: testNS},
+		Spec: v1.IDEWorkspaceSpec{Owner: "alice", TemplateRef: "tpl-late", Persistence: v1.WorkspacePersistence{Mode: v1.WorkspaceVolume}}})
+	eventually(t, "session pod with the late workspace", func() bool { return sessionStatus("s-late").PodName != "" })
+}

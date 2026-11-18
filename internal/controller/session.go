@@ -85,6 +85,9 @@ func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
 		WithOptions(opts(16)).Complete(r)
 }
 
+// workspaceWaitLimit is how long a session waits for a workspace that is not in the cache yet.
+const workspaceWaitLimit = 30 * time.Second
+
 // traced runs f in a child span named name, one per phase of the start path.
 func traced[T any](ctx context.Context, name string, f func(context.Context) (T, bool, error)) (T, bool, error) {
 	ctx, span := otel.Tracer("eduide-operator").Start(ctx, name)
@@ -178,6 +181,10 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 		ws := &v1.IDEWorkspace{}
 		if err := r.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: ref}, ws); err != nil {
 			if apierrors.IsNotFound(err) {
+				// The service creates the workspace right before the session; the cache may not have it yet.
+				if r.clock.Now().Sub(s.CreationTimestamp.Time) < workspaceWaitLimit {
+					return nil, ctrl.Result{RequeueAfter: 500 * time.Millisecond}, nil
+				}
 				res, err := r.fail(ctx, s, v1.ErrorWorkspaceNotFound, fmt.Sprintf("workspace %s not found", ref))
 				return nil, res, err
 			}
