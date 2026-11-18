@@ -33,6 +33,10 @@ Chosen option: "separate `IDEPool` with `/scale` and bare pods".
   The operator keeps `clamp(max(minIdle, targetIdle), 0, maxInstances - claimed)` idle instances, and 0 under capacity pressure.
 - `/scale` maps to `spec.targetIdle` and `status.replicas`. Status also has `idleReady`, `idleStarting`, `claimed` and conditions, so the scaler reads numbers and counts no pods.
 - Pool instances are bare pods. The pool controller replaces the ReplicaSet. This saves two API objects per instance.
+- Every pool pod carries the annotation `eduide.github.io/spec-hash` (template spec, agent image, placement). The pool deletes idle pods with another hash: starting ones at once, ready ones one at a time, and never the last ready one (it starts one replacement above target when needed). Claimed pods are never touched.
+- Idle pods with a restarted container, or with a container that waits with a pull or config error for more than 60 s, are deleted and recreated. A claim never takes such a pod. A claimed pod without a live session is deleted after 30 s.
+- The pool controller repairs the Service and HTTPRoute of idle pods. A pod without its token Secret is deleted, because the token cannot be restored.
+- Only the oldest `IDEPool` of a template is active. Another pool of the same template gets `Ready=False` with reason `DuplicateTemplate` and keeps 0 idle pods.
 - Capacity pressure (G8): when a session pod is `Unschedulable` or hits quota, the operator deletes the oldest idle pod of any pool in the same node pool and holds those pools at 0 idle while the pressure lasts.
   After 45 s (`capacity.exhaustedAfter`) without room the session fails with `capacity-exhausted`.
   PriorityClass is not used: the priority of a claimed pool pod cannot change, and quota pressure triggers no preemption.

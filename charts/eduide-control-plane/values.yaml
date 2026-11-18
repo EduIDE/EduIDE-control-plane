@@ -115,8 +115,24 @@ networkPolicy:
         app.kubernetes.io/name: envoy
   # Namespace of the Prometheus that scrapes the metrics ports.
   monitoringNamespace: monitoring
-  # Egress rules for session pods (NetworkPolicyEgressRule list). Empty: egress stays open.
+  # Egress rules for session pods (NetworkPolicyEgressRule list). When set, it replaces the default below.
   sessionEgress: []
+  # Default session egress: DNS and the internet, without these private and link-local ranges
+  # (node network, metadata service, other pods and services).
+  sessionEgressDeny:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  - 169.254.0.0/16
+  - 100.64.0.0/10
+  - fc00::/7
+  - fe80::/10
+  # Cluster specific ranges to deny as well, for example the pod CIDR and the node network when they are public.
+  sessionEgressExtraDeny: []
+  # Where session pods may resolve names.
+  dnsNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: kube-system
 
 # Secret with the salt for pseudonymous user ids in spans (G17). Generated once, kept on upgrade.
 userSalt:

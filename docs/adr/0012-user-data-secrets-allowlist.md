@@ -26,6 +26,7 @@ Data also showed up in places that outlive the session.
 
 Chosen option: "allowlist per template".
 
+- The operator enforces the list again before it pushes the claim to the agent: keys outside `injectableKeys` are dropped and values are cut to `maxLength`. It logs the key names, never values.
 - `IDETemplate.spec.injectableKeys` lists the permitted keys. Each has a source and a format:
   - `source: Request` takes the value from the request and needs a `format`: `HTTPSURL`, `Token`, `Enum` (with `values`) or `Pattern` (with `pattern`), plus `maxLength` (default 2048, at most 8192) and `required`.
   - `source: UserName` or `UserEmail` takes the value from the verified token, not from the request.

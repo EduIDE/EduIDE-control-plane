@@ -26,6 +26,7 @@ Method: parallel run per deployment. Decisions: [ADR 0017](../adr/0017-migration
 
 `IDEWorkspace` with `spec.persistence.mode: volume` can adopt an existing PVC through `spec.persistence.existingClaimName`.
 The import sets `status.lastUsed` to the import time, so adopted data does not expire at once (retention default 14 days; G19).
+The operator adopts the PVC: it sets the workspace as controller owner of the claim, so the retention deletes the claim together with the workspace, like one the operator created. Remove the owner reference from the PVC if the data must outlive the workspace.
 
 Per old workspace:
 

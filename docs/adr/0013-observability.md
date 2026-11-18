@@ -33,7 +33,8 @@ Chosen option: "OpenTelemetry in code, Prometheus endpoint, Jaeger v2".
 - Trace context: the landing page sends `traceparent`. The service stores it as the annotation `eduide.github.io/traceparent` on the session. Operator and agent continue the trace. One span per start phase: claim, pod ready, agent ready, ready.
 - Sampling: start-path traces 100 percent (low volume), reconcile traces parent-based at a low rate.
 - Privacy (G17): spans, logs and metrics hold no e-mail addresses or names, only a pseudonymous user id (hash with a salt per deployment, `telemetry.userSaltFile`) and the session id. Tokens never appear ([0012](0012-user-data-secrets-allowlist.md)).
-- Logs: `log/slog` as JSON on stdout with `trace_id`.
+- Logs: `log/slog` as JSON on stdout with `trace_id`. The controller-runtime logger is bridged to it in operator, service and authz. The operator logs one line per session event (claim, create, ready with duration and strategy, failed with code, ended by idle or max, eviction, workspace expiry) and emits Kubernetes Events on the IDESession. Lines hold the pseudonymous user id, never launch data.
+- Service names in traces: `eduide-operator`, `eduide-service`, `eduide-authz`. authz adds an `authz.check` span only when the traceparent of the request is sampled. The agent has no spans.
 - No Sentry in the control plane (G9). The browser Sentry of the landing page stays optional, and Sentry could later receive OTLP.
 - Dashboards and alerts are code in the chart: start latency per strategy, claim results, pool state, error rates, authz decisions.
 - Load targets (G1) as provisional numbers: 1,000 concurrent sessions per deployment, 200 launches per minute in a burst, control plane below 150 MiB per deployment. Phase 0 measures the production baseline and the scale tests check the targets ([0015](0015-test-strategy.md)).

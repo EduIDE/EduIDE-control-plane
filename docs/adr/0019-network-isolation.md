@@ -30,7 +30,8 @@ Chosen option: "NetworkPolicies with default deny and a negative test".
 - Default deny for ingress in the namespace of the deployment.
 - Agent proxy port (8080) of a session pod: ingress only from the Envoy pods of the gateway. The IDE itself listens on `127.0.0.1` and has no network port.
 - Agent control port (8081): ingress only from the operator. The kubelet probes `/healthz` and `/readyz` on that port without auth.
-- Session pods cannot reach one another: no ingress rule allows session pods. Egress rules are deployment values.
+- Session pods cannot reach one another: no ingress rule allows session pods. Egress is limited by default: DNS to `kube-system` and the internet, without the private and link-local ranges (`networkPolicy.sessionEgressDeny`, extended by `networkPolicy.sessionEgressExtraDeny` for the pod CIDR and the node network of the cluster). `networkPolicy.sessionEgress` replaces the default.
+- RBAC: no Role grants `pods/exec`, `pods/attach`, `pods/portforward` or wildcards; `charts/test.sh` checks it. `kubectl auth can-i ... --as operator` impersonates a user named `operator`, not the ServiceAccount, and says nothing about the chart Role. Use `--as system:serviceaccount:<ns>:<release>-eduide-control-plane-operator`.
 - authz and service accept traffic from the gateway and, for metrics, from the monitoring namespace.
 - Policies are part of the control plane chart ([0018](0018-charts-oci.md)) and are selected by the labels in [labels.go](../../api/v1alpha1/labels.go).
 - Enforcement check: an e2e negative test starts a foreign pod in the namespace and expects that it cannot reach the IDE port or the agent control port. The same test runs as a smoke test after every deployment. The clusters differ (Calico on one, k3s with Flannel and the built-in policy controller on another, not yet verified there), so the result matters per cluster.

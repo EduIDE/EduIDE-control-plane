@@ -1,379 +1,399 @@
 {
- "title": "EduIDE control plane",
- "uid": "eduide-control-plane",
- "schemaVersion": 39,
- "version": 1,
- "editable": true,
- "refresh": "1m",
- "time": {
-  "from": "now-6h",
-  "to": "now"
- },
- "tags": [
-  "eduide"
- ],
- "templating": {
-  "list": [
-   {
-    "name": "datasource",
-    "type": "datasource",
-    "query": "prometheus",
-    "label": "Data source"
-   }
+  "title": "EduIDE control plane",
+  "uid": "eduide-control-plane",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "tags": [
+    "eduide"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Data source"
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "label": "Namespace",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(eduide_sessions, namespace)",
+          "refId": "ns"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "__NAMESPACE__",
+          "value": "__NAMESPACE__"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Session start latency p50 by strategy",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(eduide_session_startup_seconds_bucket{namespace=\"$namespace\", result=\"ready\"}[$__rate_interval])))",
+          "legendFormat": "{{strategy}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Session start latency p95 by strategy",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(eduide_session_startup_seconds_bucket{namespace=\"$namespace\", result=\"ready\"}[$__rate_interval])))",
+          "legendFormat": "{{strategy}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 3,
+      "title": "Claims by result",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result) (rate(eduide_claim_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 4,
+      "title": "Failed starts",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (template) (rate(eduide_session_startup_seconds_count{namespace=\"$namespace\", result=\"failed\"}[$__rate_interval]))",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 5,
+      "title": "Pool instances",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (pool, state) (eduide_pool_instances{namespace=\"$namespace\"})",
+          "legendFormat": "{{pool}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "eduide_pool_target_idle{namespace=\"$namespace\"}",
+          "legendFormat": "{{pool}} target",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Capacity pressure and evictions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (node_pool) (eduide_capacity_pressure{namespace=\"$namespace\"})",
+          "legendFormat": "pressure {{node_pool}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum by (node_pool) (rate(eduide_capacity_evictions_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "evictions {{node_pool}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Sessions by phase",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (phase) (eduide_sessions{namespace=\"$namespace\"})",
+          "legendFormat": "{{phase}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "API requests by status code",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (code) (rate(eduide_api_requests_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{code}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 9,
+      "title": "Authz decisions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (result, reason) (rate(eduide_authz_decisions_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "legendFormat": "{{result}} {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 10,
+      "title": "Authz check latency p99",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(eduide_authz_check_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+          "legendFormat": "p99",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 11,
+      "title": "Agent request errors",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (op) (rate(eduide_agent_requests_total{namespace=\"$namespace\", result=\"error\"}[$__rate_interval]))",
+          "legendFormat": "{{op}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      }
+    }
   ]
- },
- "panels": [
-  {
-   "id": 1,
-   "title": "Session start latency p50 by strategy",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 0,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "histogram_quantile(0.5, sum by (le, strategy) (rate(eduide_session_startup_seconds_bucket{result=\"ready\"}[$__rate_interval])))",
-     "legendFormat": "{{strategy}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "s"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 2,
-   "title": "Session start latency p95 by strategy",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 0,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "histogram_quantile(0.95, sum by (le, strategy) (rate(eduide_session_startup_seconds_bucket{result=\"ready\"}[$__rate_interval])))",
-     "legendFormat": "{{strategy}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "s"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 3,
-   "title": "Claims by result",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 8,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (result) (rate(eduide_claim_total[$__rate_interval]))",
-     "legendFormat": "{{result}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "ops"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 4,
-   "title": "Failed starts",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 8,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (template) (rate(eduide_session_startup_seconds_count{result=\"failed\"}[$__rate_interval]))",
-     "legendFormat": "{{template}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "ops"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 5,
-   "title": "Pool instances",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 16,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (pool, state) (eduide_pool_instances)",
-     "legendFormat": "{{pool}} {{state}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    },
-    {
-     "refId": "B",
-     "expr": "eduide_pool_target_idle",
-     "legendFormat": "{{pool}} target",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ]
-  },
-  {
-   "id": 6,
-   "title": "Capacity pressure and evictions",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 16,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "max by (node_pool) (eduide_capacity_pressure)",
-     "legendFormat": "pressure {{node_pool}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    },
-    {
-     "refId": "B",
-     "expr": "sum by (node_pool) (rate(eduide_capacity_evictions_total[$__rate_interval]))",
-     "legendFormat": "evictions {{node_pool}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ]
-  },
-  {
-   "id": 7,
-   "title": "Sessions by phase",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 24,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (phase) (eduide_sessions)",
-     "legendFormat": "{{phase}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ]
-  },
-  {
-   "id": 8,
-   "title": "API requests by status code",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 24,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (code) (rate(eduide_api_requests_total[$__rate_interval]))",
-     "legendFormat": "{{code}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "ops"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 9,
-   "title": "Authz decisions",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 32,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (result, reason) (rate(eduide_authz_decisions_total[$__rate_interval]))",
-     "legendFormat": "{{result}} {{reason}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "ops"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 10,
-   "title": "Authz check latency p99",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 12,
-    "y": 32,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "histogram_quantile(0.99, sum by (le) (rate(eduide_authz_check_seconds_bucket[$__rate_interval])))",
-     "legendFormat": "p99",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "s"
-    },
-    "overrides": []
-   }
-  },
-  {
-   "id": 11,
-   "title": "Agent request errors",
-   "type": "timeseries",
-   "datasource": {
-    "type": "prometheus",
-    "uid": "${datasource}"
-   },
-   "gridPos": {
-    "x": 0,
-    "y": 40,
-    "w": 12,
-    "h": 8
-   },
-   "targets": [
-    {
-     "refId": "A",
-     "expr": "sum by (op) (rate(eduide_agent_requests_total{result=\"error\"}[$__rate_interval]))",
-     "legendFormat": "{{op}}",
-     "datasource": {
-      "type": "prometheus",
-      "uid": "${datasource}"
-     }
-    }
-   ],
-   "fieldConfig": {
-    "defaults": {
-     "unit": "ops"
-    },
-    "overrides": []
-   }
-  }
- ]
 }

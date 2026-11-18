@@ -31,7 +31,7 @@ metadata:
     {{- include "ecp.labels" $ | nindent 4 }}
     {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
 spec:
-  {{- $.Files.Get "files/alerts.yaml" | nindent 2 }}
+  {{- $.Files.Get "files/alerts.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__FULLNAME__" $full | nindent 2 }}
 {{- end }}
 {{- end }}
 {{- with .Values.monitoring.dashboard }}
@@ -46,6 +46,6 @@ metadata:
     {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
 data:
   eduide-control-plane.json: |
-    {{- $.Files.Get "files/dashboard.json" | nindent 4 }}
+    {{- $.Files.Get "files/dashboard.json" | replace "__NAMESPACE__" $.Release.Namespace | nindent 4 }}
 {{- end }}
 {{- end }}
