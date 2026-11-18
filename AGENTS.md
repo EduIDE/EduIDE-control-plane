@@ -63,4 +63,4 @@ API group and label prefix: `eduide.github.io`.
 
 English, active voice, present tense, short sentences.
 No em dashes or en dashes; use a hyphen.
-Do not use the words "frontend" or "backend"; name the component (landing page, service, operator).
+Name the component (landing page, service, operator) instead of generic layer words.
