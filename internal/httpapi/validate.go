@@ -73,11 +73,25 @@ func validateData(tpl *v1alpha1.IDETemplate, in map[string]string, user auth.Use
 	for _, k := range tpl.Spec.InjectableKeys {
 		keys[k.Name] = k
 	}
+	var variantIDs []string
+	if img := tpl.Status.Image; img != nil {
+		for _, v := range img.Variants {
+			variantIDs = append(variantIDs, v.ID)
+		}
+	}
 	out := map[string]string{}
 	for name, val := range in {
 		k, ok := keys[name]
 		if !ok || k.Source != v1alpha1.SourceRequest && k.Source != "" {
 			return nil, problem(CodeUnknownKey, "key "+quote(name)+" is not accepted by this template")
+		}
+		if name == "TEMPLATE" && len(k.Values) == 0 && len(variantIDs) > 0 {
+			// U12: the variants of the image are the allowed values when the template lists none.
+			if !slices.Contains(variantIDs, val) {
+				return nil, problem(CodeInvalidInput, "invalid value for key TEMPLATE: not a variant of this template")
+			}
+			out[name] = val
+			continue
 		}
 		if err := validateValue(k, val, allowedHosts); err != nil {
 			return nil, problem(CodeInvalidInput, "invalid value for key "+name+": "+err.Error())

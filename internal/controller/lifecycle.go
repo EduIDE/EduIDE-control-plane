@@ -9,7 +9,7 @@ import (
 type timeouts struct{ idle, warning, max time.Duration }
 
 func resolveTimeouts(t *v1.IDETemplate) timeouts {
-	to := timeouts{idle: time.Hour, warning: 50 * time.Minute, max: 24 * time.Hour}
+	to := timeouts{idle: v1.DefaultIdleTimeout, warning: v1.DefaultWarningTimeout, max: v1.DefaultMaxTimeout}
 	if d := t.Spec.Timeouts.Idle; d != nil {
 		to.idle = d.Duration
 	}

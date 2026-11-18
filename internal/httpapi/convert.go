@@ -34,7 +34,47 @@ func displayToAPI(d v1alpha1.Display) *Display {
 	return &Display{Title: emptyToNil(d.Title), Source: emptyToNil(d.Source)}
 }
 
-func sessionToAPI(s *v1alpha1.IDESession) Session {
+// stopsAt is when the session ends (U13): the earlier of the idle end and the maximum lifetime, with the same
+// timeouts and base time as the operator (internal/controller/lifecycle.go). t may be nil for the defaults.
+func stopsAt(s *v1alpha1.IDESession, t *v1alpha1.IDETemplate) (time.Time, SessionStopReason, bool) {
+	st := &s.Status
+	base := cmp.Or(st.Timestamps.AgentReady, st.Timestamps.Claimed, st.Timestamps.Ready)
+	if s.DeletionTimestamp != nil || st.Phase == v1alpha1.SessionFailed || base == nil {
+		return time.Time{}, "", false
+	}
+	at := base.Time
+	if st.LastActivity != nil && st.LastActivity.After(at) {
+		at = st.LastActivity.Time
+	}
+	idle, max := v1alpha1.DefaultIdleTimeout, v1alpha1.DefaultMaxTimeout
+	if t != nil {
+		if d := t.Spec.Timeouts.Idle; d != nil {
+			idle = d.Duration
+		}
+		if d := t.Spec.Timeouts.Max; d != nil {
+			max = d.Duration
+		}
+	}
+	idleAt, maxAt := at.Add(idle), s.CreationTimestamp.Add(max)
+	if maxAt.Before(idleAt) {
+		return maxAt, Max, true
+	}
+	return idleAt, Idle, true
+}
+
+// deletesAt is when the workspace and its volume are deleted (U13); not while a session runs or with the retain annotation.
+func deletesAt(w *v1alpha1.IDEWorkspace, inUse bool, grace time.Duration) *time.Time {
+	if inUse || w.Annotations[v1alpha1.AnnotationRetain] == "true" {
+		return nil
+	}
+	from := cmp.Or(w.Status.ExpiredAt, w.Status.ExpiresAt)
+	if from == nil {
+		return nil
+	}
+	return ptr(from.Add(grace))
+}
+
+func sessionToAPI(s *v1alpha1.IDESession, t *v1alpha1.IDETemplate) Session {
 	out := Session{
 		Name:         s.Name,
 		Template:     s.Spec.TemplateRef,
@@ -53,11 +93,15 @@ func sessionToAPI(s *v1alpha1.IDESession) Session {
 	if s.Status.StartStrategy != "" {
 		out.StartStrategy = ptr(SessionStartStrategy(s.Status.StartStrategy))
 	}
+	if at, why, ok := stopsAt(s, t); ok {
+		out.StopsAt, out.StopReason = &at, &why
+	}
 	return out
 }
 
-func workspaceToAPI(w *v1alpha1.IDEWorkspace) Workspace {
+func workspaceToAPI(w *v1alpha1.IDEWorkspace, inUse bool, grace time.Duration) Workspace {
 	return Workspace{
+		DeletesAt: deletesAt(w, inUse, grace),
 		Name:      w.Name,
 		Template:  w.Spec.TemplateRef,
 		Phase:     WorkspacePhase(cmp.Or(w.Status.Phase, v1alpha1.WorkspacePending)),
@@ -87,6 +131,27 @@ func templateToAPI(t *v1alpha1.IDETemplate, warm bool) Template {
 	}
 	if warm {
 		out.Warm = ptr(true)
+	}
+	if img := t.Status.Image; img != nil {
+		out.ImageVersion = emptyToNil(img.Version)
+		if len(img.Variants) > 0 {
+			vs := []TemplateVariant{}
+			for _, v := range img.Variants {
+				vs = append(vs, TemplateVariant{Id: v.ID, Name: v.Name, Description: emptyToNil(v.Description), LogoUrl: emptyToNil(v.LogoURL)})
+			}
+			out.Variants = &vs
+		}
+		if len(img.Includes) > 0 {
+			gs := []TemplateIncludeGroup{}
+			for _, g := range img.Includes {
+				tg := TemplateIncludeGroup{Group: g.Group, Items: []TemplateIncludeItem{}}
+				for _, it := range g.Items {
+					tg.Items = append(tg.Items, TemplateIncludeItem{Name: it.Name, Version: emptyToNil(it.Version)})
+				}
+				gs = append(gs, tg)
+			}
+			out.Includes = &gs
+		}
 	}
 	return out
 }

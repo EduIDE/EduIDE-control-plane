@@ -7,7 +7,7 @@ Change rules: [ADR 0011](../adr/0011-crd-versioning-cel.md). Object model diagra
 
 | CRD | Purpose | Key fields |
 |---|---|---|
-| `IDETemplate` | Kind of IDE: image, resources, port, env, allowlist, persistence, timeouts, placement | `spec.image`, `spec.port`, `spec.resources`, `spec.env`, `spec.injectableKeys`, `spec.persistence` (`allowed`, `default`, `size`, `mountPath`), `spec.timeouts` (`idle`, `warning`, `max`), `spec.retention`, `spec.placement`, `spec.bandwidth` |
+| `IDETemplate` | Kind of IDE: image, resources, port, env, allowlist, persistence, timeouts, placement | `spec.image`, `spec.port`, `spec.resources`, `spec.env`, `spec.injectableKeys`, `spec.persistence` (`allowed`, `default`, `size`, `mountPath`), `spec.timeouts` (`idle`, `warning`, `max`), `spec.retention`, `spec.placement`, `spec.bandwidth`; status `conditions` (`Ready`, `ImageMetadata`), `image` (`digest`, `version`, `variants`, `includes`, `lastChecked`) |
 | `IDEPool` | Prewarmed instances of one template (optional) | `spec.templateRef`, `spec.minIdle` (floor, Helm), `spec.targetIdle` (pool-scaler), `spec.maxInstances`; status `replicas`, `idleReady`, `idleStarting`, `claimed`, `selector`; scale subresource maps to `targetIdle` |
 | `IDEWorkspace` | Persistent user files | `spec.owner`, `spec.templateRef`, `spec.persistence` (`mode`, `size`, `storageClassName`, `existingClaimName`), `spec.retention`, `spec.display`; status `phase` (`Pending`, `Ready`, `Expired`), `claimName`, `lastUsed`, `expiresAt`, `expiredAt` |
 | `IDESession` | One running IDE | `spec.owner`, `spec.templateRef`, `spec.workspaceRef`, `spec.dataSecretRef`, `spec.display`; status `phase`, `startStrategy`, `instance`, `podName`, `url`, `errorCode`, `message`, `timestamps`, `lastActivity` |
@@ -18,13 +18,15 @@ Notes:
 - `injectableKeys` is the allowlist for launch data. There is no `fromSecrets` and no `fromConfigMaps`.
 - `persistence.mode` is `none` or `volume`. **Planned:** `snapshot` (optional phase 9). The enum allows it additively.
 - A session with a `workspaceRef` always starts cold. The startup strategy shows it as `cold`.
+- `IDETemplate.status.image` comes from the OCI annotation `io.eduide.template` of the image manifest, read by the operator once per digest and at most every 10 minutes per tag ([0020](../adr/0020-landing-page-data-in-the-api.md)). Anonymous pulls only. The condition `ImageMetadata` says why the block is empty (`AnnotationMissing`, `AnnotationInvalid`, `RegistryError`) and never affects `Ready`.
+- The service computes `stopsAt`, `stopReason` and `deletesAt` from `status.lastActivity`, the template timeouts and `status.expiresAt` plus `workspaces.grace`; they are not stored.
 - Status of every CRD carries `observedGeneration` and `conditions`.
 - Launch data is never part of a CR spec or status.
 
 ### Session phases
 
 `Pending`, `Starting`, `Ready`, `Failed`.
-Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `workspace-in-use`, `start-failed`.
+Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `workspace-in-use` (unused since U14), `start-failed`.
 A session that has an instance keeps running when its template is deleted; it ends by the default timeouts. Only a session without an instance fails with `template-not-found`.
 Duration fields (`timeouts.*`, `retention`) accept Go durations such as `90m` or `48h`; the CRD rejects `2d`. `timeouts.max` must not be shorter than `timeouts.idle`.
 Timestamps in `status.timestamps`: `claimed`, `podReady`, `agentReady`, `ready` (see [start-path.md](start-path.md)).

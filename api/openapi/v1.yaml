@@ -28,6 +28,20 @@ paths:
             application/json:
               schema: {type: array, items: {$ref: "#/components/schemas/Template"}}
         default: {$ref: "#/components/responses/Problem"}
+  /templates/events:
+    get:
+      operationId: watchTemplates
+      tags: [templates]
+      description: |
+        Server-Sent Events. Event `templates` with the full template list (as `GET /templates`) as data.
+        The stream starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+      responses:
+        "200":
+          description: Event stream.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
   /sessions:
     get:
       operationId: listSessions
@@ -142,9 +156,12 @@ paths:
     delete:
       operationId: deleteWorkspace
       tags: [workspaces]
-      description: Deletes a workspace and its files. Fails with `workspace-in-use` while a session runs on it.
+      description: |
+        Deletes a workspace and its files. A session that runs on the workspace is stopped first: the service
+        deletes the session and waits until it is gone (at most 30 s), then deletes the workspace.
+        The code `workspace-in-use` is unused since U14 and stays in the enum for compatibility.
       responses:
-        "204": {description: Deleted.}
+        "204": {description: "Deleted; a running session on it was stopped."}
         default: {$ref: "#/components/responses/Problem"}
   /me/overview:
     get:
@@ -224,6 +241,49 @@ components:
           type: array
           items: {type: string}
         warm: {type: boolean, description: "A pool prewarms sessions without persistence."}
+        imageVersion: {type: string, description: "EduIDE version of the template image, read from the image annotation (U12). Absent without metadata."}
+        variants:
+          description: "Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata."
+          type: array
+          items: {$ref: "#/components/schemas/TemplateVariant"}
+        includes:
+          description: What the image brings along, in groups with the versions installed at build time (U12).
+          type: array
+          items: {$ref: "#/components/schemas/TemplateIncludeGroup"}
+        startEstimate: {$ref: "#/components/schemas/StartEstimates"}
+    TemplateVariant:
+      type: object
+      required: [id, name]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        description: {type: string}
+        logoUrl: {type: string}
+    TemplateIncludeGroup:
+      type: object
+      required: [group, items]
+      properties:
+        group: {type: string}
+        items: {type: array, items: {$ref: "#/components/schemas/TemplateIncludeItem"}}
+    TemplateIncludeItem:
+      type: object
+      required: [name]
+      properties:
+        name: {type: string}
+        version: {type: string}
+    StartEstimates:
+      description: "Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent."
+      type: object
+      properties:
+        none: {$ref: "#/components/schemas/StartEstimate"}
+        volume: {$ref: "#/components/schemas/StartEstimate"}
+    StartEstimate:
+      type: object
+      required: [seconds, strategy, samples]
+      properties:
+        seconds: {type: number, format: double, description: Median start duration.}
+        strategy: {type: string, enum: [warm, cold], description: "warm when a pool has an idle ready instance now (only without persistence)."}
+        samples: {type: integer, description: Number of observed starts the median is based on.}
     LaunchRequest:
       type: object
       required: [template]
@@ -261,6 +321,13 @@ components:
         createdAt: {type: string, format: date-time}
         readyAt: {type: string, format: date-time}
         lastActivity: {type: string, format: date-time}
+        stopsAt:
+          type: string
+          format: date-time
+          description: |
+            When the session ends: the earlier of last activity (else ready time) plus the idle timeout and
+            `createdAt` plus the maximum timeout (template timeouts, defaults 60m and 24h).
+        stopReason: {type: string, enum: [idle, max], description: "Which timeout `stopsAt` stems from."}
     WorkspaceRequest:
       type: object
       required: [template]
@@ -282,6 +349,12 @@ components:
         createdAt: {type: string, format: date-time}
         lastUsed: {type: string, format: date-time}
         expiresAt: {type: string, format: date-time}
+        deletesAt:
+          type: string
+          format: date-time
+          description: |
+            When workspace and volume are deleted: `expiresAt` plus the grace period (config workspaces.grace).
+            Absent while a session runs on the workspace and with the retain annotation.
     OverviewItem:
       type: object
       required: [kind, title, template, running]
@@ -295,6 +368,8 @@ components:
         running: {type: boolean}
         lastUsed: {type: string, format: date-time}
         expiresAt: {type: string, format: date-time}
+        stopsAt: {type: string, format: date-time, description: "Of the session, see Session.stopsAt."}
+        deletesAt: {type: string, format: date-time, description: "Of the workspace, see Workspace.deletesAt."}
         session: {$ref: "#/components/schemas/Session"}
         workspace: {$ref: "#/components/schemas/Workspace"}
     Overview:

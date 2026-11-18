@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -59,13 +60,17 @@ func (r *templateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 	meta.SetStatusCondition(&t.Status.Conditions, cond)
 	t.Status.ObservedGeneration = t.Generation
+	var recheck time.Duration
+	if verr == nil {
+		recheck = r.reconcileImage(ctx, t)
+	}
 	if err := r.patchStatus(ctx, orig, t); err != nil {
 		return ctrl.Result{}, err
 	}
 	if verr != nil {
 		return ctrl.Result{}, nil
 	}
-	return ctrl.Result{}, r.reconcilePrepull(ctx, t)
+	return ctrl.Result{RequeueAfter: recheck}, r.reconcilePrepull(ctx, t)
 }
 
 func prepullName(t string) string { return "prepull-" + t }

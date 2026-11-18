@@ -20,6 +20,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/templates/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Server-Sent Events. Event `templates` with the full template list (as `GET /templates`) as data.
+         *     The stream starts with the current state, sends at most one event per 5 s and a comment (`: ping`) every 15 s.
+         */
+        get: operations["watchTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions": {
         parameters: {
             query?: never;
@@ -115,7 +135,11 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** @description Deletes a workspace and its files. Fails with `workspace-in-use` while a session runs on it. */
+        /**
+         * @description Deletes a workspace and its files. A session that runs on the workspace is stopped first: the service
+         *     deletes the session and waits until it is gone (at most 30 s), then deletes the workspace.
+         *     The code `workspace-in-use` is unused since U14 and stays in the enum for compatibility.
+         */
         delete: operations["deleteWorkspace"];
         options?: never;
         head?: never;
@@ -190,6 +214,46 @@ export interface components {
             injectableKeys: string[];
             /** @description A pool prewarms sessions without persistence. */
             warm?: boolean;
+            /** @description EduIDE version of the template image, read from the image annotation (U12). Absent without metadata. */
+            imageVersion?: string;
+            /** @description Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata. */
+            variants?: components["schemas"]["TemplateVariant"][];
+            /** @description What the image brings along, in groups with the versions installed at build time (U12). */
+            includes?: components["schemas"]["TemplateIncludeGroup"][];
+            startEstimate?: components["schemas"]["StartEstimates"];
+        };
+        TemplateVariant: {
+            id: string;
+            name: string;
+            description?: string;
+            logoUrl?: string;
+        };
+        TemplateIncludeGroup: {
+            group: string;
+            items: components["schemas"]["TemplateIncludeItem"][];
+        };
+        TemplateIncludeItem: {
+            name: string;
+            version?: string;
+        };
+        /** @description Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent. */
+        StartEstimates: {
+            none?: components["schemas"]["StartEstimate"];
+            volume?: components["schemas"]["StartEstimate"];
+        };
+        StartEstimate: {
+            /**
+             * Format: double
+             * @description Median start duration.
+             */
+            seconds: number;
+            /**
+             * @description warm when a pool has an idle ready instance now (only without persistence).
+             * @enum {string}
+             */
+            strategy: "warm" | "cold";
+            /** @description Number of observed starts the median is based on. */
+            samples: number;
         };
         LaunchRequest: {
             template: string;
@@ -222,6 +286,17 @@ export interface components {
             readyAt?: string;
             /** Format: date-time */
             lastActivity?: string;
+            /**
+             * Format: date-time
+             * @description When the session ends: the earlier of last activity (else ready time) plus the idle timeout and
+             *     `createdAt` plus the maximum timeout (template timeouts, defaults 60m and 24h).
+             */
+            stopsAt?: string;
+            /**
+             * @description Which timeout `stopsAt` stems from.
+             * @enum {string}
+             */
+            stopReason?: "idle" | "max";
         };
         WorkspaceRequest: {
             template: string;
@@ -240,6 +315,12 @@ export interface components {
             lastUsed?: string;
             /** Format: date-time */
             expiresAt?: string;
+            /**
+             * Format: date-time
+             * @description When workspace and volume are deleted: `expiresAt` plus the grace period (config workspaces.grace).
+             *     Absent while a session runs on the workspace and with the retain annotation.
+             */
+            deletesAt?: string;
         };
         OverviewItem: {
             /** @enum {string} */
@@ -255,6 +336,16 @@ export interface components {
             lastUsed?: string;
             /** Format: date-time */
             expiresAt?: string;
+            /**
+             * Format: date-time
+             * @description Of the session, see Session.stopsAt.
+             */
+            stopsAt?: string;
+            /**
+             * Format: date-time
+             * @description Of the workspace, see Workspace.deletesAt.
+             */
+            deletesAt?: string;
             session?: components["schemas"]["Session"];
             workspace?: components["schemas"]["Workspace"];
         };
@@ -298,6 +389,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Template"][];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    watchTemplates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Event stream. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": string;
                 };
             };
             default: components["responses"]["Problem"];
@@ -493,7 +605,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Deleted. */
+            /** @description Deleted; a running session on it was stopped. */
             204: {
                 headers: {
                     [name: string]: unknown;

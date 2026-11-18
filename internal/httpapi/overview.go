@@ -45,6 +45,7 @@ func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiErr
 		return it
 	}
 
+	busy := busyWorkspaces(sessions)
 	var items []OverviewItem
 	used := map[string]bool{}
 	for i := range sessions {
@@ -53,12 +54,13 @@ func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiErr
 			continue
 		}
 		it := item(OverviewItemKindSession, sess.Spec.Display, sess.Spec.TemplateRef, true)
-		api := sessionToAPI(sess)
+		api := sessionToAPI(sess, tpls[sess.Spec.TemplateRef])
 		it.Session = &api
+		it.StopsAt = api.StopsAt
 		it.LastUsed = cmp.Or(api.LastActivity, api.ReadyAt, &api.CreatedAt)
 		if ws := wsByName[sess.Spec.WorkspaceRef]; ws != nil {
 			used[ws.Name] = true
-			wsAPI := workspaceToAPI(ws)
+			wsAPI := s.workspaceAPI(ws, busy)
 			it.Workspace = &wsAPI
 			it.ExpiresAt = wsAPI.ExpiresAt
 			if it.Title == "" {
@@ -72,8 +74,9 @@ func (s *Server) overview(ctx context.Context, owner string) (*Overview, *apiErr
 			continue
 		}
 		it := item(OverviewItemKindWorkspace, ws.Spec.Display, ws.Spec.TemplateRef, false)
-		api := workspaceToAPI(ws)
+		api := s.workspaceAPI(ws, busy)
 		it.Workspace = &api
+		it.DeletesAt = api.DeletesAt
 		it.LastUsed = cmp.Or(api.LastUsed, &api.CreatedAt)
 		it.ExpiresAt = api.ExpiresAt
 		items = append(items, it)

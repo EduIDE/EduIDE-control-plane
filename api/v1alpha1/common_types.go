@@ -24,4 +24,6 @@ type Display struct {
 const (
 	ConditionReady            = "Ready"
 	ConditionCapacityPressure = "CapacityPressure"
+	// ConditionImageMetadata on IDETemplate: whether the image metadata could be read (U12). Never affects Ready.
+	ConditionImageMetadata = "ImageMetadata"
 )

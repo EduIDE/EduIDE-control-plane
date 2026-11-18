@@ -45,6 +45,8 @@ type Options struct {
 	AgentURL func(*corev1.Pod) (string, error)
 	// Salt keys the pseudonymous user id in logs (telemetry.userSaltFile).
 	Salt []byte
+	// Registry reads the template metadata from image manifests (U12). Default: anonymous pulls.
+	Registry ImageRegistry
 	// PollInterval between agent status polls of a session. Default 60s.
 	PollInterval time.Duration
 }
@@ -62,6 +64,8 @@ type deps struct {
 	poll     time.Duration
 	salt     []byte
 	events   recorder.EventRecorder
+	registry ImageRegistry
+	images   *imageCache
 }
 
 // NewScheme returns a scheme with core Kubernetes, Gateway API and EduIDE types.
@@ -79,6 +83,10 @@ func SetupWithManager(mgr ctrl.Manager, o Options) error {
 		Client: mgr.GetClient(), reader: mgr.GetAPIReader(), scheme: mgr.GetScheme(),
 		cfg: o.Config, clock: o.Clock, agent: o.Agent, agentURL: o.AgentURL, poll: o.PollInterval,
 		salt: o.Salt, events: mgr.GetEventRecorder(fieldManager),
+		registry: o.Registry, images: &imageCache{},
+	}
+	if d.registry == nil {
+		d.registry = remoteRegistry{}
 	}
 	if d.clock == nil {
 		d.clock = realClock{}

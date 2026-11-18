@@ -56,7 +56,7 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 			span.SetAttributes(attribute.String("eduide.template", template), attribute.String("eduide.session", sess.Name), attribute.String("eduide.launch_result", res))
 			telemetry.Launches.WithLabelValues(template, res).Inc()
 			slog.InfoContext(ctx, "launch", "session", sess.Name, "template", template, "result", res, "user", s.userID(u.Owner))
-			writeJSON(w, status, sessionToAPI(sess))
+			writeJSON(w, status, s.sessionAPI(ctx, sess))
 			return
 		}
 		if perr.code == CodeTemplateNotFound {
@@ -128,7 +128,7 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 		e := problem(CodeSessionLimit, "session limit reached")
 		e.sessions = []Session{}
 		for i := range running {
-			e.sessions = append(e.sessions, sessionToAPI(&running[i]))
+			e.sessions = append(e.sessions, s.sessionAPI(ctx, &running[i]))
 		}
 		slices.SortFunc(e.sessions, func(a, b Session) int { return strings.Compare(a.Name, b.Name) })
 		return nil, false, e

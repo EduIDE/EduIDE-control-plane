@@ -43,7 +43,58 @@ var (
 	restCfg *rest.Config
 	clk     = &offsetClock{}
 	agent   = &fakeAgent{}
+	reg     = &fakeRegistry{images: map[string]fakeImage{}}
 )
+
+type fakeImage struct {
+	digest, annotation string
+	hasAnnotation      bool
+	err                error
+}
+
+// fakeRegistry answers per image reference; unknown images fail like an unreachable registry.
+type fakeRegistry struct {
+	mu     sync.Mutex
+	images map[string]fakeImage
+	heads  int
+	gets   int
+}
+
+func (f *fakeRegistry) set(image string, i fakeImage) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.images[image] = i
+}
+
+func (f *fakeRegistry) counts() (int, int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.heads, f.gets
+}
+
+func (f *fakeRegistry) lookup(image string) (fakeImage, error) {
+	i, ok := f.images[image]
+	if !ok {
+		return i, fmt.Errorf("registry for %s is not reachable", image)
+	}
+	return i, i.err
+}
+
+func (f *fakeRegistry) Digest(_ context.Context, image string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.heads++
+	i, err := f.lookup(image)
+	return i.digest, err
+}
+
+func (f *fakeRegistry) Annotation(_ context.Context, image, _, _ string) (string, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gets++
+	i, err := f.lookup(image)
+	return i.annotation, i.hasAnnotation, err
+}
 
 // offsetClock is the wall clock plus an offset that tests move.
 type offsetClock struct {
@@ -231,7 +282,7 @@ capacity: {exhaustedAfter: 1s}
 	if err != nil {
 		panic(err)
 	}
-	err = SetupWithManager(mgr, Options{Config: cfg, Clock: clk, PollInterval: testPollTime,
+	err = SetupWithManager(mgr, Options{Config: cfg, Clock: clk, PollInterval: testPollTime, Registry: reg,
 		AgentURL: func(*corev1.Pod) (string, error) { return srv.URL, nil }})
 	if err != nil {
 		panic(err)

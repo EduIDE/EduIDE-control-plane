@@ -115,19 +115,37 @@ func (e ProblemCode) Valid() bool {
 
 // Defines values for SessionStartStrategy.
 const (
-	Cold         SessionStartStrategy = "cold"
-	WarmReady    SessionStartStrategy = "warm-ready"
-	WarmStarting SessionStartStrategy = "warm-starting"
+	SessionStartStrategyCold         SessionStartStrategy = "cold"
+	SessionStartStrategyWarmReady    SessionStartStrategy = "warm-ready"
+	SessionStartStrategyWarmStarting SessionStartStrategy = "warm-starting"
 )
 
 // Valid indicates whether the value is a known member of the SessionStartStrategy enum.
 func (e SessionStartStrategy) Valid() bool {
 	switch e {
-	case Cold:
+	case SessionStartStrategyCold:
 		return true
-	case WarmReady:
+	case SessionStartStrategyWarmReady:
 		return true
-	case WarmStarting:
+	case SessionStartStrategyWarmStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionStopReason.
+const (
+	Idle SessionStopReason = "idle"
+	Max  SessionStopReason = "max"
+)
+
+// Valid indicates whether the value is a known member of the SessionStopReason enum.
+func (e SessionStopReason) Valid() bool {
+	switch e {
+	case Idle:
+		return true
+	case Max:
 		return true
 	default:
 		return false
@@ -152,6 +170,24 @@ func (e SessionPhase) Valid() bool {
 	case SessionPhaseReady:
 		return true
 	case SessionPhaseStarting:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for StartEstimateStrategy.
+const (
+	StartEstimateStrategyCold StartEstimateStrategy = "cold"
+	StartEstimateStrategyWarm StartEstimateStrategy = "warm"
+)
+
+// Valid indicates whether the value is a known member of the StartEstimateStrategy enum.
+func (e StartEstimateStrategy) Valid() bool {
+	switch e {
+	case StartEstimateStrategyCold:
+		return true
+	case StartEstimateStrategyWarm:
 		return true
 	default:
 		return false
@@ -204,15 +240,20 @@ type Overview struct {
 
 // OverviewItem defines model for OverviewItem.
 type OverviewItem struct {
-	ExpiresAt           *time.Time       `json:"expiresAt,omitempty"`
-	Kind                OverviewItemKind `json:"kind"`
-	LastUsed            *time.Time       `json:"lastUsed,omitempty"`
-	Running             bool             `json:"running"`
-	Session             *Session         `json:"session,omitempty"`
-	Source              *string          `json:"source,omitempty"`
-	Template            string           `json:"template"`
-	TemplateDisplayName *string          `json:"templateDisplayName,omitempty"`
-	TemplateLogoUrl     *string          `json:"templateLogoUrl,omitempty"`
+	// DeletesAt Of the workspace, see Workspace.deletesAt.
+	DeletesAt *time.Time       `json:"deletesAt,omitempty"`
+	ExpiresAt *time.Time       `json:"expiresAt,omitempty"`
+	Kind      OverviewItemKind `json:"kind"`
+	LastUsed  *time.Time       `json:"lastUsed,omitempty"`
+	Running   bool             `json:"running"`
+	Session   *Session         `json:"session,omitempty"`
+	Source    *string          `json:"source,omitempty"`
+
+	// StopsAt Of the session, see Session.stopsAt.
+	StopsAt             *time.Time `json:"stopsAt,omitempty"`
+	Template            string     `json:"template"`
+	TemplateDisplayName *string    `json:"templateDisplayName,omitempty"`
+	TemplateLogoUrl     *string    `json:"templateLogoUrl,omitempty"`
 
 	// Title From display.title, else derived from display.source (G15).
 	Title     string     `json:"title"`
@@ -254,7 +295,14 @@ type Session struct {
 	Phase         SessionPhase          `json:"phase"`
 	ReadyAt       *time.Time            `json:"readyAt,omitempty"`
 	StartStrategy *SessionStartStrategy `json:"startStrategy,omitempty"`
-	Template      string                `json:"template"`
+
+	// StopReason Which timeout `stopsAt` stems from.
+	StopReason *SessionStopReason `json:"stopReason,omitempty"`
+
+	// StopsAt When the session ends: the earlier of last activity (else ready time) plus the idle timeout and
+	// `createdAt` plus the maximum timeout (template timeouts, defaults 60m and 24h).
+	StopsAt  *time.Time `json:"stopsAt,omitempty"`
+	Template string     `json:"template"`
 
 	// Url Set once phase is Ready.
 	Url       *string `json:"url,omitempty"`
@@ -264,13 +312,43 @@ type Session struct {
 // SessionStartStrategy defines model for Session.StartStrategy.
 type SessionStartStrategy string
 
+// SessionStopReason Which timeout `stopsAt` stems from.
+type SessionStopReason string
+
 // SessionPhase defines model for SessionPhase.
 type SessionPhase string
+
+// StartEstimate defines model for StartEstimate.
+type StartEstimate struct {
+	// Samples Number of observed starts the median is based on.
+	Samples int `json:"samples"`
+
+	// Seconds Median start duration.
+	Seconds float64 `json:"seconds"`
+
+	// Strategy warm when a pool has an idle ready instance now (only without persistence).
+	Strategy StartEstimateStrategy `json:"strategy"`
+}
+
+// StartEstimateStrategy warm when a pool has an idle ready instance now (only without persistence).
+type StartEstimateStrategy string
+
+// StartEstimates Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent.
+type StartEstimates struct {
+	None   *StartEstimate `json:"none,omitempty"`
+	Volume *StartEstimate `json:"volume,omitempty"`
+}
 
 // Template defines model for Template.
 type Template struct {
 	DefaultPersistence PersistenceMode `json:"defaultPersistence"`
 	DisplayName        string          `json:"displayName"`
+
+	// ImageVersion EduIDE version of the template image, read from the image annotation (U12). Absent without metadata.
+	ImageVersion *string `json:"imageVersion,omitempty"`
+
+	// Includes What the image brings along, in groups with the versions installed at build time (U12).
+	Includes *[]TemplateIncludeGroup `json:"includes,omitempty"`
 
 	// InjectableKeys Keys a launch request may send in `data`.
 	InjectableKeys []string          `json:"injectableKeys"`
@@ -278,13 +356,43 @@ type Template struct {
 	Name           string            `json:"name"`
 	Persistence    []PersistenceMode `json:"persistence"`
 
+	// StartEstimate Expected start time per persistence mode (U11), from the starts of the last hour. A mode without data is absent.
+	StartEstimate *StartEstimates `json:"startEstimate,omitempty"`
+
+	// Variants Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata.
+	Variants *[]TemplateVariant `json:"variants,omitempty"`
+
 	// Warm A pool prewarms sessions without persistence.
 	Warm *bool `json:"warm,omitempty"`
 }
 
+// TemplateIncludeGroup defines model for TemplateIncludeGroup.
+type TemplateIncludeGroup struct {
+	Group string                `json:"group"`
+	Items []TemplateIncludeItem `json:"items"`
+}
+
+// TemplateIncludeItem defines model for TemplateIncludeItem.
+type TemplateIncludeItem struct {
+	Name    string  `json:"name"`
+	Version *string `json:"version,omitempty"`
+}
+
+// TemplateVariant defines model for TemplateVariant.
+type TemplateVariant struct {
+	Description *string `json:"description,omitempty"`
+	Id          string  `json:"id"`
+	LogoUrl     *string `json:"logoUrl,omitempty"`
+	Name        string  `json:"name"`
+}
+
 // Workspace defines model for Workspace.
 type Workspace struct {
-	CreatedAt time.Time      `json:"createdAt"`
+	CreatedAt time.Time `json:"createdAt"`
+
+	// DeletesAt When workspace and volume are deleted: `expiresAt` plus the grace period (config workspaces.grace).
+	// Absent while a session runs on the workspace and with the retain annotation.
+	DeletesAt *time.Time     `json:"deletesAt,omitempty"`
 	Display   *Display       `json:"display,omitempty"`
 	ExpiresAt *time.Time     `json:"expiresAt,omitempty"`
 	LastUsed  *time.Time     `json:"lastUsed,omitempty"`
@@ -342,6 +450,9 @@ type ServerInterface interface {
 
 	// (GET /templates)
 	ListTemplates(w http.ResponseWriter, r *http.Request)
+
+	// (GET /templates/events)
+	WatchTemplates(w http.ResponseWriter, r *http.Request)
 
 	// (GET /workspaces)
 	ListWorkspaces(w http.ResponseWriter, r *http.Request)
@@ -537,6 +648,20 @@ func (siw *ServerInterfaceWrapper) ListTemplates(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// WatchTemplates operation middleware
+func (siw *ServerInterfaceWrapper) WatchTemplates(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.WatchTemplates(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListWorkspaces operation middleware
 func (siw *ServerInterfaceWrapper) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 
@@ -712,6 +837,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	}
 
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/templates", wrapper.ListTemplates)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/templates/events", wrapper.WatchTemplates)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/sessions", wrapper.ListSessions)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/sessions", wrapper.LaunchSession)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/sessions/{name}", wrapper.DeleteSession)
@@ -731,49 +857,63 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

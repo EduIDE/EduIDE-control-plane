@@ -12,7 +12,9 @@ Read the endpoint reference in the OpenAPI file or render it with any OpenAPI vi
 **Planned:** a rendered HTML reference built from the spec in CI.
 The data model behind the endpoints: [data-model.md](../architecture/data-model.md).
 
-REST endpoints (operation ids): `listTemplates`, `listSessions`, `launchSession`, `getSession`, `deleteSession`, `watchSession` (SSE), `listWorkspaces`, `createWorkspace`, `deleteWorkspace`, `getOverview`, `watchOverview` (SSE).
+REST endpoints (operation ids): `listTemplates`, `watchTemplates` (SSE), `listSessions`, `launchSession`, `getSession`, `deleteSession`, `watchSession` (SSE), `listWorkspaces`, `createWorkspace`, `deleteWorkspace`, `getOverview`, `watchOverview` (SSE).
+Since [0020](../adr/0020-landing-page-data-in-the-api.md): `Session.stopsAt` and `stopReason`, `Workspace.deletesAt`, the same on `OverviewItem`, `Template.startEstimate`, `variants`, `includes` and `imageVersion`.
+`DELETE /workspaces/{name}` stops a running session on the workspace first and answers 204. The error code `workspace-in-use` is unused and stays in the enum for compatibility.
 Health and metrics are on a separate port and are not part of the spec.
 There is no admin API in v1. Admin tasks go through Helm values and the CRDs.
 

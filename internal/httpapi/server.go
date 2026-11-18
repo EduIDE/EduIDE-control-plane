@@ -27,6 +27,8 @@ type Server struct {
 	w    client.Client
 	hub  *Hub
 	ping time.Duration
+	// stopWait and stopPoll bound how long DeleteWorkspace waits for a stopping session (U14).
+	stopWait, stopPoll time.Duration
 	// salt keys the pseudonymous user id of spans (telemetry.userSaltFile); nil leaves the id out.
 	salt       []byte
 	titleStrip *regexp.Regexp
@@ -37,7 +39,7 @@ type Server struct {
 
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
-	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, salt: salt, limiters: map[string]*rate.Limiter{}}
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
 	}
@@ -153,28 +155,76 @@ func (s *Server) ownedWorkspace(ctx context.Context, name, owner string) (*v1alp
 	return &ws, nil
 }
 
-func (s *Server) ListTemplates(w http.ResponseWriter, r *http.Request) {
+// templates is the template list of GET /templates and of its event stream.
+func (s *Server) templates(ctx context.Context) ([]Template, *apiError) {
 	var ts v1alpha1.IDETemplateList
 	var ps v1alpha1.IDEPoolList
-	if err := s.r.List(r.Context(), &ts, client.InNamespace(s.cfg.Namespace)); err != nil {
-		writeProblem(w, internalError(err))
-		return
+	if err := s.r.List(ctx, &ts, client.InNamespace(s.cfg.Namespace)); err != nil {
+		return nil, internalError(err)
 	}
-	if err := s.r.List(r.Context(), &ps, client.InNamespace(s.cfg.Namespace)); err != nil {
-		writeProblem(w, internalError(err))
-		return
+	if err := s.r.List(ctx, &ps, client.InNamespace(s.cfg.Namespace)); err != nil {
+		return nil, internalError(err)
 	}
-	pooled := map[string]bool{}
+	pooled, idleReady := map[string]bool{}, map[string]bool{}
 	for _, p := range ps.Items {
 		pooled[p.Spec.TemplateRef] = true
+		idleReady[p.Spec.TemplateRef] = idleReady[p.Spec.TemplateRef] || p.Status.IdleReady > 0
 	}
+	now := time.Now()
 	out := []Template{}
 	for i := range ts.Items {
 		t := &ts.Items[i]
-		out = append(out, templateToAPI(t, pooled[t.Name] && slices.Contains(t.Spec.Persistence.Allowed, v1alpha1.PersistenceNone)))
+		tpl := templateToAPI(t, pooled[t.Name] && slices.Contains(t.Spec.Persistence.Allowed, v1alpha1.PersistenceNone))
+		tpl.StartEstimate = s.hub.starts.startEstimates(t, idleReady[t.Name], now)
+		out = append(out, tpl)
 	}
 	slices.SortFunc(out, func(a, b Template) int { return strings.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+func (s *Server) ListTemplates(w http.ResponseWriter, r *http.Request) {
+	out, perr := s.templates(r.Context())
+	if perr != nil {
+		writeProblem(w, perr)
+		return
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) WatchTemplates(w http.ResponseWriter, r *http.Request) {
+	s.streamEvery(w, r, templatesKey, "templates", templateEventGap, func(ctx context.Context) (any, bool, *apiError) {
+		out, perr := s.templates(ctx)
+		return out, false, perr
+	})
+}
+
+// template returns the template from the cache, nil when it is gone (running sessions survive their template).
+func (s *Server) template(ctx context.Context, name string) *v1alpha1.IDETemplate {
+	var t v1alpha1.IDETemplate
+	if s.r.Get(ctx, types.NamespacedName{Namespace: s.cfg.Namespace, Name: name}, &t) != nil {
+		return nil
+	}
+	return &t
+}
+
+func (s *Server) sessionAPI(ctx context.Context, sess *v1alpha1.IDESession) Session {
+	return sessionToAPI(sess, s.template(ctx, sess.Spec.TemplateRef))
+}
+
+// workspaceAPI converts a workspace; busy are the names of the workspaces a session uses.
+func (s *Server) workspaceAPI(ws *v1alpha1.IDEWorkspace, busy map[string]bool) Workspace {
+	return workspaceToAPI(ws, busy[ws.Name], s.cfg.Workspaces.Grace.Duration)
+}
+
+// busyWorkspaces are the workspaces a session that has not failed uses (also while it is being deleted).
+func busyWorkspaces(sessions []v1alpha1.IDESession) map[string]bool {
+	busy := map[string]bool{}
+	for i := range sessions {
+		if ref := sessions[i].Spec.WorkspaceRef; ref != "" && sessions[i].Status.Phase != v1alpha1.SessionFailed {
+			busy[ref] = true
+		}
+	}
+	return busy
 }
 
 func (s *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +236,7 @@ func (s *Server) ListSessions(w http.ResponseWriter, r *http.Request) {
 	out := []Session{}
 	for i := range items {
 		if items[i].DeletionTimestamp == nil {
-			out = append(out, sessionToAPI(&items[i]))
+			out = append(out, s.sessionAPI(r.Context(), &items[i]))
 		}
 	}
 	slices.SortFunc(out, func(a, b Session) int { return strings.Compare(a.Name, b.Name) })
@@ -199,7 +249,7 @@ func (s *Server) GetSession(w http.ResponseWriter, r *http.Request, name Name) {
 		writeProblem(w, perr)
 		return
 	}
-	writeJSON(w, http.StatusOK, sessionToAPI(sess))
+	writeJSON(w, http.StatusOK, s.sessionAPI(r.Context(), sess))
 }
 
 func (s *Server) DeleteSession(w http.ResponseWriter, r *http.Request, name Name) {
@@ -223,7 +273,7 @@ func (s *Server) WatchSession(w http.ResponseWriter, r *http.Request, name Name)
 			return nil, false, perr
 		}
 		p := sess.Status.Phase
-		return sessionToAPI(sess), p == v1alpha1.SessionReady || p == v1alpha1.SessionFailed || sess.DeletionTimestamp != nil, nil
+		return s.sessionAPI(ctx, sess), p == v1alpha1.SessionReady || p == v1alpha1.SessionFailed || sess.DeletionTimestamp != nil, nil
 	})
 }
 
@@ -233,10 +283,16 @@ func (s *Server) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, internalError(err))
 		return
 	}
+	sessions, err := s.ownedSessions(r.Context(), s.r, user(r).Owner)
+	if err != nil {
+		writeProblem(w, internalError(err))
+		return
+	}
+	busy := busyWorkspaces(sessions)
 	out := []Workspace{}
 	for i := range items {
 		if items[i].DeletionTimestamp == nil {
-			out = append(out, workspaceToAPI(&items[i]))
+			out = append(out, s.workspaceAPI(&items[i], busy))
 		}
 	}
 	slices.SortFunc(out, func(a, b Workspace) int { return strings.Compare(a.Name, b.Name) })
@@ -281,7 +337,7 @@ func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, perr)
 		return
 	}
-	writeJSON(w, http.StatusCreated, workspaceToAPI(ws))
+	writeJSON(w, http.StatusCreated, s.workspaceAPI(ws, nil))
 }
 
 func deref(s *string) string {
@@ -298,14 +354,9 @@ func (s *Server) DeleteWorkspace(w http.ResponseWriter, r *http.Request, name Na
 		writeProblem(w, perr)
 		return
 	}
-	sessions, err := s.ownedSessions(r.Context(), s.w, owner)
-	if err != nil {
-		writeProblem(w, internalError(err))
-		return
-	}
-	// A session that is being deleted still holds the volume.
-	if slices.ContainsFunc(sessions, func(x v1alpha1.IDESession) bool { return x.Spec.WorkspaceRef == name }) {
-		writeProblem(w, problem(CodeWorkspaceInUse, "a session uses this workspace"))
+	// U14: stop the sessions on the workspace first; a session that is being deleted still holds the volume.
+	if perr := s.stopSessionsOn(r.Context(), owner, name); perr != nil {
+		writeProblem(w, perr)
 		return
 	}
 	if err := s.w.Delete(r.Context(), ws); client.IgnoreNotFound(err) != nil {
@@ -313,4 +364,38 @@ func (s *Server) DeleteWorkspace(w http.ResponseWriter, r *http.Request, name Na
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// stopSessionsOn deletes the sessions on the workspace and waits until they are gone (at most s.stopWait).
+func (s *Server) stopSessionsOn(ctx context.Context, owner, workspace string) *apiError {
+	deadline := time.Now().Add(s.stopWait)
+	for {
+		sessions, err := s.ownedSessions(ctx, s.w, owner)
+		if err != nil {
+			return internalError(err)
+		}
+		left := 0
+		for i := range sessions {
+			if sessions[i].Spec.WorkspaceRef != workspace {
+				continue
+			}
+			left++
+			if sessions[i].DeletionTimestamp == nil {
+				if err := s.w.Delete(ctx, &sessions[i]); client.IgnoreNotFound(err) != nil {
+					return internalError(err)
+				}
+			}
+		}
+		if left == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return problem(CodeInternal, "the session on this workspace did not stop in time, retry")
+		}
+		select {
+		case <-ctx.Done():
+			return internalError(ctx.Err())
+		case <-time.After(s.stopPoll):
+		}
+	}
 }

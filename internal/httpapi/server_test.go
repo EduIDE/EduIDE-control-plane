@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/time/rate"
 
@@ -248,18 +249,49 @@ func TestOwnerIsolation(t *testing.T) {
 	}
 }
 
-func TestDeleteWorkspaceInUse(t *testing.T) {
+func TestDeleteWorkspaceStopsTheSession(t *testing.T) {
 	s := session("s-a", "alice", "java", "Ready")
 	s.Spec.WorkspaceRef = "w-a"
 	e := newEnv(t, s, workspace("w-a", "alice", "java"))
-	if p := problemCode(t, e, "DELETE", "/workspaces/w-a", "alice", nil, 409); p.Code != CodeWorkspaceInUse {
-		t.Fatalf("code %s", p.Code)
-	}
-	if rec := e.do("DELETE", "/sessions/s-a", "alice", nil); rec.Code != 204 {
-		t.Fatalf("%d", rec.Code)
-	}
 	if rec := e.do("DELETE", "/workspaces/w-a", "alice", nil); rec.Code != 204 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if err := e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "s-a"}, &v1alpha1.IDESession{}); err == nil {
+		t.Error("session still exists")
+	}
+	if err := e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "w-a"}, &v1alpha1.IDEWorkspace{}); err == nil {
+		t.Error("workspace still exists")
+	}
+}
+
+func TestDeleteWorkspaceWaitsForTheSession(t *testing.T) {
+	s := session("s-a", "alice", "java", "Ready")
+	s.Spec.WorkspaceRef = "w-a"
+	s.Finalizers = []string{"test/hold"}
+	e := newEnv(t, s, workspace("w-a", "alice", "java"))
+	e.srv.stopPoll = 10 * time.Millisecond
+	// The operator releases the session a moment later.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		var cur v1alpha1.IDESession
+		_ = e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "s-a"}, &cur)
+		cur.Finalizers = nil
+		_ = e.k.Update(context.Background(), &cur)
+	}()
+	if rec := e.do("DELETE", "/workspaces/w-a", "alice", nil); rec.Code != 204 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestDeleteWorkspaceTimesOut(t *testing.T) {
+	s := session("s-a", "alice", "java", "Ready")
+	s.Spec.WorkspaceRef = "w-a"
+	s.Finalizers = []string{"test/hold"}
+	e := newEnv(t, s, workspace("w-a", "alice", "java"))
+	e.srv.stopWait, e.srv.stopPoll = 50*time.Millisecond, 10*time.Millisecond
+	problemCode(t, e, "DELETE", "/workspaces/w-a", "alice", nil, 500)
+	if err := e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "w-a"}, &v1alpha1.IDEWorkspace{}); err != nil {
+		t.Error("workspace must stay when the session does not stop")
 	}
 }
 
