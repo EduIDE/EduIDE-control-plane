@@ -169,4 +169,3 @@ func workspace(name, owner, template string) *v1alpha1.IDEWorkspace {
 		Spec:       v1alpha1.IDEWorkspaceSpec{Owner: owner, TemplateRef: template, Persistence: v1alpha1.WorkspacePersistence{Mode: v1alpha1.WorkspaceVolume}},
 	}
 }
-
