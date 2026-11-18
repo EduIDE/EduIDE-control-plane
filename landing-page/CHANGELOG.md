@@ -8,10 +8,11 @@ The section of a version becomes the notes of its GitHub Release.
 ### Changes
 
 - The landing page runs on the control plane REST API (`@eduide/control-plane-client`) instead of Theia Cloud; sessions are followed through server-sent events
-- New overview at `/me/overview` with running sessions and workspaces
+- New home page: your environments on top (also at `/me/overview`), new environments as tiles below, with start time, saved or temporary workspace, what an image includes and project templates; English and German; no Artemis wording; colors follow the system setting (the theme switch is gone)
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
 - Runtime config is `/config.json`, served by a small Go static server that replaces nginx
-- Imprint and privacy texts are no longer part of the page: set `legal.imprintUrl` and `legal.privacyUrl` in `config.json` to show footer links to your own pages; the `privacy` config and the `/imprint` and `/privacy` routes are removed
+- Imprint and privacy are mandatory: `config.json` needs `legal.imprint` and `legal.privacy` (an external `url` or a hosted Markdown `path`), the chart needs `legal.imprint` and `legal.privacy` values. `legal.imprintUrl` and `legal.privacyUrl` are removed. `/imprint` and `/privacy` render the Markdown without a login
+- The footer is the same on every page (GitHub, bug report, imprint, privacy) and sits at the bottom of the viewport; `footerLinks.github` is new
 - The browser tab title comes from `config.title` (index.html says "EduIDE" until then)
 - Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
 
