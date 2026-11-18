@@ -83,6 +83,11 @@ paths:
       tags: [sessions]
       responses:
         "204": {description: "Stopping. The pod is discarded, a volume workspace stays."}
+        "404":
+          description: No session of the calling user has this name (`not-found`). Sessions of other users are not found either.
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
         default: {$ref: "#/components/responses/Problem"}
   /sessions/{name}/events:
     parameters:
@@ -115,6 +120,10 @@ paths:
     post:
       operationId: createWorkspace
       tags: [workspaces]
+      description: |
+        Get-or-create: the workspace name is derived from user, template and `display.source`, so a repeated
+        request returns the existing workspace (also with 201). Fails with `persistence-not-allowed` when the
+        template does not allow persistence `volume`, and with `template-not-found` for an unknown template.
       requestBody:
         required: true
         content:
@@ -122,7 +131,7 @@ paths:
             schema: {$ref: "#/components/schemas/WorkspaceRequest"}
       responses:
         "201":
-          description: New workspace.
+          description: The new or existing workspace.
           content:
             application/json:
               schema: {$ref: "#/components/schemas/Workspace"}

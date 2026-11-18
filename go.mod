@@ -6,6 +6,7 @@ require (
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/envoyproxy/go-control-plane/envoy v1.39.1-0.20260819172001-e6e3fd93e4be
 	github.com/getkin/kin-openapi v0.153.0
+	github.com/go-jose/go-jose/v4 v4.1.6
 	github.com/oapi-codegen/runtime v1.9.0
 	github.com/prometheus/client_golang v1.25.0
 	go.opentelemetry.io/otel v1.47.0
@@ -37,7 +38,6 @@ require (
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-logr/zapr v1.3.0 // indirect

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -35,6 +36,14 @@ type Config struct {
 	Agent        Agent      `json:"agent"`
 	// RateLimit per user for launches on the service.
 	RateLimit RateLimit `json:"rateLimit,omitempty"`
+	Overview  Overview  `json:"overview,omitempty"`
+}
+
+// Overview tunes the landing page overview (G15).
+type Overview struct {
+	// TitleStripPattern (RE2) is removed from the last path segment of display.source when the
+	// service derives a title, e.g. a user suffix like "-[a-z]{2}[0-9]{2}[a-z]{3}$". Empty strips nothing.
+	TitleStripPattern string `json:"titleStripPattern,omitempty"`
 }
 
 type Hosts struct {
@@ -201,6 +210,9 @@ func (c *Config) validate() error {
 	}
 	if c.SessionsPerUser < 1 {
 		errs = append(errs, errors.New("config: sessionsPerUser must be at least 1"))
+	}
+	if _, err := regexp.Compile(c.Overview.TitleStripPattern); err != nil {
+		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))
 	}
 	return errors.Join(errs...)
 }

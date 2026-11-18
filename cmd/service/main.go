@@ -1,0 +1,147 @@
+// Command service serves the REST API of the control plane (/api/v1) and its metrics.
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
+	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/httpapi"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("service failed", "error", err.Error())
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	configPath := flag.String("config", "/etc/eduide/config.yaml", "path of the deployment config")
+	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	shutdownTelemetry, err := telemetry.Setup(ctx, "service", cfg.Telemetry.OTLPEndpoint)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = shutdownTelemetry(context.Background()) }()
+
+	scheme := runtime.NewScheme()
+	if err := errors.Join(clientgoscheme.AddToScheme(scheme), v1alpha1.AddToScheme(scheme)); err != nil {
+		return err
+	}
+	restCfg, err := ctrl.GetConfig()
+	if err != nil {
+		return err
+	}
+	managed := labels.SelectorFromSet(labels.Set{v1alpha1.LabelManagedBy: v1alpha1.LabelManagedByValue})
+	nsOnly := cache.ByObject{} // templates and pools come from the chart, which sets its own managed-by value
+	c, err := cache.New(restCfg, cache.Options{
+		Scheme:            scheme,
+		DefaultNamespaces: map[string]cache.Config{cfg.Namespace: {}},
+		ByObject: map[client.Object]cache.ByObject{
+			&v1alpha1.IDESession{}:   {Label: managed},
+			&v1alpha1.IDEWorkspace{}: {Label: managed},
+			&v1alpha1.IDETemplate{}:  nsOnly,
+			&v1alpha1.IDEPool{}:      nsOnly,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	// Reads of the API go to the cache directly; the client only writes.
+	writer, err := client.New(restCfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return err
+	}
+	hub := httpapi.NewHub()
+	if err := hub.Register(ctx, c); err != nil {
+		return err
+	}
+	if err := errors.Join(
+		func() error { _, err := c.GetInformer(ctx, &v1alpha1.IDETemplate{}); return err }(),
+		func() error { _, err := c.GetInformer(ctx, &v1alpha1.IDEPool{}); return err }(),
+	); err != nil {
+		return err
+	}
+	go func() {
+		if err := c.Start(ctx); err != nil {
+			slog.Error("cache stopped", "error", err.Error())
+			stop()
+		}
+	}()
+	var synced atomic.Bool
+	go func() { synced.Store(c.WaitForCacheSync(ctx)) }()
+
+	reg := prometheus.NewRegistry()
+	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
+	reg.MustRegister(telemetry.ServiceMetrics...)
+	ops := http.NewServeMux()
+	ops.Handle("GET /metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+	ops.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	ops.HandleFunc("GET /readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if !synced.Load() {
+			http.Error(w, "cache not synced", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	var salt []byte
+	if cfg.Telemetry.UserSaltFile != "" {
+		if salt, err = os.ReadFile(cfg.Telemetry.UserSaltFile); err != nil {
+			return err
+		}
+	}
+	api := httpapi.NewServer(cfg, c, writer, hub, salt)
+	// No WriteTimeout: SSE streams stay open.
+	servers := []*http.Server{
+		{Addr: ":8080", Handler: api.Handler(auth.NewOIDC(cfg.OIDC)), ReadHeaderTimeout: 10 * time.Second,
+			BaseContext: func(net.Listener) context.Context { return ctx }}, // ends SSE streams on shutdown
+		{Addr: ":9090", Handler: ops, ReadHeaderTimeout: 10 * time.Second},
+	}
+	errc := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() { errc <- s.ListenAndServe() }()
+	}
+	select {
+	case err := <-errc:
+		return err
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	for _, s := range servers {
+		_ = s.Shutdown(shutdownCtx)
+	}
+	return nil
+}
