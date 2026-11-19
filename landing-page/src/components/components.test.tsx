@@ -583,7 +583,7 @@ describe('Launch with a refused repository host', () => {
         expect(document.body.textContent).not.toContain(detail);
     });
 
-    it('translates other invalid input instead of showing the detail', async () => {
+    it('translates other invalid input and adds the key and rule the service names', async () => {
         render(
             wrap(
                 <Launch
@@ -596,8 +596,9 @@ describe('Launch with a refused repository host', () => {
                 />
             )
         );
-        await screen.findByText('The link contains a value this environment does not accept.');
-        expect(document.body.textContent).not.toContain('invalid value for key');
+        await screen.findByText(
+            'The link contains a value this environment does not accept. (invalid value for key TEMPLATE: not a variant of this template)'
+        );
     });
 });
 

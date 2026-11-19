@@ -99,6 +99,11 @@ spec:
                   description: InjectableKey allows one key of launch data to reach
                     the session.
                   properties:
+                    allowCredentials:
+                      description: |-
+                        AllowCredentials accepts user:password in an HTTPSURL value, for example Artemis repository URLs with a VCS
+                        token. The host allowlist still applies; the value only ever reaches the launch data Secret.
+                      type: boolean
                     format:
                       description: KeyFormat is the check applied to an injectable
                         value (G18).
@@ -148,6 +153,9 @@ spec:
                   - message: Pattern needs pattern
                     rule: '!has(self.format) || self.format != ''Pattern'' || size(self.pattern)
                       > 0'
+                  - message: allowCredentials needs format HTTPSURL
+                    rule: '!has(self.allowCredentials) || !self.allowCredentials ||
+                      (has(self.format) && self.format == ''HTTPSURL'')'
                 maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:

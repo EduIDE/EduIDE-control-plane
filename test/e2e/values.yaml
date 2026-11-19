@@ -53,6 +53,17 @@ templates:
         allowed: [none, volume]
         default: none
         mountPath: /home/project
+  # Artemis (Artemis#14702) sends the repository URL with a VCS token in the URL fragment.
+  - name: artemis
+    spec:
+      <<: *tpl
+      displayName: Artemis
+      injectableKeys:
+        - {name: GIT_URI, source: Request, format: HTTPSURL, allowCredentials: true}
+        - {name: ARTEMIS_URL, source: Request, format: HTTPSURL}
+        - {name: ARTEMIS_TOKEN, source: Request, format: Token}
+        - {name: GIT_USER, source: UserName}
+        - {name: GIT_MAIL, source: UserEmail}
   - name: warm
     spec: *tpl
     pool: {minIdle: 2, targetIdle: 2, maxInstances: 6}

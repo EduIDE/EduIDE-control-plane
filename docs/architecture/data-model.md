@@ -15,7 +15,7 @@ Change rules: [ADR 0011](../adr/0011-crd-versioning-cel.md). Object model diagra
 Notes:
 
 - `IDEPool` is separate from the template: Helm owns the template, the pool scaler owns `targetIdle`. No field has two owners.
-- `injectableKeys` is the allowlist for launch data. There is no `fromSecrets` and no `fromConfigMaps`.
+- `injectableKeys` is the allowlist for launch data. There is no `fromSecrets` and no `fromConfigMaps`. `allowCredentials` (only with `format: HTTPSURL`) accepts user info such as an Artemis VCS token in the URL; the value then reaches only the launch data Secret ([ADR 0012](../adr/0012-user-data-secrets-allowlist.md)).
 - `persistence.mode` is `none` or `volume`. **Planned:** `snapshot` (optional phase 9). The enum allows it additively.
 - A session with a `workspaceRef` always starts cold. The startup strategy shows it as `cold`.
 - `IDETemplate.status.image` comes from the OCI annotation `io.eduide.template` of the image manifest, read by the operator once per digest and at most every 10 minutes per tag ([0020](../adr/0020-landing-page-data-in-the-api.md)). Anonymous pulls only. The condition `ImageMetadata` says why the block is empty (`AnnotationMissing`, `AnnotationInvalid`, `RegistryError`) and never affects `Ready`.

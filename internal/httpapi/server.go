@@ -207,7 +207,7 @@ func (s *Server) templates(ctx context.Context) ([]Template, *apiError) {
 		pooled[p.Spec.TemplateRef] = true
 		idleReady[p.Spec.TemplateRef] = idleReady[p.Spec.TemplateRef] || p.Status.IdleReady > 0
 	}
-	now := time.Now()
+	now := s.now()
 	out := []Template{}
 	for i := range ts.Items {
 		t := &ts.Items[i]

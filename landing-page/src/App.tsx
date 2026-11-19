@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Api } from './api';
 import type { LaunchRequest } from './api-client';
-import { readArtemisToken } from './artemisToken';
+import { readArtemisToken, readGitUri } from './artemisToken';
 import { Home } from './components/Home';
 import { Launch } from './components/Launch';
 import { Shell } from './components/Shell';
@@ -68,7 +68,11 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
             return;
         }
         const request = buildLaunchRequest(
-            { ...link, artemisToken: readArtemisToken(window.location.search, window.sessionStorage) },
+            {
+                ...link,
+                gitUri: readGitUri(window.location.search, window.sessionStorage),
+                artemisToken: readArtemisToken(window.location.search, window.sessionStorage)
+            },
             template
         );
         setLaunch({ request, info: buildLaunchInfo(template, request) });
