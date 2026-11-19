@@ -2,7 +2,9 @@ groups:
 - name: eduide-control-plane
   rules:
   - alert: EduIDEAuthzDenyRateHigh
-    expr: sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__", result="deny"}[5m])) / sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__"}[5m])) > 0.2
+    # A stale IDE tab of an ended session polls every 10 s and is denied each time; without the volume floor
+    # one such tab at night is 100% of the decisions.
+    expr: (sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__", result="deny"}[5m])) / sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__"}[5m])) > 0.2) and sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__"}[5m])) > 0.5
     for: 10m
     labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
