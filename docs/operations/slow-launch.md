@@ -31,6 +31,7 @@ kubectl -n <ns> get idesession <name> -o yaml | grep -A12 -E 'startStrategy|time
 | `capacity-exhausted` | No room for the pod after `capacity.exhaustedAfter` | Add capacity or quota ([pool-empty.md](pool-empty.md)) |
 | `template-not-found` | `templateRef` does not exist | Check the template name in the chart values |
 | `workspace-not-found` | `workspaceRef` does not exist | Check the workspace; it may have expired |
+| `workspace-lost` | The PVC of a bound workspace is gone | See [workspace-volume-lost.md](workspace-volume-lost.md) |
 | `workspace-in-use` | Unused since U14: deleting a workspace stops its session | None |
 | `start-failed` | Pod or agent failed. After 60 s of an error that waiting does not change (`InvalidImageName`, `CreateContainerConfigError`, `CrashLoopBackOff`, or `ErrImagePull`/`ImagePullBackOff` with "not found", "manifest unknown", "unauthorized", "denied" or "forbidden" in the message) the message names the reason. Other pull errors (timeouts, rate limits, a slow pull of a large image) wait up to 10 min | Read `status.message`, pod logs and events. "launch data Secret ... missing or not labelled" means the data Secret is absent or lacks `app.kubernetes.io/managed-by=eduide` |
 

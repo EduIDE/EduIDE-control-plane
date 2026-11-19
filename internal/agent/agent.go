@@ -233,6 +233,12 @@ func (a *Agent) notify(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid notice", http.StatusBadRequest)
 		return
 	}
+	if n.At != nil && n.At.Before(time.Now()) {
+		// The session has ended by then; showing it would only confuse the user.
+		a.log.Info("expired notice dropped", "kind", string(n.Kind))
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	a.mu.Lock()
 	a.notices = append(a.notices, n)
 	if len(a.notices) > maxNotices {
@@ -311,8 +317,9 @@ func (a *Agent) snapshot() (agentapi.LocalSession, <-chan struct{}) {
 		}
 		s.Data = &d
 	}
-	if len(a.notices) > 0 {
-		n := append([]agentapi.Notice(nil), a.notices...)
+	// A notice can expire while it waits in the queue.
+	n := slices.DeleteFunc(slices.Clone(a.notices), func(n agentapi.Notice) bool { return n.At != nil && n.At.Before(time.Now()) })
+	if len(n) > 0 {
 		s.Notices = &n
 	}
 	return s, a.changed

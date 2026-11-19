@@ -19,6 +19,8 @@ export interface EnvState {
 export interface AgentClientOptions {
   baseUrl: string;
   onNotice: (n: Notice) => void;
+  // Remembers shown notices across IDE reloads (a VS Code Memento such as globalState).
+  store?: { get<T>(key: string, fallback: T): T; update(key: string, value: unknown): Thenable<void> | Promise<void> };
   pollTimeoutSec?: number;
   minBackoffMs?: number;
   maxBackoffMs?: number;
@@ -26,6 +28,8 @@ export interface AgentClientOptions {
   now?: () => number;
 }
 
+const STORE_KEY = "eduide.shownNotices";
+const MAX_REMEMBERED = 32;
 const noticeKey = (n: Notice) => `${n.kind}|${n.at ?? ""}|${n.message}`;
 
 export class AgentClient {
@@ -109,10 +113,20 @@ export class AgentClient {
     this.version = s.version;
     for (const n of s.notices ?? []) {
       const k = noticeKey(n);
-      if (!this.seen.has(k)) {
-        this.seen.add(k);
-        this.o.onNotice(n);
+      if (this.seen.has(k)) {
+        continue;
       }
+      this.seen.add(k);
+      // Notices with an end time are remembered by kind and end time; the end time ends their relevance.
+      const pk = n.at ? `${n.kind}|${n.at}` : undefined;
+      const shown = pk ? this.o.store?.get<string[]>(STORE_KEY, []) ?? [] : [];
+      if (pk && shown.includes(pk)) {
+        continue;
+      }
+      if (pk) {
+        void this.o.store?.update(STORE_KEY, [...shown, pk].slice(-MAX_REMEMBERED));
+      }
+      this.o.onNotice(n);
     }
   }
 

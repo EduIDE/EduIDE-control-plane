@@ -118,7 +118,10 @@ func TestMiddleware(t *testing.T) {
 	h := Middleware(stub{User{Owner: "alice"}})(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got, _ = FromContext(r.Context())
 	}))
-	for _, hdr := range []string{"", "Bearer ", "Basic good", "Bearer bad"} {
+	for _, c := range []struct{ hdr, challenge string }{
+		{"", "Bearer"}, {"Bearer ", "Bearer"}, {"Basic good", "Bearer"}, {"Bearer bad", `Bearer error="invalid_token"`},
+	} {
+		hdr := c.hdr
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "/", nil)
 		if hdr != "" {
@@ -129,6 +132,9 @@ func TestMiddleware(t *testing.T) {
 		_ = json.Unmarshal(rec.Body.Bytes(), &p)
 		if rec.Code != 401 || p["code"] != "unauthorized" || rec.Header().Get("Content-Type") != "application/problem+json" {
 			t.Errorf("%q: %d %s", hdr, rec.Code, rec.Body)
+		}
+		if got := rec.Header().Get("WWW-Authenticate"); got != c.challenge {
+			t.Errorf("%q: WWW-Authenticate %q, want %q", hdr, got, c.challenge)
 		}
 	}
 	req := httptest.NewRequest("GET", "/", nil)

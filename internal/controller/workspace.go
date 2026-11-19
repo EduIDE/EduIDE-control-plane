@@ -64,6 +64,15 @@ func (r *workspaceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if claimName == "" && ws.Status.ClaimName != "" {
+		// The volume held data once. A new empty one would hide the loss, so the workspace waits for a restore (F34).
+		if c := meta.FindStatusCondition(ws.Status.Conditions, v1.ConditionReady); c == nil || c.Reason != v1.ReasonVolumeLost {
+			slog.WarnContext(ctx, "workspace volume lost", "workspace", ws.Name, "claim", ws.Status.ClaimName, "user", telemetry.UserID(r.salt, ws.Spec.Owner))
+			r.events.Eventf(ws, nil, corev1.EventTypeWarning, v1.ReasonVolumeLost, v1.ReasonVolumeLost, "claim %s is gone; delete the workspace or restore the claim", ws.Status.ClaimName)
+		}
+		ready(metav1.ConditionFalse, v1.ReasonVolumeLost, fmt.Sprintf("claim %s is gone", ws.Status.ClaimName))
+		return ctrl.Result{RequeueAfter: time.Minute}, r.patchStatus(ctx, orig, ws)
+	}
 	if claimName == "" {
 		return pending("ClaimNotFound", msg)
 	}
@@ -169,6 +178,9 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 		return ws.Name, "", nil
 	} else if !apierrors.IsNotFound(err) {
 		return "", "", err
+	}
+	if ws.Status.ClaimName != "" {
+		return "", fmt.Sprintf("claim %s is gone", ws.Status.ClaimName), nil
 	}
 	size := r.cfg.Workspaces.DefaultSize
 	switch {

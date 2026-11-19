@@ -147,13 +147,13 @@ func Middleware(v Verifier) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 			if !ok || raw == "" {
-				unauthorized(w)
+				unauthorized(w, "Bearer")
 				return
 			}
 			u, err := v.Verify(r.Context(), raw)
 			if err != nil {
 				slog.DebugContext(r.Context(), "bearer token rejected", "error", err.Error())
-				unauthorized(w)
+				unauthorized(w, `Bearer error="invalid_token"`) // RFC 6750
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(WithUser(r.Context(), u)))
@@ -161,9 +161,9 @@ func Middleware(v Verifier) func(http.Handler) http.Handler {
 	}
 }
 
-func unauthorized(w http.ResponseWriter) {
+func unauthorized(w http.ResponseWriter, challenge string) {
 	w.Header().Set("Content-Type", "application/problem+json")
-	w.Header().Set("WWW-Authenticate", "Bearer")
+	w.Header().Set("WWW-Authenticate", challenge)
 	w.WriteHeader(http.StatusUnauthorized)
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"type":   "https://eduide.github.io/problems/unauthorized",

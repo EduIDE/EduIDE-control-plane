@@ -129,6 +129,9 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 		if perr != nil {
 			return nil, false, perr
 		}
+		if ws.VolumeLost() {
+			return nil, false, problem(CodeWorkspaceLost, "the volume of the workspace is gone")
+		}
 	}
 	return s.createSession(ctx, attrs, u.Owner, &p.tpl, ws, p.key, p.data, p.display)
 }

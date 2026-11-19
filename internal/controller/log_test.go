@@ -53,3 +53,24 @@ func TestAgentGetsItsLogLevel(t *testing.T) {
 	}
 	t.Fatal("agent container lacks AGENT_LOG_LEVEL=debug")
 }
+
+func TestWorkspaceMountOnlyWithClaim(t *testing.T) {
+	d := &deps{cfg: &config.Config{}}
+	tmpl := &v1.IDETemplate{ObjectMeta: metav1.ObjectMeta{Name: "java", Namespace: "ns"}}
+	for claim, want := range map[string]bool{"": false, "w-1": true} {
+		pod := d.buildPod(tmpl, "inst", nil, claim)
+		mounted := false
+		for _, c := range pod.Spec.Containers {
+			for _, m := range c.VolumeMounts {
+				mounted = mounted || m.Name == "workspace"
+			}
+		}
+		hasVol := false
+		for _, v := range pod.Spec.Volumes {
+			hasVol = hasVol || v.Name == "workspace" && v.EmptyDir == nil
+		}
+		if mounted != want || hasVol != want {
+			t.Errorf("claim %q: mounted=%v volume=%v, want %v", claim, mounted, hasVol, want)
+		}
+	}
+}

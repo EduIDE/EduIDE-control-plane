@@ -122,6 +122,29 @@ test("notices shown once, polls use latest version", async () => {
   await done();
 });
 
+test("a notice with an end time is not shown again after a reload", async () => {
+  const mem = new Map<string, unknown>();
+  const store = {
+    get: <T>(k: string, f: T) => (mem.has(k) ? (mem.get(k) as T) : f),
+    update: async (k: string, v: unknown) => void mem.set(k, v),
+  };
+  const n: Notice = { kind: "idle-warning", message: "idle", at: "2030-01-01T00:00:00Z" };
+  const runOnce = async (notice: Notice) => {
+    const agent = fakeAgent();
+    const shown: Notice[] = [];
+    const c = new AgentClient({ baseUrl: await agent.listen(), onNotice: (x) => shown.push(x), store, pollTimeoutSec: 1, minBackoffMs: 10 });
+    c.start();
+    agent.set({ version: 1, claimed: true, data: {}, notices: [notice] });
+    await until(() => c.getEnvState().injected);
+    await c.stop();
+    await agent.close();
+    return shown;
+  };
+  assert.equal((await runOnce(n)).length, 1);
+  assert.equal((await runOnce(n)).length, 0);
+  assert.equal((await runOnce({ ...n, at: "2030-01-01T01:00:00Z" })).length, 1);
+});
+
 test("backs off on errors and recovers", async () => {
   const { agent, c, done } = await setup();
   agent.fail(3);
