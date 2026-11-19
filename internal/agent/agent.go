@@ -51,6 +51,8 @@ type Agent struct {
 	token   []byte
 	idePort string
 	log     *slog.Logger
+	// PathPrefix is the public path of this instance ("/<instance>/"); cookie paths of the IDE are moved below it.
+	PathPrefix string
 
 	conns atomic.Int64
 

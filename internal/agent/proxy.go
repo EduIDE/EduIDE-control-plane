@@ -30,6 +30,10 @@ func (a *Agent) ProxyHandler() http.Handler {
 				}
 			}
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			scopeCookies(resp.Header, a.PathPrefix)
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if ok, n := a.limit.Allow("upstream"); ok {
 				a.log.Warn("proxy upstream error", "method", r.Method, "prefix", pathPrefix(r.URL.Path), "error", errString(err), "suppressed", n)
@@ -82,6 +86,27 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // pathPrefix keeps the first path segment: the rest may carry file names of the user.
+// scopeCookies moves explicit cookie paths of the IDE below the instance prefix, like nginx proxy_cookie_path.
+// The IDE sees itself at "/", but all instances share one host: Theia's theia-connection-token with Path=/
+// would otherwise be overwritten by every other IDE the student opens, and its requests then fail with 403.
+// A cookie without a Path already gets the right default from the browser.
+func scopeCookies(h http.Header, prefix string) {
+	if prefix == "" {
+		return
+	}
+	base := strings.TrimSuffix(prefix, "/")
+	for i, c := range h.Values("Set-Cookie") {
+		parts := strings.Split(c, ";")
+		for j, p := range parts[1:] {
+			name, val, _ := strings.Cut(strings.TrimSpace(p), "=")
+			if strings.EqualFold(name, "path") && strings.HasPrefix(val, "/") && !strings.HasPrefix(val, prefix) {
+				parts[j+1] = " Path=" + base + val
+			}
+		}
+		h["Set-Cookie"][i] = strings.Join(parts, ";")
+	}
+}
+
 func pathPrefix(p string) string {
 	p = strings.TrimPrefix(p, "/")
 	seg, _, _ := strings.Cut(p, "/")

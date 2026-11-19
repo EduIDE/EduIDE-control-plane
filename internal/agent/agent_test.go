@@ -536,3 +536,34 @@ func TestExpiredNoticesAreDropped(t *testing.T) {
 		t.Errorf("expired notice still served: %+v", s.Notices)
 	}
 }
+
+func TestProxyScopesIDECookiesToTheInstancePath(t *testing.T) {
+	ide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Set-Cookie", "theia-connection-token=abc; Path=/; HttpOnly; SameSite=Strict")
+		w.Header().Add("Set-Cookie", "deep=1; path=/sub; Secure")
+		w.Header().Add("Set-Cookie", "nopath=1; HttpOnly")
+		w.Header().Add("Set-Cookie", "already=1; Path=/inst123/x")
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer ide.Close()
+	a := newAgent(t, portOf(t, ide.URL))
+	a.PathPrefix = "/inst123/"
+	w := do(t, a.ProxyHandler(), "GET", "/", "", map[string]string{TokenHeader: tok})
+	got := w.Result().Header.Values("Set-Cookie")
+	want := []string{
+		"theia-connection-token=abc; Path=/inst123/; HttpOnly; SameSite=Strict",
+		"deep=1; Path=/inst123/sub; Secure",
+		"nopath=1; HttpOnly",
+		"already=1; Path=/inst123/x",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("Set-Cookie\n got %q\nwant %q", got, want)
+	}
+
+	// Without a prefix (older operator) the cookies pass unchanged.
+	a.PathPrefix = ""
+	w = do(t, a.ProxyHandler(), "GET", "/", "", map[string]string{TokenHeader: tok})
+	if v := w.Result().Header.Values("Set-Cookie")[0]; v != "theia-connection-token=abc; Path=/; HttpOnly; SameSite=Strict" {
+		t.Fatalf("unchanged cookie %q", v)
+	}
+}
