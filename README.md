@@ -56,7 +56,19 @@ flowchart TB
 | **pool scaler** | Sets how many idle IDEs each pool keeps warm |
 | **landing page** | Launch page, overview of sessions and workspaces, status page, admin panel |
 
-More: [architecture overview](docs/architecture/overview.md), [start path](docs/architecture/start-path.md), [session access](docs/architecture/session-access.md), UML diagrams of [components](docs/architecture/diagrams/components.svg), [deployment](docs/architecture/diagrams/deployment.svg) and the [object model](docs/architecture/diagrams/object-model.svg), and the [architecture decisions](docs/adr/README.md).
+### Components (UML)
+
+Subsystems, their components and the services they provide and require.
+
+<a href="docs/architecture/diagrams/components.svg"><img src="docs/architecture/diagrams/components.svg" alt="UML component diagram of the EduIDE control plane"/></a>
+
+### Deployment (UML)
+
+Where everything runs: browser, Keycloak, Artemis, the Envoy Gateway and the pods of one deployment namespace.
+
+<a href="docs/architecture/diagrams/deployment.svg"><img src="docs/architecture/diagrams/deployment.svg" alt="UML deployment diagram of the EduIDE control plane"/></a>
+
+More: [architecture overview](docs/architecture/overview.md), [start path](docs/architecture/start-path.md), [session access](docs/architecture/session-access.md), the [object model](docs/architecture/diagrams/object-model.svg), how to [edit the diagrams](docs/architecture/diagrams/README.md), and the [architecture decisions](docs/adr/README.md).
 
 ## Install
 
