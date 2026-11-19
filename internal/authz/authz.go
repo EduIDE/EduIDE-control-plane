@@ -29,6 +29,12 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
+// expiredGrace bounds how long after its expiry an ID token still names the owner, and only while the browser
+// also sends a refresh token cookie: the oauth2 filter after authz then refreshes the tokens, or restarts the
+// login when the refresh fails. Without this, authz would clear the cookies before the refresh can happen, and
+// every XHR and WebSocket reconnect of an open IDE would fail once the ID token expires.
+const expiredGrace = 12 * time.Hour
+
 // Server implements authv3.AuthorizationServer.
 type Server struct {
 	authv3.UnimplementedAuthorizationServer
@@ -135,9 +141,13 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	cookies := parseCookies(cookieHeaders(h))
 	var tokens, expire []string
 	seen := map[string]bool{}
+	refresh := false
 	for _, c := range cookies {
 		if !isAuthCookie(c.name, s.IDTokenCookie) {
 			continue
+		}
+		if strings.HasPrefix(c.name, "RefreshToken") && c.value != "" {
+			refresh = true
 		}
 		if !seen[c.name] {
 			seen[c.name] = true
@@ -157,7 +167,7 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	// Every copy of the ID token cookie must verify and name the same owner.
 	owner := ""
 	for _, raw := range tokens {
-		o, err := s.owner(ctx, v, raw)
+		o, err := s.owner(ctx, v, raw, refresh)
 		if err != nil {
 			slog.DebugContext(ctx, "id token rejected", "err", err)
 		}
@@ -193,10 +203,15 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	return deny(reason), user
 }
 
-func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string) (string, error) {
+// owner verifies the ID token and returns its user claim. The verifier skips the expiry check; owner accepts an
+// expired token only within expiredGrace and only when refresh is set.
+func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string, refresh bool) (string, error) {
 	tok, err := v.Verify(ctx, raw)
 	if err != nil {
 		return "", err
+	}
+	if late := time.Since(tok.Expiry); late > 0 && (!refresh || late > expiredGrace) {
+		return "", &oidc.TokenExpiredError{Expiry: tok.Expiry}
 	}
 	var claims map[string]any
 	if err := tok.Claims(&claims); err != nil {

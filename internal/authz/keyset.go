@@ -117,5 +117,6 @@ func Verifier(p *oidc.Provider, clientID string, client *http.Client, interval t
 		}
 	}
 	ks := &KeySet{URL: c.JWKS, Client: client, Interval: interval}
-	return oidc.NewVerifier(c.Issuer, ks, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: algs}), nil
+	// Server.owner checks the expiry itself, see expiredGrace.
+	return oidc.NewVerifier(c.Issuer, ks, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: algs, SkipExpiryCheck: true}), nil
 }

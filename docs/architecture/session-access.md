@@ -23,7 +23,8 @@ For every request on a session route, in this order:
 |---|---|
 | Path starts with `/oauth2/` | allow |
 | No auth cookie at all: no ID token cookie and no cookie named `BearerToken*`, `OauthHMAC*`, `OauthExpires*`, `IdToken*`, `RefreshToken*` | allow; the oauth2 filter runs next and forces the login, so nothing reaches the IDE |
-| ID token cookie present but invalid or expired | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
+| ID token cookie expired, but its signature, issuer and audience verify, it expired less than 12 hours ago and the request carries a non-empty `RefreshToken*` cookie | treated as a valid token (the rows below); the oauth2 filter then refreshes the tokens or restarts the login (ADR 0005, amendment 2026-11-19) |
+| ID token cookie present but invalid or expired (otherwise) | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
 | Valid token, first path segment is the `status.instance` of an `IDESession` in phase `Ready`, not being deleted, and `spec.owner` equals the token claim `oidc.userClaim` | allow |
 | Valid token, anything else (unknown, free, foreign, released instance) | 403 |
 | Internal error | 403 |

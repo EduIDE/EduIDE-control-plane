@@ -96,3 +96,13 @@ authz then sees no JWT and every request ends in a fresh login (found in the kin
 The SecurityPolicy therefore sets `oidc.disableTokenEncryption: true`.
 The cookies stay `Secure` and `HttpOnly` and are scoped to the instance host.
 The agent strips all gateway login cookies (`eduide-id`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.
+
+## Amendment 2026-11-19: expired ID token with a refresh token
+
+Case (b) cleared the cookies of every request with an expired ID token.
+Because ext_authz runs before oauth2, the oauth2 filter never got to refresh the tokens with `refreshToken: true`.
+A page navigation survived this through a silent Keycloak round trip, but XHR and WebSocket reconnects of an open IDE cannot follow a redirect to Keycloak (CORS), so the IDE lost its connection once the ID token expired (found on test3, Keycloak ID token lifetime 5 minutes).
+authz now accepts an ID token whose signature, issuer and audience verify and which expired less than 12 hours ago, but only when the request also carries a non-empty `RefreshToken*` cookie.
+The ownership check (c) is unchanged.
+The oauth2 filter that follows refreshes the tokens and sets new cookies, or restarts the login when Keycloak refuses the refresh, so an ended Keycloak session still ends access.
+Without a refresh token cookie, or later than 12 hours, case (b) applies as before.

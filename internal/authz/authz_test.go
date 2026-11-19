@@ -167,6 +167,7 @@ func TestDecisionTable(t *testing.T) {
 	}}
 	s := newServer(t, iss, sessions)
 	good := idCookie + "=" + iss.token(t, nil, "", "", "alice", 0)
+	refresh := "RefreshToken-abc=r"
 	tests := []struct {
 		name, path, cookie string
 		result, reason     string
@@ -183,6 +184,11 @@ func TestDecisionTable(t *testing.T) {
 		{"unrelated cookies", "/" + instanceA + "/", "a=b; theme=dark", "allow", "no-cookie", 0},
 		{"BearerToken only, no id token", "/" + instanceA + "/", "BearerToken=x", "login", "invalid-token", typev3.StatusCode_Found},
 		{"expired token", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "allow", "owner", 0},
+		{"expired token with empty refresh cookie", "/" + instanceA + "/", "RefreshToken-abc=; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token beyond grace with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -expiredGrace-time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with bad signature and refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, otherKey, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired foreign token with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "mallory", -time.Minute), "deny", "not-owner", typev3.StatusCode_Forbidden},
 		{"wrong audience", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "", "other", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
 		{"wrong issuer", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "https://evil.example.org", "", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
 		{"bad signature", "/" + instanceA + "/", idCookie + "=" + iss.token(t, otherKey, "", "", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
