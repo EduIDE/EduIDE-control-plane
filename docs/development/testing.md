@@ -10,12 +10,15 @@ Strategy: [ADR 0015](../adr/0015-test-strategy.md). New logic needs tests.
 | Controller | envtest (real API server and etcd) | Reconcile behavior, owner references, claim conflicts, status | `make test-go` |
 | API contract | Requests and responses validated against the OpenAPI spec; `oasdiff` breaking-change check in CI | REST stability | CI, `make test-go` |
 | e2e | kind with Envoy Gateway, Calico, Keycloak and the fake IDE image | The four variants of the matrix, gateway auth (owner, foreign user, free instance, after release, no cookie), NetworkPolicy negative test, SSE, timeouts, no launch token in logs and spans | `make e2e` |
-| e2e nightly | kind with the real IDE image | Data path, activity, real start times | CI |
-| Scale | kwok (simulated nodes and pods), nightly | 1000 sessions, launch burst, API server load | skill `run-scale-test` |
+| Scale | kwok (simulated nodes and pods) | 1000 sessions, launch burst, API server load | skill `run-scale-test` |
 | Fuzzing | Go native fuzzing | Input at trust boundaries, ext_authz requests, payload parsing | `go test -fuzz` |
 | Performance | Start path benchmark with trace evaluation | Time budgets as CI gate for warm start. **Planned.** | CI |
 | TypeScript | npm test | Generated client, extension, landing page | `make test-ts` |
 | Charts | `helm lint`, template tests | Charts | `make helm-lint` |
+| Vulnerabilities | `govulncheck`, Trivy, `npm audit`, Gitleaks | Dependencies, images, secrets in the history | CI on change; `govulncheck` and the Trivy filesystem scan also nightly |
+
+No workflow runs `make e2e` or the scale scenarios; run them locally before a release.
+The job `ci-ok` fails when any CI job fails. It is the one check to require on `main`.
 
 Matrix of the e2e suite: `none` cold, `none` warm (pool), `volume` cold, `volume` with pool (starts cold, `startStrategy: cold`).
 
