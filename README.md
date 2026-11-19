@@ -30,21 +30,21 @@ A few seconds later an [EduIDE](https://github.com/EduIDE/EduIDE) opens in the b
 ## Architecture
 
 ```mermaid
-flowchart LR
-  S([Student]) -->|HTTPS| GW[Envoy Gateway<br/>OIDC and ext_authz]
+flowchart TB
+  S([Student]) -->|HTTPS| GW[Envoy Gateway<br/>OIDC + ext_authz]
   A([Artemis]) -.->|deep link| LP
+  GW -.->|login| KC[Keycloak]
   GW --> LP[landing page]
   GW -->|/api/v1| SVC[service]
-  GW -->|may this user enter?| AZ[authz]
+  GW -->|owner?| AZ[authz]
   GW -->|instance token| AG
-  SVC -->|IDESession, IDEWorkspace| K[(Kubernetes API)]
-  OP[operator] -->|pods, routes, volumes| K
-  SC[pool scaler] -->|targetIdle| K
+  SVC --> K[(Kubernetes API)]
+  OP[operator] --> K
+  SC[pool scaler] --> K
   OP -->|claim, launch data| AG
   subgraph Pod[session pod]
     AG[agent] --> IDE[EduIDE]
   end
-  GW -.->|login| KC[Keycloak]
 ```
 
 | Component | Role |
