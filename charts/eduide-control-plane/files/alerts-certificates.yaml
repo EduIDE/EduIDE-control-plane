@@ -1,7 +1,7 @@
 - name: eduide-control-plane-certificates
   rules:
   - alert: EduIDECertificateExpiringSoon
-    expr: (certmanager_certificate_expiration_timestamp_seconds{namespace="__NAMESPACE__"} - time()) / 86400 < 21
+    expr: ((certmanager_certificate_expiration_timestamp_seconds{namespace="__NAMESPACE__"} > 0) - time()) / 86400 < 21
     for: 1h
     labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
