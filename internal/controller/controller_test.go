@@ -89,6 +89,15 @@ func TestColdStartCreatesInstance(t *testing.T) {
 	if len(pod.Spec.Containers) != 2 || pod.Spec.Containers[0].Name != "ide" || pod.Spec.Containers[1].Name != "agent" {
 		t.Fatalf("containers: %+v", pod.Spec.Containers)
 	}
+	prefix := ""
+	for _, e := range pod.Spec.Containers[1].Env {
+		if e.Name == "AGENT_PATH_PREFIX" {
+			prefix = e.Value
+		}
+	}
+	if prefix != "/"+pod.Labels[v1.LabelInstance]+"/" {
+		t.Errorf("AGENT_PATH_PREFIX = %q, want /<instance>/", prefix)
+	}
 	if *pod.Spec.AutomountServiceAccountToken || *pod.Spec.EnableServiceLinks {
 		t.Error("service account token or service links enabled")
 	}

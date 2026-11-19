@@ -105,6 +105,8 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		Ports: []corev1.ContainerPort{{Name: "proxy", ContainerPort: 8080}, {Name: "control", ContainerPort: 8081}},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_IDE_PORT", Value: strconv.Itoa(int(port))},
+			// The public path of the instance; the agent scopes the IDE's cookies to it.
+			{Name: "AGENT_PATH_PREFIX", Value: "/" + instance + "/"},
 			{Name: "AGENT_TOKEN_FILE", Value: tokenMountPath + "/" + v1.InstanceTokenKey},
 			{Name: "AGENT_LOG_LEVEL", Value: d.cfg.Agent.LogLevel},
 		},

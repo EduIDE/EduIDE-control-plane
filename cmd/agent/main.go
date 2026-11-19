@@ -64,6 +64,7 @@ func run(log *slog.Logger) error {
 		return errors.New("AGENT_LOCAL_ADDR must be a loopback address")
 	}
 	a := agent.New(token, env("AGENT_IDE_PORT", "3000"), log)
+	a.PathPrefix = os.Getenv("AGENT_PATH_PREFIX")
 
 	servers := []*http.Server{
 		{Addr: env("AGENT_PROXY_ADDR", "0.0.0.0:8080"), Handler: a.ProxyHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: idleTimeout},

@@ -30,6 +30,10 @@ func (a *Agent) ProxyHandler() http.Handler {
 				}
 			}
 		},
+		ModifyResponse: func(resp *http.Response) error {
+			scopeCookies(resp.Header, a.PathPrefix)
+			return nil
+		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			if ok, n := a.limit.Allow("upstream"); ok {
 				a.log.Warn("proxy upstream error", "method", r.Method, "prefix", pathPrefix(r.URL.Path), "error", errString(err), "suppressed", n)
@@ -80,6 +84,44 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 }
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// scopeCookies keeps the IDE's cookies inside its own instance, like nginx proxy_cookie_path. The IDE sees
+// itself at "/", but all instances share one host: Theia's theia-connection-token with Path=/ would otherwise be
+// overwritten by every other IDE the student opens, and its requests then fail with 403. Explicit paths move
+// below the prefix, Domain is dropped (no cookies for sibling hosts), and cookies named like the gateway's login
+// cookies are dropped. A cookie without a Path already gets the right default from the browser. This only keeps
+// a well-behaved IDE apart from its siblings; it is no boundary against script in the IDE, which shares the origin.
+func scopeCookies(h http.Header, prefix string) {
+	if prefix == "" {
+		return
+	}
+	base := strings.TrimSuffix(prefix, "/")
+	var out []string
+	for _, c := range h.Values("Set-Cookie") {
+		parts := strings.Split(c, ";")
+		name, _, _ := strings.Cut(parts[0], "=")
+		if hasAuthPrefix(strings.TrimSpace(name)) {
+			continue
+		}
+		kept := parts[:1]
+		for _, p := range parts[1:] {
+			attr, val, _ := strings.Cut(p, "=")
+			attr, val = strings.TrimSpace(attr), strings.TrimSpace(val)
+			switch {
+			case strings.EqualFold(attr, "domain"):
+				continue
+			case strings.EqualFold(attr, "path") && strings.HasPrefix(val, "/") && val != base && !strings.HasPrefix(val, prefix):
+				p = " Path=" + base + val
+			}
+			kept = append(kept, p)
+		}
+		out = append(out, strings.Join(kept, ";"))
+	}
+	h.Del("Set-Cookie")
+	for _, c := range out {
+		h.Add("Set-Cookie", c)
+	}
+}
 
 // pathPrefix keeps the first path segment: the rest may carry file names of the user.
 func pathPrefix(p string) string {
