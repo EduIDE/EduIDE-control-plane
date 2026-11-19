@@ -108,6 +108,7 @@ The service needs `list` and `watch` on events and `get` and `list` on resourceq
 
 `monitoring.rules.extraLabels` adds labels to every alert, for example `{namespace: eduide-system}` on a cluster whose AlertmanagerConfig routes on that namespace; `eduide_namespace` stays the real namespace.
 `monitoring.dashboard.namespace` (default: the release namespace) places the dashboard ConfigMap where the Grafana sidecar looks.
+`monitoring.rules.certificates` (default true) adds `EduIDECertificateExpiringSoon` (under 21 days) and `EduIDECertificateNotReady` (1 h) for the cert-manager certificates of the release namespace; turn it off where a cluster-wide rule already covers the namespace.
 
 The service and the landing page send `Strict-Transport-Security: max-age=31536000; includeSubDomains`, because the Envoy OIDC redirects on the session hosts never reach the IDE route and carry no HSTS of their own.
 This assumes `hosts.instance` and `hosts.webview` are subdomains of `hosts.service` (for example `instance.ide.example.org`).

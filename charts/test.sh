@@ -91,6 +91,7 @@ for v in "$cp"/ci/*-values.yaml; do
   ! grep -q '__NAMESPACE__\|__FULLNAME__' <<<"$mon" || fail "alert or dashboard placeholder left"
   ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
   grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
+  grep -q 'alert: EduIDECertificateNotReady' <<<"$mon" || fail "certificate alerts missing"
   ok "alerts and dashboard per namespace ($v)"
 
   mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
