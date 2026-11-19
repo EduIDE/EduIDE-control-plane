@@ -180,6 +180,14 @@ func (bufPool) Put(b []byte) { bufs.Put(&b) }
 // running in the IDE cannot read the user's tokens from requests.
 var authCookiePrefixes = []string{"eduide-id", "eduide-authz", "IdToken", "AccessToken", "BearerToken", "RefreshToken", "OauthHMAC", "OauthExpires", "OauthNonce", "CodeVerifier"}
 
+// StripCookie adds a login cookie name to the list, for a deployment whose ID token cookie is not named
+// eduide-id (config oidc.idTokenCookie). Call it before serving.
+func StripCookie(name string) {
+	if name != "" && !hasAuthPrefix(name) {
+		authCookiePrefixes = append(authCookiePrefixes, name)
+	}
+}
+
 func stripAuthCookies(h http.Header) {
 	var keep []string
 	for _, line := range h.Values("Cookie") {

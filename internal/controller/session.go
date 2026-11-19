@@ -164,15 +164,31 @@ func (r *sessionReconciler) findPod(ctx context.Context, s *v1.IDESession) (*cor
 	if err := r.List(ctx, &l, client.InNamespace(s.Namespace), sel); err != nil {
 		return nil, err
 	}
-	if len(l.Items) == 0 {
-		if err := r.reader.List(ctx, &l, client.InNamespace(s.Namespace), sel); err != nil {
-			return nil, err
+	if p := ownPod(s, l.Items); p != nil {
+		return p, nil
+	}
+	if err := r.reader.List(ctx, &l, client.InNamespace(s.Namespace), sel); err != nil {
+		return nil, err
+	}
+	return ownPod(s, l.Items), nil
+}
+
+// ownPod picks the instance of the session. The session label alone is not enough: the service reuses a
+// session name for the same launch key, so the pod of an earlier session of that name can still be
+// terminating. Only a pod this session controls counts, the recorded instance only once there is one, and a
+// live pod before a terminating one.
+func ownPod(s *v1.IDESession, pods []corev1.Pod) *corev1.Pod {
+	var best *corev1.Pod
+	for i := range pods {
+		p := &pods[i]
+		if !metav1.IsControlledBy(p, s) || (s.Status.Instance != "" && p.Labels[v1.LabelInstance] != s.Status.Instance) {
+			continue
+		}
+		if best == nil || (best.DeletionTimestamp != nil && p.DeletionTimestamp == nil) {
+			best = p
 		}
 	}
-	if len(l.Items) == 0 {
-		return nil, nil
-	}
-	return &l.Items[0], nil
+	return best
 }
 
 // start claims an idle pod or creates a cold one. It returns nil when it waits or fails.
@@ -339,6 +355,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	switch {
 	case pod.DeletionTimestamp != nil:
 		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance was terminated")
+	case st.Phase == v1.SessionReady && !claim.Usable(pod):
+		// An evicted pod or one of a node that shut down keeps its object; without this the session stays Ready
+		// with a dead URL until the maximum lifetime.
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance stopped")
 	case st.Phase == v1.SessionReady:
 		return r.running(ctx, s, tmpl, pod)
 	case claim.Unschedulable(pod):

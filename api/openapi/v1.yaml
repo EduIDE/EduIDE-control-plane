@@ -386,7 +386,7 @@ components:
         code:
           type: string
           description: Stable machine-readable code. New codes may be added within v1.
-          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, internal]
+          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, workspace-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, internal]
         sessions:
           description: Running sessions of the user, only with `session-limit-reached`.
           type: array

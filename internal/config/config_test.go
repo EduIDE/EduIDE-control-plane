@@ -20,7 +20,7 @@ func TestParseDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Hosts.Webview != "webview.instance.ide.example.org" || c.SessionsPerUser != 3 ||
+	if c.Hosts.Webview != "webview.instance.ide.example.org" || c.SessionsPerUser != 3 || c.Workspaces.PerUser != 20 ||
 		c.OIDC.UserClaim != "preferred_username" || c.Workspaces.Retention.Duration != 14*24*time.Hour ||
 		c.Capacity.ExhaustedAfter.Duration != 45*time.Second || c.Gateway.Namespace != "eduide-test" {
 		t.Fatalf("defaults not applied: %+v", c)
@@ -38,6 +38,7 @@ func TestParseRejects(t *testing.T) {
 		"missing":   "deployment: x\n",
 		"unknown":   minimal + "bogus: 1\n",
 		"no-limit":  minimal + "sessionsPerUser: -1\n",
+		"no-ws":     minimal + "workspaces: {perUser: -1}\n",
 		"bad-strip": minimal + "overview: {titleStripPattern: '(['}\n",
 		"same-host": strings.Replace(minimal, "service: ide.example.org", "service: instance.ide.example.org", 1),
 	} {

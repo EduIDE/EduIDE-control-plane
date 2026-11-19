@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -43,6 +44,12 @@ type Server struct {
 	limiters      map[string]*rate.Limiter // shortcut: one entry per user is never evicted, fine for thousands of users
 	adminLimiters map[string]*rate.Limiter
 	ipLimiters    map[string]*rate.Limiter // public status (U17), per client IP
+
+	// ownerLocks serialize the creating requests of one user, so the per-user limits are not a check-then-create
+	// race inside this replica. Striped by a hash of the owner: no entry per user, and two users rarely share one.
+	ownerLocks [64]sync.Mutex
+	// deleting holds the owners with a DeleteWorkspace in flight: its wait polls the API server.
+	deleting sync.Map
 
 	// quotaMu guards the storage quota cache; its refresh calls the API server, which must not block mu.
 	quotaMu sync.Mutex
@@ -134,6 +141,15 @@ func (f *fallbackWriter) Unwrap() http.ResponseWriter { return f.ResponseWriter 
 func user(r *http.Request) auth.User {
 	u, _ := auth.FromContext(r.Context())
 	return u
+}
+
+// lockOwner blocks until no other creating request of this user runs in this replica; call the result to unlock.
+func (s *Server) lockOwner(owner string) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(owner))
+	m := &s.ownerLocks[h.Sum32()%uint32(len(s.ownerLocks))]
+	m.Lock()
+	return m.Unlock
 }
 
 func (s *Server) allowLaunch(owner string) (ok bool) {
@@ -369,7 +385,9 @@ func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if req.Display != nil {
 		d = v1alpha1.Display{Title: deref(req.Display.Title), Source: deref(req.Display.Source)}
 	}
+	unlock := s.lockOwner(u.Owner)
 	ws, perr := s.ensureWorkspace(r.Context(), workspaceName(u.Owner, tpl.Name, d.Source), u.Owner, tpl.Name, d)
+	unlock()
 	if perr != nil {
 		writeProblem(w, perr)
 		return
@@ -391,6 +409,16 @@ func (s *Server) DeleteWorkspace(w http.ResponseWriter, r *http.Request, name Na
 		writeProblem(w, perr)
 		return
 	}
+	// The wait below lists sessions on the API server every stopPoll: one delete at a time per user, and it
+	// shares the launch budget, so a client cannot turn it into load on the API server.
+	if _, busy := s.deleting.LoadOrStore(owner, struct{}{}); busy || !s.allowLaunch(owner) {
+		if !busy {
+			s.deleting.Delete(owner)
+		}
+		writeProblem(w, problem(CodeRateLimited, "too many requests, retry shortly"))
+		return
+	}
+	defer s.deleting.Delete(owner)
 	// U14: stop the sessions on the workspace first; a session that is being deleted still holds the volume.
 	if perr := s.stopSessionsOn(r.Context(), owner, name); perr != nil {
 		writeProblem(w, perr)

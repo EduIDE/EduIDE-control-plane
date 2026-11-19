@@ -29,6 +29,7 @@ const (
 	CodeWorkspaceLost     ProblemCode = "workspace-lost"
 	CodeWorkspaceInUse    ProblemCode = "workspace-in-use"
 	CodeSessionLimit      ProblemCode = "session-limit-reached"
+	CodeWorkspaceLimit    ProblemCode = "workspace-limit-reached"
 	CodeRateLimited       ProblemCode = "rate-limited"
 	CodePayloadTooLarge   ProblemCode = "payload-too-large"
 	CodeInternal          ProblemCode = "internal"
@@ -46,6 +47,7 @@ var problemStatus = map[ProblemCode]int{
 	CodeWorkspaceLost:     http.StatusConflict,
 	CodeWorkspaceInUse:    http.StatusConflict,
 	CodeSessionLimit:      http.StatusConflict,
+	CodeWorkspaceLimit:    http.StatusConflict,
 	CodeRateLimited:       http.StatusTooManyRequests,
 	CodePayloadTooLarge:   http.StatusRequestEntityTooLarge,
 	CodeInternal:          http.StatusInternalServerError,

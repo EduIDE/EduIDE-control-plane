@@ -51,7 +51,7 @@ The chart's `values.yaml` lists every value with its default. The values below m
 | `oidc.gatewayClientID` | `eduide-gateway` |
 | `agent.image` | `ghcr.io/eduide/eduide-control-plane/agent:<X.Y.Z>` |
 
-Optional: `sessionsPerUser`, `allowedHosts` (Git and Artemis hosts users may inject), `workspaces.*` (storage class, size, retention, grace), `placement.*` (node selector, tolerations, affinity, node pool label, prepull), `capacity.exhaustedAfter`, `telemetry.otlpEndpoint`, `rateLimit.launchesPerMinute`.
+Optional: `sessionsPerUser`, `allowedHosts` (Git and Artemis hosts users may inject), `workspaces.*` (storage class, size, retention, grace, `perUser`), `placement.*` (node selector, tolerations, affinity, node pool label, prepull), `capacity.exhaustedAfter`, `telemetry.otlpEndpoint`, `rateLimit.launchesPerMinute`.
 Templates and pools are values of the chart too (they render `IDETemplate` and `IDEPool`).
 
 Hosts, realms and node labels belong in your values, never in the chart defaults.
