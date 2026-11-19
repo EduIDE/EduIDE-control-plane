@@ -13,7 +13,7 @@ Rules:
 
 Steps:
 1. Pick the version. Breaking change in the REST API means a new major API version, not just a new tag. A spec change bumps the spec version semantically in `api/openapi/v1.yaml`.
-2. Run `make generate`, then `make verify-generate` (no diff), `make lint`, `make test` and `make e2e`. All must pass. The CI also runs `oasdiff`, the CRD schema diff, `govulncheck`, Trivy and Gitleaks. CI does not run on the tag itself: the release commit on `main` needs a green `ci-ok` first.
+2. Run `make generate`, then `make verify-generate` (no diff), `make lint`, `make test` and `make e2e`. All must pass. The CI also runs `oasdiff`, the CRD schema diff, `govulncheck`, Trivy and Gitleaks. CI does not run on the tag itself: the release commit on `main` needs a green `ci-ok` of its push run first (the nightly run skips the code jobs).
 3. Update `CHANGELOG.md`: added, changed, deprecated, fixed, and the CRD and API compatibility note. Set the chart `version` and `appVersion` and `clients/typescript/package.json` to the release version.
 4. Ask the user to confirm, then create the tag `vX.Y.Z` on the release commit, which must be on `main`. The workflows stop unless the tag matches `vX.Y.Z` and its commit is on `main`.
 5. `images.yml` builds every image, scans it with Trivy and pushes it; `release.yml` pushes the charts as OCI artifacts. No workflow publishes the TypeScript client to npm. Watch both workflows and act on failures.
