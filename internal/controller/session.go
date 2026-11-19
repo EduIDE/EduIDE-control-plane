@@ -705,7 +705,11 @@ func (r *sessionReconciler) note(ctx context.Context, s *v1.IDESession, eventTyp
 	} else {
 		slog.InfoContext(ctx, "session "+strings.ToLower(reason), args...)
 	}
-	r.events.Eventf(s, nil, eventType, reason, reason, "%s", msg)
+	// The template is the related object and the pseudonymous user ends the note, so the admin API can
+	// show both after a failed session is gone.
+	related := &v1.IDETemplate{TypeMeta: metav1.TypeMeta{APIVersion: v1.GroupVersion.String(), Kind: "IDETemplate"},
+		ObjectMeta: metav1.ObjectMeta{Name: s.Spec.TemplateRef, Namespace: s.Namespace}}
+	r.events.Eventf(s, related, eventType, reason, reason, "%s (user %s)", msg, telemetry.UserID(r.salt, s.Spec.Owner))
 }
 
 // workspaceHolder returns the name of another session that holds the workspace of s, or "".

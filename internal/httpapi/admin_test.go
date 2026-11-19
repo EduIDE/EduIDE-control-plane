@@ -767,3 +767,19 @@ func TestPromClientTimeout(t *testing.T) {
 		t.Fatal("the URL is in the error")
 	}
 }
+
+// A failed session is deleted after a while; its event still names the template and the user.
+func TestAdminProblemsAfterSessionIsGone(t *testing.T) {
+	ev := event("ev-gone", "IDESession", "s-gone", "eduide-operator", corev1.EventTypeWarning, "Failed",
+		"start-failed: image pull failed (user 0123456789abcdef)", adminNow.Add(-5*time.Minute))
+	ev.Related = &corev1.ObjectReference{Kind: "IDETemplate", Name: "java", Namespace: testNS}
+	e := newAdminEnv(t, nil, ev)
+	p := decode[AdminProblems](t, e.do("GET", "/admin/problems", "root", nil))
+	if len(p.Events) != 1 {
+		t.Fatalf("%+v", p)
+	}
+	got := p.Events[0]
+	if deref(got.Template) != "java" || deref(got.OwnerHash) != "0123456789abcdef" || deref(got.Code) != "start-failed" || got.Message != "image pull failed" {
+		t.Fatalf("%+v", got)
+	}
+}

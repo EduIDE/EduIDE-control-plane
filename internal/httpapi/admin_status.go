@@ -74,7 +74,10 @@ func truncate(s string, n int) string {
 	return s
 }
 
-var errCodeRE = regexp.MustCompile(`^([a-z][a-z-]{2,40}): `)
+var (
+	errCodeRE  = regexp.MustCompile(`^([a-z][a-z-]{2,40}): `)
+	noteUserRE = regexp.MustCompile(` \(user ([0-9a-f]{16})\)$`)
+)
 
 // problemEvents are the Warning events on sessions of the last hour, newest first.
 func (s *Server) problemEvents(ctx context.Context) ([]AdminProblemEvent, *apiError) {
@@ -97,10 +100,21 @@ func (s *Server) problemEvents(ctx context.Context) ([]AdminProblemEvent, *apiEr
 		if e.Type != corev1.EventTypeWarning || e.Regarding.Kind != "IDESession" || eventTime(e).Before(cutoff) {
 			continue
 		}
-		pe := AdminProblemEvent{Time: eventTime(e), Reason: e.Reason, Message: truncate(e.Note, 500), Session: emptyToNil(e.Regarding.Name)}
-		if m := errCodeRE.FindStringSubmatch(e.Note); m != nil {
+		note := e.Note
+		pe := AdminProblemEvent{Time: eventTime(e), Reason: e.Reason, Session: emptyToNil(e.Regarding.Name)}
+		// The operator names the template as related object and ends the note with the user pseudonym,
+		// so both survive the deletion of a failed session.
+		if m := noteUserRE.FindStringSubmatch(note); m != nil {
+			pe.OwnerHash = ptr(m[1])
+			note = strings.TrimSuffix(note, m[0])
+		}
+		if e.Related != nil && e.Related.Kind == "IDETemplate" && e.Related.Name != "" {
+			pe.Template = ptr(e.Related.Name)
+		}
+		pe.Message = truncate(note, 500)
+		if m := errCodeRE.FindStringSubmatch(note); m != nil {
 			pe.Code = ptr(m[1])
-			pe.Message = truncate(strings.TrimPrefix(e.Note, m[0]), 500)
+			pe.Message = truncate(strings.TrimPrefix(note, m[0]), 500)
 		}
 		if sess := byName[e.Regarding.Name]; sess != nil {
 			a := s.adminSessionAPI(sess, nil)
