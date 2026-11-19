@@ -48,6 +48,10 @@ export const StatusPage = (): React.JSX.Element => {
     const p95 = stats?.startP95 ?? [];
     const p95Max = Math.max(1, ...p95.map(p => p.seconds));
     const summary = workspaces.data?.summary;
+    // Columns that no row fills would only show empty cells.
+    const recent = problems.data?.events.slice(0, 5) ?? [];
+    const hasTemplate = recent.some(e => e.template);
+    const hasUser = recent.some(e => e.ownerHash);
     const retention = config ? fd(config.workspaces.retentionSeconds) : undefined;
 
     return (
@@ -272,18 +276,18 @@ export const StatusPage = (): React.JSX.Element => {
                                     <tr>
                                         <th>{ta('time')}</th>
                                         <th>{ta('code')}</th>
-                                        <th>{ta('sessions.template')}</th>
-                                        <th>{ta('user')}</th>
+                                        {hasTemplate && <th>{ta('sessions.template')}</th>}
+                                        {hasUser && <th>{ta('user')}</th>}
                                         <th />
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {problems.data?.events.slice(0, 5).map((e, i) => (
+                                    {recent.map((e, i) => (
                                         <tr key={`${e.time}-${i}`}>
                                             <td className='mono'>{formatClock(e.time, lang)}</td>
                                             <td>{e.code ? <CodePill code={e.code} /> : <Pill tone='n'>{e.reason}</Pill>}</td>
-                                            <td>{e.template && <TplCell name={e.template} />}</td>
-                                            <td>{e.ownerHash && <Mono>{e.ownerHash}</Mono>}</td>
+                                            {hasTemplate && <td>{e.template && <TplCell name={e.template} />}</td>}
+                                            {hasUser && <td>{e.ownerHash && <Mono>{e.ownerHash}</Mono>}</td>}
                                             <td>
                                                 <TraceLink url={e.traceUrl} />
                                             </td>

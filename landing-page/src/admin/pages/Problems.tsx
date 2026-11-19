@@ -18,7 +18,7 @@ export const ProblemsPage = (): React.JSX.Element => {
                 (data.codes ? (
                     <Panel title={ta('problems.byCode')}>
                         {codes.length === 0 ? (
-                            <Empty>{ta('problems.none')}</Empty>
+                            <Empty>{ta('problems.none24h')}</Empty>
                         ) : (
                             <div className='a-bars'>
                                 {codes.map(c => (

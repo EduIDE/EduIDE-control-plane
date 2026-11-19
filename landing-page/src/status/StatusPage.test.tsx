@@ -19,6 +19,7 @@ const status = (over: Partial<PublicStatus> = {}): PublicStatus => ({
     parts: { signIn: 'ok', starting: 'ok', workspaces: 'ok' },
     templates: [
         { name: 'java-17', displayName: 'Java 17', warm: true, startEstimate: { none: { seconds: 0.4 }, volume: { seconds: 25 } } },
+        { name: 'go', displayName: 'Go', warm: true, startEstimate: {} },
         { name: 'rust', displayName: 'Rust', warm: false, startEstimate: { volume: { seconds: 75 } } },
         { name: 'empty', displayName: 'Nothing', warm: false, startEstimate: {} }
     ],
@@ -75,7 +76,14 @@ describe('StatusPage', () => {
         within(rust).getByText('Prepared when you start it');
         within(rust).getByText('About 1 min');
         expect(within(rust).queryByText('Temporary')).toBeNull();
-        expect(screen.queryByText('Nothing')).toBeNull();
+        // Every template is listed. A warm one is instant for temporary workspaces even without an estimate.
+        const go = screen.getByText('Go').closest('.row') as HTMLElement;
+        within(go).getByText('Instantly');
+        within(go).getByText('Ready environments available');
+        expect(within(go).queryByText('Saved')).toBeNull();
+        const nothing = screen.getByText('Nothing').closest('.row') as HTMLElement;
+        within(nothing).getByText('Prepared when you start it');
+        expect(within(nothing).queryByText('Temporary')).toBeNull();
         expect(fetch).toHaveBeenCalledWith('/api/v1/status');
     });
 

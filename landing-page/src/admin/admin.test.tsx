@@ -642,3 +642,27 @@ describe('failed updates', () => {
         }
     });
 });
+
+describe('problem lists', () => {
+    it('says no problems in the last 24 hours when the 24 h panel is empty', async () => {
+        await open('/admin/problems', mockApi({ '/admin/problems': { since: '24h', codes: [], events: [] } }));
+        await screen.findByText('No problems in the last 24 hours.');
+        screen.getByText('No problems in the last hour.');
+    });
+
+    it('hides the template and user columns of recent problems when no row has a value', async () => {
+        const events = [{ time: iso(-MIN), reason: 'Failed', code: 'start-failed', message: 'x' }];
+        await open('/admin', mockApi({ '/admin/problems': { since: '24h', events } }));
+        const table = (await screen.findByText('start-failed')).closest('table') as HTMLElement;
+        expect(within(table).queryByRole('columnheader', { name: 'Template' })).toBeNull();
+        expect(within(table).queryByRole('columnheader', { name: 'User' })).toBeNull();
+        within(table).getByRole('columnheader', { name: 'Code' });
+    });
+
+    it('keeps the columns when a row has the values', async () => {
+        await open('/admin');
+        const table = (await screen.findByText('capacity-exhausted')).closest('table') as HTMLElement;
+        within(table).getByRole('columnheader', { name: 'Template' });
+        within(table).getByRole('columnheader', { name: 'User' });
+    });
+});

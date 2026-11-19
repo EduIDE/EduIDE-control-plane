@@ -84,6 +84,8 @@ function useSt(): (key: StatusKey, params?: Record<string, string | number>) => 
 
 const TemplateRow = ({ template, st }: { template: PublicTemplate; st: ReturnType<typeof useSt> }): React.JSX.Element => {
     const { none, volume } = template.startEstimate;
+    // A pool answers temporary starts at once, so a warm template is instant even without an estimate.
+    const noneSeconds = none?.seconds ?? (template.warm ? 0 : undefined);
     return (
         <div className='row'>
             <Logo url={template.logoUrl} />
@@ -102,7 +104,7 @@ const TemplateRow = ({ template, st }: { template: PublicTemplate; st: ReturnTyp
                 </div>
             </div>
             <div className='waits'>
-                {none && <WaitLine saved={false} seconds={none.seconds} st={st} />}
+                {noneSeconds !== undefined && <WaitLine saved={false} seconds={noneSeconds} st={st} />}
                 {volume && <WaitLine saved seconds={volume.seconds} st={st} />}
             </div>
         </div>
@@ -131,7 +133,6 @@ export const StatusPage = ({ config }: { config: AppConfig }): React.JSX.Element
     } else {
         const h = hero(data);
         const Icon = LEVEL_ICONS[h.tone];
-        const withTemplates = data.templates.filter(t => t.startEstimate.none || t.startEstimate.volume);
         body = (
             <>
                 <div className={`hero ${h.tone}`} role='status'>
@@ -142,11 +143,11 @@ export const StatusPage = ({ config }: { config: AppConfig }): React.JSX.Element
                     </div>
                 </div>
                 <Parts status={data} st={st} />
-                {withTemplates.length > 0 && (
+                {data.templates.length > 0 && (
                     <section aria-labelledby='waits'>
                         <h2 id='waits'>{st('waits.title')}</h2>
                         <div className='list'>
-                            {withTemplates.map(t => (
+                            {data.templates.map(t => (
                                 <TemplateRow key={t.name} template={t} st={st} />
                             ))}
                         </div>

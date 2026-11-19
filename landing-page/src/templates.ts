@@ -8,6 +8,15 @@ export const isSavedByDefault = (template: Template): boolean => template.defaul
 export const estimateFor = (template: Template | undefined, mode: PersistenceMode): StartEstimate | undefined =>
     template?.startEstimate?.[mode];
 
+/**
+ * The start time line of a template for one persistence. A pool answers temporary starts at once, so a warm template
+ * reads as instant even before a start estimate exists. Saved workspaces always start cold, so they need an estimate.
+ */
+export function templateStartLine(template: Template | undefined, mode: PersistenceMode): StartLine | undefined {
+    const line = startLine(estimateFor(template, mode));
+    return line ?? (mode === 'none' && template?.warm ? { kind: 'instant' } : undefined);
+}
+
 export type StartLine = { kind: 'instant' } | { kind: 'about'; seconds: number };
 
 /** Warm starts and very short cold starts read as instant. No data means no promise. */
@@ -36,7 +45,7 @@ export function buildLaunchInfo(
 ): LaunchInfo {
     const templateName = known.templateName ?? template?.displayName ?? request.template;
     const mode = request.persistence ?? (request.workspace ? 'volume' : (template?.defaultPersistence ?? 'none'));
-    const line = startLine(estimateFor(template, mode));
+    const line = templateStartLine(template, mode);
     return {
         title: known.title ?? request.display?.title ?? templateName,
         templateName,

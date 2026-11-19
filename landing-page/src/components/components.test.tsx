@@ -177,6 +177,11 @@ describe('TemplateTile', () => {
         expect(screen.queryByRole('button', { name: /includes/ })).toBeNull();
     });
 
+    it('shows Ready instantly for a warm temporary template without an estimate', () => {
+        render(wrap(<TemplateTile template={{ ...python, startEstimate: undefined, warm: true }} onPick={vi.fn()} onInfo={vi.fn()} />));
+        screen.getByText('Ready instantly');
+    });
+
     it('shows no start time without an estimate', () => {
         render(wrap(<TemplateTile template={{ ...python, startEstimate: undefined }} onPick={vi.fn()} onInfo={vi.fn()} />));
         expect(screen.queryByText(/Ready/)).toBeNull();

@@ -2,7 +2,7 @@ import { Info } from 'lucide-react';
 
 import type { Template } from '../api-client';
 import { useI18n } from '../i18n';
-import { estimateFor, isSavedByDefault, startLine } from '../templates';
+import { isSavedByDefault, templateStartLine } from '../templates';
 import { Logo } from './Icons';
 import { usePersistenceText } from './usePersistenceText';
 
@@ -16,7 +16,7 @@ export const TemplateTile = ({ template, onPick, onInfo }: TemplateTileProps): R
     const { t } = useI18n();
     const saved = isSavedByDefault(template);
     const p = usePersistenceText(saved);
-    const line = startLine(estimateFor(template, template.defaultPersistence));
+    const line = templateStartLine(template, template.defaultPersistence);
     return (
         <div className='card'>
             <button className='card-main' aria-label={t('tile.start', { name: template.displayName })} onClick={() => onPick(template)} />
