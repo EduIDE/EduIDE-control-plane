@@ -99,6 +99,7 @@ func run(cfgPath string) error {
 		InstanceHost:  cfg.Hosts.Instance,
 		WebviewHost:   cfg.Hosts.Webview,
 		Salt:          salt,
+		SessionKey:    authz.SessionKey(salt),
 	}
 	go discover(ctx, cfg, srv)
 	go func() {

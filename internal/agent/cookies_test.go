@@ -13,6 +13,7 @@ func TestStripAuthCookies(t *testing.T) {
 		{[]string{"eduide-id=x; theme=dark"}, "theme=dark"},
 		{[]string{"AccessToken-ab12=x", "OauthHMAC-ab12=y; a=1"}, "a=1"},
 		{[]string{"RefreshToken-1=x; IdToken-1=y; OauthExpires-1=z; OauthNonce=n; CodeVerifier=c"}, ""},
+		{[]string{"eduide-authz=a.b.c.d; theme=dark"}, "theme=dark"},
 		{[]string{"a=1;b=2"}, "a=1; b=2"},
 	} {
 		h := http.Header{"Cookie": tc.in}

@@ -58,7 +58,7 @@ func parseCookies(headers []string) []cookie {
 }
 
 func isAuthCookie(name, idTokenCookie string) bool {
-	if name == idTokenCookie {
+	if name == idTokenCookie || name == sessionCookie {
 		return true
 	}
 	for _, p := range authCookiePrefixes {

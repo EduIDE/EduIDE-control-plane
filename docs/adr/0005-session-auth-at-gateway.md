@@ -95,7 +95,7 @@ Envoy Gateway encrypts the access and ID token cookies by default with a key onl
 authz then sees no JWT and every request ends in a fresh login (found in the kind e2e run).
 The SecurityPolicy therefore sets `oidc.disableTokenEncryption: true`.
 The cookies stay `Secure` and `HttpOnly` and are scoped to the instance host.
-The agent strips all gateway login cookies (`eduide-id`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.
+The agent strips all gateway login cookies (`eduide-id`, `eduide-authz`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.
 
 ## Amendment 2026-11-19: no login redirect for XHR and WebSocket requests
 
@@ -104,7 +104,14 @@ XHR, fetch and WebSocket requests cannot follow the redirect to Keycloak (CORS),
 The SecurityPolicy therefore sets `oidc.denyRedirect` for requests with `Sec-Fetch-Mode` `cors`, `no-cors`, `same-origin` or `websocket`: they get a 401 and no flow cookies.
 Page navigations (`navigate`) still log in through the redirect.
 
-Open: Envoy sets the Max-Age of the ID token cookie to the token lifetime, so the browser drops the cookie when the token expires (Keycloak default 5 minutes).
-Because ext_authz runs before oauth2, the refresh with `refreshToken: true` never happens: authz sees no ID token and restarts the login.
-A page navigation passes through a silent Keycloak round trip, but an open IDE whose WebSocket reconnects, or that needs a new HTTP request, gets a 401 until the student reloads the page.
-An expired ID token cannot be accepted by authz instead, because the cookie is gone.
+Envoy also sets the Max-Age of the ID token cookie to the token lifetime, so the browser drops the cookie when the token expires (Keycloak default 5 minutes).
+Because ext_authz runs before oauth2, the refresh with `refreshToken: true` never happened: authz saw no ID token and restarted the login.
+An open IDE then got a 401 for every new HTTP request and WebSocket reconnect, including lazily loaded parts such as the editor worker, until the student reloaded the page (found on test3).
+Accepting an expired ID token does not help, because the cookie is gone; `disableTokenEncryption` leaves the refresh token encrypted, so authz cannot read it either.
+
+authz therefore sets its own cookie `eduide-authz` (HttpOnly, Secure, SameSite Lax, domain `hosts.instance`, 12 hours) on an allowed request with a valid ID token and exactly one refresh token cookie.
+It holds the owner and an expiry, is signed with HMAC-SHA256 under a key derived from the user salt (`telemetry.userSaltFile`; without a salt the cookie is off), and is bound to a hash of the refresh token cookie value.
+Without a valid ID token, authz takes the owner from this cookie only when the request carries that same refresh token cookie; the ownership check (c) is unchanged.
+The oauth2 filter that follows refreshes the tokens and sets new cookies, or restarts the login when Keycloak refuses the refresh, so the cookie never outlives the Keycloak session and is useless without the refresh token it is bound to.
+After a refresh the next request carries a valid ID token again and authz rebinds the cookie to the new refresh token.
+The agent strips `eduide-authz` like the other login cookies.

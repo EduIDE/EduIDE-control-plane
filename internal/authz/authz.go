@@ -45,6 +45,8 @@ type Server struct {
 	Salt []byte
 	// LogPerMinute caps the deny and login lines per reason and minute. Default 20.
 	LogPerMinute int
+	// SessionKey signs the authz session cookie (session.go). Empty turns the cookie off.
+	SessionKey []byte
 
 	verifier atomic.Pointer[oidc.IDTokenVerifier]
 	logOnce  sync.Once
@@ -60,6 +62,7 @@ func (s *Server) Ready() bool { return s.verifier.Load() != nil }
 type decision struct {
 	result, reason string
 	redirect       *redirect
+	setCookie      string
 }
 
 type redirect struct {
@@ -133,11 +136,18 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 		return allow("oauth2"), ""
 	}
 	cookies := parseCookies(cookieHeaders(h))
-	var tokens, expire []string
+	var tokens, expire, refresh []string
+	session := ""
 	seen := map[string]bool{}
 	for _, c := range cookies {
 		if !isAuthCookie(c.name, s.IDTokenCookie) {
 			continue
+		}
+		switch {
+		case c.name == sessionCookie:
+			session = c.value
+		case strings.HasPrefix(c.name, "RefreshToken"):
+			refresh = append(refresh, c.value)
 		}
 		if !seen[c.name] {
 			seen[c.name] = true
@@ -155,19 +165,28 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 		return deny("not-ready"), ""
 	}
 	// Every copy of the ID token cookie must verify and name the same owner.
-	owner := ""
+	owner, idTokenOK := "", len(tokens) > 0
 	for _, raw := range tokens {
 		o, err := s.owner(ctx, v, raw)
 		if err != nil {
 			slog.DebugContext(ctx, "id token rejected", "err", err)
 		}
 		if err != nil || (owner != "" && o != owner) {
-			return s.login(h, expire), ""
+			idTokenOK = false
+			break
 		}
 		owner = o
 	}
-	if owner == "" {
-		return s.login(h, expire), ""
+	setCookie := ""
+	if idTokenOK {
+		setCookie = s.renewSession(session, owner, refresh)
+	} else {
+		// The browser drops the ID token cookie when the token expires; the session cookie keeps the owner
+		// until the oauth2 filter after authz has refreshed the tokens with the refresh token (session.go).
+		var ok bool
+		if owner, ok = s.sessionOwner(session, refresh); !ok {
+			return s.login(h, expire), ""
+		}
 	}
 	user = telemetry.UserID(s.Salt, owner)
 	sessions, err := s.Sessions.ByInstance(ctx, instance)
@@ -187,7 +206,9 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 		case se.Status.Phase != v1alpha1.SessionReady:
 			reason = "not-ready"
 		default:
-			return allow("owner"), user
+			d := allow("owner")
+			d.setCookie = setCookie
+			return d, user
 		}
 	}
 	return deny(reason), user
@@ -243,9 +264,13 @@ func cookieHeaders(h *authv3.AttributeContext_HttpRequest) []string {
 func (s *Server) response(d decision) *authv3.CheckResponse {
 	switch {
 	case d.result == "allow":
+		ok := &authv3.OkHttpResponse{}
+		if d.setCookie != "" {
+			ok.ResponseHeadersToAdd = []*corev3.HeaderValueOption{header("Set-Cookie", d.setCookie)}
+		}
 		return &authv3.CheckResponse{
 			Status:       &status.Status{Code: int32(codes.OK)},
-			HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: &authv3.OkHttpResponse{}},
+			HttpResponse: &authv3.CheckResponse_OkResponse{OkResponse: ok},
 		}
 	case d.redirect != nil:
 		hs := []*corev3.HeaderValueOption{header("Location", d.redirect.location)}
