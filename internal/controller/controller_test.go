@@ -785,6 +785,41 @@ func TestSecondSessionOnABusyWorkspaceFailsAtOnce(t *testing.T) {
 	if p := sessionStatus("s-busy1").Phase; p == v1.SessionFailed {
 		t.Error("the running session was disturbed")
 	}
+	// Further reconciles of the failed session must not count or emit the failure again.
+	time.Sleep(time.Second)
+	if n := testutil.ToFloat64(telemetry.SessionFailures.WithLabelValues("tpl-busy", v1.ErrorWorkspaceInUse)); n != 1 {
+		t.Errorf("failures counted %v times, want once", n)
+	}
+}
+
+func TestAgentConflictReleasesThePod(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-409"))
+	pool := &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-409", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-409", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}}
+	mustCreate(t, pool)
+	sel := client.MatchingLabels{v1.LabelPool: "pool-409"}
+	eventually(t, "idle pod", func() bool { return len(podsWith(sel)) == 1 })
+	idle := podsWith(sel)[0]
+	setReady(t, idle.Name)
+	eventually(t, "idle ready", func() bool { _ = get(pool); return pool.Status.IdleReady == 1 })
+
+	agent.set(func(a *fakeAgent) { a.conflicts = 1 })
+	createSession(t, "s-409", "tpl-409")
+	eventually(t, "claimed pod released", func() bool {
+		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: idle.Name, Namespace: testNS}}
+		return notFound(p) || p.DeletionTimestamp != nil
+	})
+	var st v1.IDESessionStatus
+	eventually(t, "session continues on another pod", func() bool {
+		st = sessionStatus("s-409")
+		return st.PodName != "" && st.PodName != idle.Name
+	})
+	if st.Phase == v1.SessionFailed {
+		t.Fatalf("session failed: %+v", st)
+	}
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-409").Phase == v1.SessionReady })
 }
 
 func TestMissingDataSecretMessage(t *testing.T) {
