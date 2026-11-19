@@ -79,7 +79,8 @@ jobs:
           for f in api/openapi/v1.yaml api/agent/v1.yaml; do
             if git cat-file -e "$BASE:$f" 2>/dev/null; then
               git show "$BASE:$f" > /tmp/base/spec.yaml
-              go run github.com/oasdiff/oasdiff@v1.39.0 breaking /tmp/base/spec.yaml "$f" --fail-on ERR
+              # ADR 0010: new enum values and error codes are additive within v1, so that rule only warns.
+              go run github.com/oasdiff/oasdiff@v1.39.0 breaking /tmp/base/spec.yaml "$f" --fail-on ERR --severity-levels .github/oasdiff-levels.txt
             fi
           done
           go run ./hack/crddiff "$BASE"

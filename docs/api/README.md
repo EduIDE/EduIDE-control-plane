@@ -32,7 +32,7 @@ REST ([ADR 0010](../adr/0010-rest-api-spec-first.md)):
 - Inside v1 only additive changes: new endpoints, new optional fields, new enum values the client can ignore.
 - A breaking change needs `/api/v2` running next to v1, and an ADR.
 - Deprecations are announced with the `Deprecation` and `Sunset` headers.
-- The spec version is semantic. CI runs `oasdiff` and fails on a breaking change.
+- The spec version is semantic. CI runs `oasdiff` and fails on a breaking change. A new value in a response enum, such as a new error code, only warns (`.github/oasdiff-levels.txt`): clients must tolerate unknown values.
 - The TypeScript client has the release version (see [release.md](../development/release.md)).
 
 CRDs ([ADR 0011](../adr/0011-crd-versioning-cel.md)):
