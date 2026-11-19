@@ -245,12 +245,12 @@ describe('template dialogs', () => {
             ]
         };
         render(wrap(<PickDialog template={withIds} onClose={vi.fn()} onInfo={vi.fn()} onStart={vi.fn()} />));
-        const logo = (name: RegExp): Element | null =>
-            screen.getByRole('radio', { name }).closest('label')?.querySelector('.opt-logo img') ?? null;
+        const logo = (name: RegExp): Element | undefined =>
+            screen.getByRole('radio', { name }).closest('label')?.querySelector('.opt-logo img') ?? undefined;
         expect(logo(/Maven/)?.getAttribute('src')).toMatch(/maven-logo/);
         expect(logo(/Gradle/)?.getAttribute('src')).toMatch(/gradle-logo/);
-        expect(logo(/Custom/)).toBeNull();
-        expect(logo(/Empty project/)).toBeNull();
+        expect(logo(/Custom/)).toBeUndefined();
+        expect(logo(/Empty project/)).toBeUndefined();
     });
 });
 
