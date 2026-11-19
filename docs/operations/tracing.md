@@ -31,11 +31,11 @@ launch                      service   click to response (the landing page is the
     claim                   operator  attributes: idle_pods, candidates, result; events: claim.conflict, claim.won
     agent.claim             operator  launch data pushed to the agent
     status.ready            operator  status patch that makes the session Ready
-  browser.connect           operator  Ready until the first proxied request     (late, from agent milestones)
-  data.delivered            operator  claim received until the extension got the data
-  ide.load                  operator  first request until the plugin host started
-  workspace.ready           operator  until the workspace folder is open
-  ide.usable                operator  Ready until the workspace is open
+  browser.connect           operator  claim received by the agent until the first proxied request (late, from agent milestones)
+  ide.load                  operator  first request until the plugin host started: the IDE plugin host start
+  data.delivered            operator  plugin host started (and claim received) until the extension got the launch data
+  workspace.ready           operator  plugin host started until the workspace folder is open
+  ide.usable                operator  claim received until the workspace is open
 ```
 
 Cold launch (no idle instance, or a persistent workspace) replaces the claim with creating the pod, and adds the pod phases:
@@ -54,7 +54,9 @@ start
 
 A warm-starting claim (the idle pod was still starting) shows the part of the pod phases after the session was created.
 
-Pod phases come from the real Kubernetes timestamps, which have a resolution of one second: a phase of 0 ms means "under a second". The late spans after Ready arrive up to about 2 minutes after the launch (the operator reads the agent at 30 s, at 120 s and in its regular status poll), so a fresh trace may still lack them.
+Pod phases come from the real Kubernetes timestamps, which have a resolution of one second: a phase of 0 ms means "under a second". These spans carry `eduide.timestamp_resolution=1s` and are clamped into the time of `start`, so they never begin before it or end after it; their order is kept. `start` begins when the operator first sees the session (precise), or at the creation timestamp (resolution one second) when the operator was more than a second late. The late spans use the precise milestone times of the agent, not status timestamps.
+
+**Which span shows the IDE plugin host start?** `ide.load`: from the first proxied request of the browser to the `plugin-host-started` milestone the extension reports on activation. The IDE starts its plugin host only when the browser connects, so this is the largest share of the time to a usable IDE today (about 13 s warm). `data.delivered` is the short wait after that, until the extension has polled and received the launch data. `workspace.ready` follows until the workspace folder is open. The late spans after Ready arrive up to about 2 minutes after the launch (the operator reads the agent at 30 s, at 120 s and in its regular status poll), so a fresh trace may still lack them.
 
 Milestones: `claim-received`, `first-request`, `first-websocket`, `data-delivered` are set by the agent. `plugin-host-started`, `workspace-ready`, `first-input` are reported by the extension. `clone-done` is allowed but not reported yet: the Scorpio clone offers no hook. A span is left out when its milestones are missing or out of order. For an instance that was idle in a pool the plugin host started before the browser came, so `ide.load` is missing there.
 
@@ -90,9 +92,9 @@ Budgets: warm under 2 s, cold under 30 s at p95. The browser phases after Ready 
 | `start` ends with error | `start` | The `eduide.error_code` is the stable code of the session status. |
 | `validate` long | `validate` | Live session list in the API server is slow. |
 | `browser.connect` long | `browser.connect` | The user opened the URL late, or the gateway route is not yet programmed ([gateway-backlog.md](gateway-backlog.md)). |
-| `ide.load` long | `ide.load` | The IDE front end loads slowly or the extension activates late. |
+| `ide.load` long | `ide.load` | The IDE plugin host starts slowly after the browser connected (about 13 s warm today). Check the IDE container resources and the plugins it loads. |
 | `workspace.ready` long | `workspace.ready` | The workspace folder opens late: clone or import is slow (the clone itself is not a span yet). |
-| `data.delivered` long | `data.delivered` | The extension was not polling: it activated late. |
+| `data.delivered` long | `data.delivered` | The extension is active but its poll is slow to return the data: check the agent log. |
 
 The same phases are in the metric `eduide_session_phase_seconds{phase,strategy}` ([metrics](../contracts/metrics.md)). The authz service adds `authz.check` (attributes `eduide.authz_result` and `eduide.authz_reason`) only below a sampled `traceparent`, so it appears when a request carries the trace of a launch, not for ordinary traffic.
 
