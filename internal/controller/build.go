@@ -152,7 +152,9 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 // specHash identifies what a pod is built from: the template spec, the agent image and the deployment placement.
 // A pool replaces idle pods with another hash.
 func (d *deps) specHash(t *v1.IDETemplate) string {
-	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement})
+	// routeVersion changes when the route of an instance changes, so pools replace idle instances with old routes.
+	const routeVersion = 2
+	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement, routeVersion})
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]
 }
@@ -280,6 +282,9 @@ func (d *deps) buildRoute(meta metav1.ObjectMeta, instance, token string) *gatew
 			},
 			BackendRefs: []gatewayv1.HTTPBackendRef{{BackendRef: gatewayv1.BackendRef{BackendObjectReference: gatewayv1.BackendObjectReference{
 				Name: gatewayv1.ObjectName(podName(instance)), Port: &port}}}},
+			// No request timeout: the IDE uses long-polling (socket.io) when WebSockets do not get through, and
+			// Envoy's default of 15 s ended those requests with 504.
+			Timeouts: &gatewayv1.HTTPRouteTimeouts{Request: new(gatewayv1.Duration("0s"))},
 		}},
 	}}
 }
