@@ -72,7 +72,7 @@ func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, s
 
 // Handler serves the API under /api/v1; every route needs a valid bearer token.
 func (s *Server) Handler(v auth.Verifier) http.Handler {
-	return secureAndProblemFallback(HandlerWithOptions(s, StdHTTPServerOptions{
+	return secureAndProblemFallback(hstsValue(s.cfg), HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseURL:     basePath,
 		Middlewares: []MiddlewareFunc{s.adminAuthz, publicWithoutToken(auth.Middleware(userRecorder{v})), s.adminGate, s.accessLog, metricsMiddleware}, // last is outermost
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
@@ -81,12 +81,21 @@ func (s *Server) Handler(v auth.Verifier) http.Handler {
 	}))
 }
 
+// hstsValue covers the subdomains (instance and webview host) unless the config opts out. The Envoy OIDC
+// redirects on the session hosts never reach the IDE route, so only the parent host can pin them.
+func hstsValue(cfg *config.Config) string {
+	if cfg.Security.HSTSIncludeSubdomains != nil && !*cfg.Security.HSTSIncludeSubdomains {
+		return "max-age=31536000"
+	}
+	return "max-age=31536000; includeSubDomains"
+}
+
 // secureAndProblemFallback adds the transport security headers to every response and turns the
 // plain text 404 and 405 of the mux (unknown path or method) into Problem Details.
-func secureAndProblemFallback(next http.Handler) http.Handler {
+func secureAndProblemFallback(hsts string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Strict-Transport-Security", hsts)
 		h.Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(&fallbackWriter{ResponseWriter: w}, r)
 	})

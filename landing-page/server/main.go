@@ -23,6 +23,8 @@ type config struct {
 	Keycloak struct {
 		URL string `json:"url"`
 	} `json:"keycloak"`
+	// HSTSIncludeSubdomains defaults to true; the landing host is the parent of the session hosts.
+	HSTSIncludeSubdomains *bool `json:"hstsIncludeSubdomains"`
 }
 
 // logger writes JSON on stdout like the other binaries; LOG_LEVEL is debug, info or warn.
@@ -170,15 +172,19 @@ func newHandler(dist, cfgPath string) (http.Handler, error) {
 		}
 		http.ServeContent(w, r, name, st.ModTime(), rs)
 	})
-	return securityHeaders(csp, mux), nil
+	hsts := "max-age=31536000; includeSubDomains"
+	if cfg.HSTSIncludeSubdomains != nil && !*cfg.HSTSIncludeSubdomains {
+		hsts = "max-age=31536000"
+	}
+	return securityHeaders(csp, hsts, mux), nil
 }
 
-func securityHeaders(csp string, next http.Handler) http.Handler {
+func securityHeaders(csp, hsts string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slog.Debug("request", "method", r.Method, "path", r.URL.Path)
 		h := w.Header()
 		h.Set("Content-Security-Policy", csp)
-		h.Set("Strict-Transport-Security", "max-age=31536000")
+		h.Set("Strict-Transport-Security", hsts)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		next.ServeHTTP(w, r)
