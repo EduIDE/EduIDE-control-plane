@@ -5,16 +5,20 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Nightly: a new CVE in unchanged code shows up without waiting for the next change.
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   changes:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     outputs:
       go: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.go }}
@@ -24,8 +28,8 @@ jobs:
       landing: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.landing }}
       charts: ${{ github.event_name == 'workflow_dispatch' && 'true' || steps.f.outputs.charts }}
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: dorny/paths-filter@v4.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: f
         with:
           filters: |
@@ -41,10 +45,10 @@ jobs:
     if: needs.changes.outputs.go == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: {go-version-file: go.mod}
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 22}
       - name: go.mod is tidy
         run: go mod tidy && git diff --exit-code -- go.mod go.sum
@@ -52,7 +56,7 @@ jobs:
         run: make verify-generate
       - name: Test (unit and envtest)
         run: make test-go
-      - uses: golangci/golangci-lint-action@v9.3.0
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with: {version: v2.15.0}
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -62,9 +66,9 @@ jobs:
     if: needs.changes.outputs.api == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {fetch-depth: 0}
-      - uses: actions/setup-go@v7.1.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: {go-version-file: go.mod}
       - name: OpenAPI lint
         run: |
@@ -90,12 +94,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: pool-scaler}}
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-go@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: {go-version-file: pool-scaler/go.mod}
       - run: go mod tidy && git diff --exit-code -- go.mod go.sum
       - run: go test -race -count=1 ./...
-      - uses: golangci/golangci-lint-action@v9.3.0
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with: {version: v2.15.0, working-directory: pool-scaler}
       - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
@@ -104,8 +108,8 @@ jobs:
     if: needs.changes.outputs.ts == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 22}
       - name: Client
         working-directory: clients/typescript
@@ -121,8 +125,8 @@ jobs:
     runs-on: ubuntu-latest
     defaults: {run: {working-directory: landing-page}}
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with: {node-version: 22}
       - run: npm ci
       - run: npm audit --audit-level=high
@@ -130,7 +134,7 @@ jobs:
       - run: npm run check-client
       - run: npm run build
       - run: npm test --if-present
-      - uses: actions/setup-go@v7.1.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with: {go-version-file: landing-page/server/go.mod}
       - name: Static server
         working-directory: landing-page/server
@@ -141,15 +145,49 @@ jobs:
     if: needs.changes.outputs.charts == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: azure/setup-helm@v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
       - name: Lint and template tests
         run: charts/test.sh
 
   gitleaks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {fetch-depth: 0}
       - name: Gitleaks
         run: docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:v8.30.0 git /repo --redact --no-banner -v
+
+  vuln-scan:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with: {go-version-file: go.mod}
+      - name: govulncheck (all Go modules)
+        run: |
+          for m in . pool-scaler landing-page/server; do
+            (cd "$m" && go run golang.org/x/vuln/cmd/govulncheck@latest ./...)
+          done
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '1'
+
+  # The one check to require in branch protection. Path-filtered jobs are skipped on most
+  # pull requests, so they cannot be required one by one; this job fails when any of them fails.
+  ci-ok:
+    if: always()
+    needs: [changes, go, api, pool-scaler, typescript, landing-page, charts, gitleaks, vuln-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job is success or skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          echo "$RESULTS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$RESULTS" | jq -e 'all(.[]; .result == "success" or .result == "skipped")' > /dev/null
