@@ -430,7 +430,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
 		}
 	}
-	return ctrl.Result{RequeueAfter: min(r.jitter(), milestoneChecks[0]), Priority: lowPriority}, nil
+	return ctrl.Result{RequeueAfter: min(r.jitter(), (*milestoneChecks.Load())[0]), Priority: lowPriority}, nil
 }
 
 func readyTime(p *corev1.Pod) metav1.Time {

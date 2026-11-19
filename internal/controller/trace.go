@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -32,7 +33,9 @@ const (
 
 // milestoneChecks are the moments after Ready at which the operator polls the agent for milestones, on top
 // of the regular status poll.
-var milestoneChecks = []time.Duration{30 * time.Second, 120 * time.Second}
+var milestoneChecks atomic.Pointer[[]time.Duration]
+
+func init() { milestoneChecks.Store(&[]time.Duration{30 * time.Second, 120 * time.Second}) }
 
 // startState is what the operator remembers per session for tracing. Losing it on a restart only loses spans.
 type startState struct {
@@ -334,7 +337,7 @@ func (r *sessionReconciler) exportMilestones(ctx context.Context, s *v1.IDESessi
 // nextMilestoneCheck is the time until the next check after Ready that is still ahead, or 0 when all are past.
 func nextMilestoneCheck(now, ready time.Time) time.Duration {
 	age := now.Sub(ready)
-	for _, c := range milestoneChecks {
+	for _, c := range *milestoneChecks.Load() {
 		if c > age {
 			return c - age + time.Second
 		}

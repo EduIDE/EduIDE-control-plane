@@ -126,6 +126,10 @@ func attrsOf(s sdktrace.ReadOnlySpan) map[string]string {
 func TestLaunchTraceStructure(t *testing.T) {
 	requireEnv(t)
 	rec := recordSpans(t)
+	// Check for milestones soon after Ready instead of after 30 s.
+	prevChecks := milestoneChecks.Load()
+	milestoneChecks.Store(&[]time.Duration{time.Second, 2 * time.Second, 4 * time.Second})
+	t.Cleanup(func() { milestoneChecks.Store(prevChecks) })
 
 	const parent = "b7ad6b7169203331"
 	mustCreate(t, newTemplate("tpl-trace"))
@@ -159,9 +163,10 @@ func TestLaunchTraceStructure(t *testing.T) {
 			ms("first-request", ready.Add(time.Second)), ms("plugin-host-started", ready.Add(3*time.Second)), ms("workspace-ready", ready.Add(5*time.Second))}
 	})
 	t.Cleanup(func() { agent.set(func(a *fakeAgent) { a.milestones = nil }) })
+	// Only spans of this session: the shared fake agent reports the same milestones for every live session.
 	count := func(name string) (n int) {
 		for _, s := range rec.Ended() {
-			if s.Name() == name {
+			if s.Name() == name && attrsOf(s)["eduide.session"] == "s-trace" {
 				n++
 			}
 		}
