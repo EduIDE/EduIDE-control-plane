@@ -104,6 +104,6 @@ Load targets per deployment: 1000 concurrent sessions, a burst of 200 launches p
 
 ## Traces
 
-The landing page sends `traceparent`. The service stores it in the annotation `eduide.github.io/traceparent` of the session. Operator and agent continue the trace, one span per phase.
+The landing page sends `traceparent`. The service stores it in the annotation `eduide.github.io/traceparent` of the session. The operator continues the trace with one span `start` (session creation until Ready) and one child span per phase. After Ready it adds spans from the milestones of the agent. The agent itself exports nothing: it keeps milestone timestamps in memory and the operator turns them into spans. See [operations/tracing.md](../operations/tracing.md).
 Start path traces are sampled at 100 percent. Spans carry no e-mail address or name, only a pseudonymous user id and the session name ([ADR 0013](../adr/0013-observability.md)).
 Debug a slow launch: [slow-launch runbook](../operations/slow-launch.md).

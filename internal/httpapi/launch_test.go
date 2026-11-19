@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,10 +88,26 @@ func TestLaunchSpan(t *testing.T) {
 		t.Fatalf("%d %s", res.Code, res.Body)
 	}
 	spans := rec.Ended()
-	if len(spans) != 1 || spans[0].Name() != "launch" {
-		t.Fatalf("spans %v", spans)
+	var names []string
+	for _, c := range spans {
+		names = append(names, c.Name())
 	}
-	sp := spans[0]
+	if want := []string{"validate", "session.create", "secret.create", "launch"}; !slices.Equal(names, want) {
+		t.Fatalf("spans %v, want %v", names, want)
+	}
+	sp := spans[3]
+	for _, c := range spans[:3] {
+		if c.Parent().SpanID() != sp.SpanContext().SpanID() {
+			t.Errorf("%s is not a child of launch", c.Name())
+		}
+		for _, a := range c.Attributes() {
+			for _, leak := range []string{"alice", "Alice", "secret-token-value", "git.example"} {
+				if strings.Contains(a.Value.String(), leak) {
+					t.Errorf("%s attribute %s leaks %q", c.Name(), a.Key, leak)
+				}
+			}
+		}
+	}
 	if sp.Parent().TraceID().String() != traceID || sp.Parent().SpanID().String() != "b7ad6b7169203331" {
 		t.Fatalf("parent %v", sp.Parent())
 	}
@@ -115,7 +132,38 @@ func TestLaunchSpan(t *testing.T) {
 
 	// A rejected launch is marked as an error with the code only.
 	e.do("POST", "/sessions", "alice", map[string]any{"template": "nope"})
-	if sp := rec.Ended()[1]; sp.Status().Description != string(CodeTemplateNotFound) {
-		t.Fatalf("status %+v", sp.Status())
+	ended := rec.Ended()
+	for _, n := range []int{len(ended) - 2, len(ended) - 1} { // validate and launch
+		if sp := ended[n]; sp.Status().Description != string(CodeTemplateNotFound) {
+			t.Fatalf("%s status %+v", sp.Name(), sp.Status())
+		}
+	}
+}
+
+func TestLaunchSpansWithWorkspace(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)))
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	e := newEnv(t)
+	if res := e.do("POST", "/sessions", "alice", launchBody(map[string]any{"persistence": "volume"})); res.Code != 201 {
+		t.Fatalf("%d %s", res.Code, res.Body)
+	}
+	var names []string
+	for _, c := range rec.Ended() {
+		names = append(names, c.Name())
+		if c.Name() == "workspace.get_or_create" {
+			attrs := map[string]string{}
+			for _, a := range c.Attributes() {
+				attrs[string(a.Key)] = a.Value.String()
+			}
+			if attrs["eduide.persistence"] != "volume" || attrs["eduide.template"] != "java" {
+				t.Errorf("attributes %v", attrs)
+			}
+		}
+	}
+	if want := []string{"validate", "workspace.get_or_create", "session.create", "secret.create", "launch"}; !slices.Equal(names, want) {
+		t.Fatalf("spans %v, want %v", names, want)
 	}
 }

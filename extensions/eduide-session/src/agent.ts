@@ -32,6 +32,7 @@ export class AgentClient {
   private version = 0;
   private session: LocalSession = { version: 0, claimed: false };
   private seen = new Set<string>();
+  private milestones = new Set<string>();
   private lastHeartbeat = -Infinity;
   private abort = new AbortController();
   private stopped = false;
@@ -67,6 +68,8 @@ export class AgentClient {
       return;
     }
     this.lastHeartbeat = now;
+    // The first heartbeat that goes out marks the first user input.
+    void this.milestone("first-input");
     try {
       const r = await fetch(`${this.o.baseUrl}/v1/heartbeat`, {
         method: "POST",
@@ -77,6 +80,27 @@ export class AgentClient {
       }
     } catch {
       this.lastHeartbeat = -Infinity;
+    }
+  }
+
+  // Reports a milestone once per name. The agent keeps the first report, so errors are ignored after one retry.
+  async milestone(name: string, at: string = new Date().toISOString()): Promise<void> {
+    if (this.milestones.has(name)) {
+      return;
+    }
+    this.milestones.add(name);
+    for (let i = 0; i < 2; i++) {
+      try {
+        await fetch(`${this.o.baseUrl}/v1/milestones`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, at }),
+          signal: this.abort.signal,
+        });
+        return;
+      } catch {
+        // retry once on network failure
+      }
     }
   }
 
