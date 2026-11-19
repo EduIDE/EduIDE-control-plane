@@ -251,7 +251,8 @@ describe('layout', () => {
         await open('/admin');
         const nav = await screen.findByRole('navigation', { name: 'Admin' });
         within(nav).getByRole('link', { name: /Status/ });
-        expect(within(nav).getByRole('link', { name: /Sessions/ }).textContent).toContain('145');
+        // The count comes with the first status event, which can land after the nav renders.
+        await waitFor(() => expect(within(nav).getByRole('link', { name: /Sessions/ }).textContent).toContain('145'));
         await waitFor(() => expect(within(nav).getByRole('link', { name: /Templates/ }).textContent).toContain('2'));
         expect(within(nav).getByRole('link', { name: 'Grafana' }).getAttribute('href')).toBe('https://grafana.example.org/');
         screen.getByText('Live');
