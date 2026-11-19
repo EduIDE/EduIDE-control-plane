@@ -85,28 +85,45 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 
 func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
-// pathPrefix keeps the first path segment: the rest may carry file names of the user.
-// scopeCookies moves explicit cookie paths of the IDE below the instance prefix, like nginx proxy_cookie_path.
-// The IDE sees itself at "/", but all instances share one host: Theia's theia-connection-token with Path=/
-// would otherwise be overwritten by every other IDE the student opens, and its requests then fail with 403.
-// A cookie without a Path already gets the right default from the browser.
+// scopeCookies keeps the IDE's cookies inside its own instance, like nginx proxy_cookie_path. The IDE sees
+// itself at "/", but all instances share one host: Theia's theia-connection-token with Path=/ would otherwise be
+// overwritten by every other IDE the student opens, and its requests then fail with 403. Explicit paths move
+// below the prefix, Domain is dropped (no cookies for sibling hosts), and cookies named like the gateway's login
+// cookies are dropped. A cookie without a Path already gets the right default from the browser. This only keeps
+// a well-behaved IDE apart from its siblings; it is no boundary against script in the IDE, which shares the origin.
 func scopeCookies(h http.Header, prefix string) {
 	if prefix == "" {
 		return
 	}
 	base := strings.TrimSuffix(prefix, "/")
-	for i, c := range h.Values("Set-Cookie") {
+	var out []string
+	for _, c := range h.Values("Set-Cookie") {
 		parts := strings.Split(c, ";")
-		for j, p := range parts[1:] {
-			name, val, _ := strings.Cut(strings.TrimSpace(p), "=")
-			if strings.EqualFold(name, "path") && strings.HasPrefix(val, "/") && !strings.HasPrefix(val, prefix) {
-				parts[j+1] = " Path=" + base + val
-			}
+		name, _, _ := strings.Cut(parts[0], "=")
+		if hasAuthPrefix(strings.TrimSpace(name)) {
+			continue
 		}
-		h["Set-Cookie"][i] = strings.Join(parts, ";")
+		kept := parts[:1]
+		for _, p := range parts[1:] {
+			attr, val, _ := strings.Cut(p, "=")
+			attr, val = strings.TrimSpace(attr), strings.TrimSpace(val)
+			switch {
+			case strings.EqualFold(attr, "domain"):
+				continue
+			case strings.EqualFold(attr, "path") && strings.HasPrefix(val, "/") && val != base && !strings.HasPrefix(val, prefix):
+				p = " Path=" + base + val
+			}
+			kept = append(kept, p)
+		}
+		out = append(out, strings.Join(kept, ";"))
+	}
+	h.Del("Set-Cookie")
+	for _, c := range out {
+		h.Add("Set-Cookie", c)
 	}
 }
 
+// pathPrefix keeps the first path segment: the rest may carry file names of the user.
 func pathPrefix(p string) string {
 	p = strings.TrimPrefix(p, "/")
 	seg, _, _ := strings.Cut(p, "/")

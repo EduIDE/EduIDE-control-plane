@@ -543,6 +543,12 @@ func TestProxyScopesIDECookiesToTheInstancePath(t *testing.T) {
 		w.Header().Add("Set-Cookie", "deep=1; path=/sub; Secure")
 		w.Header().Add("Set-Cookie", "nopath=1; HttpOnly")
 		w.Header().Add("Set-Cookie", "already=1; Path=/inst123/x")
+		w.Header().Add("Set-Cookie", "spaced=1; Path =/; HttpOnly")
+		w.Header().Add("Set-Cookie", "spaced2=1;\tPath=\t/")
+		w.Header().Add("Set-Cookie", "bare=1; Path=/inst123")
+		w.Header().Add("Set-Cookie", "dom=1; Domain=example.org; Path=/")
+		w.Header().Add("Set-Cookie", "eduide-id=forged; Path=/")
+		w.Header().Add("Set-Cookie", "AccessToken-1=forged; Path=/")
 		_, _ = w.Write([]byte("ok"))
 	}))
 	defer ide.Close()
@@ -555,6 +561,10 @@ func TestProxyScopesIDECookiesToTheInstancePath(t *testing.T) {
 		"deep=1; Path=/inst123/sub; Secure",
 		"nopath=1; HttpOnly",
 		"already=1; Path=/inst123/x",
+		"spaced=1; Path=/inst123/; HttpOnly",
+		"spaced2=1; Path=/inst123/",
+		"bare=1; Path=/inst123",
+		"dom=1; Path=/inst123/",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("Set-Cookie\n got %q\nwant %q", got, want)

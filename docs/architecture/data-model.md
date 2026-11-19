@@ -87,7 +87,7 @@ Kubernetes garbage collection removes dependents. No manual cleanup.
 
 ## Session pod
 
-Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`, `AGENT_PATH_PREFIX=/<instance>/`). The agent moves explicit cookie paths of IDE responses below `AGENT_PATH_PREFIX` (like nginx `proxy_cookie_path`), because all instances share one host and the IDE sees itself at `/`: Theia's `theia-connection-token` with `Path=/` would otherwise be overwritten by every other IDE of the student, whose requests then fail with 403.
+Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`, `AGENT_PATH_PREFIX=/<instance>/`). The agent moves explicit cookie paths of IDE responses below `AGENT_PATH_PREFIX` (like nginx `proxy_cookie_path`), drops their `Domain` attribute and drops cookies named like the gateway login cookies, because all instances share one host and the IDE sees itself at `/`: Theia's `theia-connection-token` with `Path=/` would otherwise be overwritten by every other IDE of the student, whose requests then fail with 403.
 The workspace mounts at `persistence.mountPath` (default `/home/project`), otherwise nothing is mounted (sessions with persistence `none` write to the container filesystem).
 Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egress-bandwidth` come from the template.
 
