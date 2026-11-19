@@ -35,7 +35,21 @@ const (
 var milestoneChecks = []time.Duration{30 * time.Second, 120 * time.Second}
 
 // startState is what the operator remembers per session for tracing. Losing it on a restart only loses spans.
-type startState struct{ span trace.Span }
+type startState struct {
+	span  trace.Span
+	begin time.Time
+}
+
+// startTime is when the start span begins. The creation timestamp of the session has a resolution of one
+// second, so a span that began there could begin before the launch that created the session. The moment the
+// operator first sees the session is precise and only slightly late; if it is more than a second after the
+// creation timestamp the operator was behind, and the (coarse) creation timestamp is the better answer.
+func startTime(created, observed time.Time) time.Time {
+	if observed.Before(created) || observed.Sub(created) > time.Second {
+		return created
+	}
+	return observed
+}
 
 func tracer() trace.Tracer { return otel.Tracer(tracerName) }
 
@@ -62,9 +76,9 @@ func (r *sessionReconciler) traceContext(ctx context.Context, s *v1.IDESession) 
 	if s.DeletionTimestamp != nil {
 		return ctx
 	}
-	ctx, span := tracer().Start(ctx, "start", trace.WithTimestamp(s.CreationTimestamp.Time),
-		trace.WithAttributes(r.baseAttrs(s)...))
-	r.starts.Store(key, &startState{span: span})
+	begin := startTime(s.CreationTimestamp.Time, time.Now())
+	ctx, span := tracer().Start(ctx, "start", trace.WithTimestamp(begin), trace.WithAttributes(r.baseAttrs(s)...))
+	r.starts.Store(key, &startState{span: span, begin: begin})
 	return ctx
 }
 
@@ -202,42 +216,73 @@ func podPhases(p *corev1.Pod) []phaseSpan {
 
 // emit starts and ends one span per phase with explicit times. Phases before notBefore (the creation of
 // the session, for a pod that was idle in a pool) are cut off, and incomplete or negative phases are skipped.
-func (r *sessionReconciler) emit(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod, phases []phaseSpan, notBefore time.Time) {
+func (r *sessionReconciler) emit(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod, phases []phaseSpan, lo, hi time.Time) {
 	for _, ph := range phases {
-		if ph.start.IsZero() || ph.end.IsZero() || ph.end.Before(ph.start) || ph.end.Before(notBefore) {
+		if ph.start.IsZero() || ph.end.IsZero() || ph.end.Before(ph.start) {
 			continue
 		}
-		if ph.start.Before(notBefore) {
-			ph.start = notBefore
+		coarse := !hi.IsZero()
+		if coarse && ph.end.Before(s.CreationTimestamp.Time) {
+			continue // happened before the session existed: an idle pod from a pool
+		}
+		if coarse {
+			ph.start, ph.end = clamp(ph.start, lo, hi), clamp(ph.end, lo, hi)
 		}
 		_, span := tracer().Start(ctx, ph.name, trace.WithTimestamp(ph.start))
+		if coarse {
+			span.SetAttributes(attribute.String("eduide.timestamp_resolution", "1s"))
+		}
 		r.tag(span, s, tmpl, pod)
 		span.End(trace.WithTimestamp(ph.end))
 		telemetry.SessionPhase.WithLabelValues(ph.metric, strategyName(s.Status.StartStrategy)).Observe(ph.end.Sub(ph.start).Seconds())
 	}
 }
 
+// clamp keeps t within [lo, hi]. It is monotonic, so phases keep their order.
+func clamp(t, lo, hi time.Time) time.Time {
+	if t.Before(lo) {
+		return lo
+	}
+	if t.After(hi) {
+		return hi
+	}
+	return t
+}
+
+// phaseBounds are the limits for spans from one-second pod timestamps: from the beginning of the start span
+// (or the creation timestamp when the operator restarted and lost it) to now.
+func (r *sessionReconciler) phaseBounds(s *v1.IDESession) (time.Time, time.Time) {
+	lo := s.CreationTimestamp.Time
+	if st, ok := r.starts.Load(sessionKey(s)); ok {
+		lo = st.(*startState).begin
+	}
+	return lo, r.clock.Now()
+}
+
 // milestoneRule makes a span from two milestones: it starts at the latest of from and ends at to.
-// "ready" is the time the operator set the session Ready.
+// All moments are precise times of the agent: the Ready timestamp of the status has a resolution of one second and
+// would start spans before the events that cause them.
 var milestoneRules = []struct {
 	name, metric string
 	from         []string
 	to           string
 }{
-	{"browser.connect", "browser_connect", []string{"ready"}, "first-request"},
+	{"browser.connect", "browser_connect", []string{"claim-received"}, "first-request"},
 	{"ws.connect", "ws_connect", []string{"first-request"}, "first-websocket"},
-	{"data.delivered", "data_delivered", []string{"claim-received"}, "data-delivered"},
+	// The extension polls only once it is activated, so the delivery waits for the plugin host: the span shows the
+	// wait after both the claim and the plugin host are there. The plugin host start itself is ide.load.
+	{"data.delivered", "data_delivered", []string{"claim-received", "plugin-host-started"}, "data-delivered"},
 	{"ide.load", "ide_load", []string{"first-request"}, "plugin-host-started"},
 	{"workspace.ready", "workspace_ready", []string{"first-request", "plugin-host-started"}, "workspace-ready"},
 	{"clone", "clone", []string{"workspace-ready"}, "clone-done"},
 	{"first.input", "first_input", []string{"workspace-ready"}, "first-input"},
-	{"ide.usable", "ide_usable", []string{"ready"}, "workspace-ready"},
+	{"ide.usable", "ide_usable", []string{"claim-received"}, "workspace-ready"},
 }
 
 // milestoneSpans turns the milestones of an agent into spans. A span whose milestones are missing or out of
 // order is left out; for an instance that was idle in a pool the IDE started before the browser came.
-func milestoneSpans(ready time.Time, ms []agentapi.Milestone) []phaseSpan {
-	at := map[string]time.Time{"ready": ready}
+func milestoneSpans(ms []agentapi.Milestone) []phaseSpan {
+	at := map[string]time.Time{}
 	for _, m := range ms {
 		at[m.Name] = m.At
 	}
@@ -277,12 +322,12 @@ func (r *sessionReconciler) exportMilestones(ctx context.Context, s *v1.IDESessi
 	v, _ := r.exported.LoadOrStore(sessionKey(s), &map[string]bool{})
 	done := v.(*map[string]bool)
 	pctx := remoteParent(ctx, s)
-	for _, ph := range milestoneSpans(st.Timestamps.Ready.Time, ms) {
+	for _, ph := range milestoneSpans(ms) {
 		if (*done)[ph.name] {
 			continue
 		}
 		(*done)[ph.name] = true
-		r.emit(pctx, s, tmpl, pod, []phaseSpan{ph}, time.Time{})
+		r.emit(pctx, s, tmpl, pod, []phaseSpan{ph}, time.Time{}, time.Time{})
 	}
 }
 

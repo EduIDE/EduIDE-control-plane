@@ -22,15 +22,15 @@ func TestMilestoneSpans(t *testing.T) {
 	t0 := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
 	at := func(s float64) time.Time { return t0.Add(time.Duration(s * float64(time.Second))) }
 	got := map[string]phaseSpan{}
-	for _, p := range milestoneSpans(t0, []agentapi.Milestone{
-		ms("claim-received", at(0.01)), ms("data-delivered", at(0.05)), ms("first-request", at(1)), ms("first-websocket", at(1.2)),
+	for _, p := range milestoneSpans([]agentapi.Milestone{
+		ms("claim-received", at(0.01)), ms("data-delivered", at(3.2)), ms("first-request", at(1)), ms("first-websocket", at(1.2)),
 		ms("plugin-host-started", at(3)), ms("workspace-ready", at(5)), ms("first-input", at(8)),
 	}) {
 		got[p.name] = p
 	}
 	want := map[string][2]float64{
-		"browser.connect": {0, 1}, "ws.connect": {1, 1.2}, "data.delivered": {0.01, 0.05}, "ide.load": {1, 3},
-		"workspace.ready": {3, 5}, "first.input": {5, 8}, "ide.usable": {0, 5},
+		"browser.connect": {0.01, 1}, "ws.connect": {1, 1.2}, "data.delivered": {3, 3.2}, "ide.load": {1, 3},
+		"workspace.ready": {3, 5}, "first.input": {5, 8}, "ide.usable": {0.01, 5},
 	}
 	if len(got) != len(want) {
 		t.Errorf("spans %v", got)
@@ -42,7 +42,7 @@ func TestMilestoneSpans(t *testing.T) {
 	}
 
 	// An instance that was idle in a pool: the plugin host started long before the browser came.
-	warm := milestoneSpans(t0, []agentapi.Milestone{ms("plugin-host-started", at(-60)), ms("first-request", at(1)), ms("workspace-ready", at(-50))})
+	warm := milestoneSpans([]agentapi.Milestone{ms("plugin-host-started", at(-60)), ms("first-request", at(1)), ms("workspace-ready", at(-50)), ms("claim-received", at(0))})
 	for _, p := range warm {
 		if p.end.Before(p.start) {
 			t.Errorf("negative span %+v", p)
@@ -51,7 +51,7 @@ func TestMilestoneSpans(t *testing.T) {
 			t.Errorf("span %s must be left out when the IDE started before the browser", p.name)
 		}
 	}
-	if len(milestoneSpans(t0, nil)) != 0 {
+	if len(milestoneSpans(nil)) != 0 {
 		t.Error("spans without milestones")
 	}
 }
@@ -154,7 +154,7 @@ func TestLaunchTraceStructure(t *testing.T) {
 
 	ready := st.Timestamps.Ready.Time
 	agent.set(func(a *fakeAgent) {
-		a.milestones = []agentapi.Milestone{ms("claim-received", ready), ms("data-delivered", ready.Add(50*time.Millisecond)),
+		a.milestones = []agentapi.Milestone{ms("claim-received", ready), ms("data-delivered", ready.Add(3200*time.Millisecond)),
 			ms("first-request", ready.Add(time.Second)), ms("plugin-host-started", ready.Add(3*time.Second)), ms("workspace-ready", ready.Add(5*time.Second))}
 	})
 	t.Cleanup(func() { agent.set(func(a *fakeAgent) { a.milestones = nil }) })
@@ -224,8 +224,16 @@ func TestLaunchTraceStructure(t *testing.T) {
 				t.Errorf("%s parent %v", s.Name(), s.Parent())
 			}
 		}
+		if s.Name() != "start" && s.Parent().SpanID() == start.SpanContext().SpanID() {
+			if s.StartTime().Before(start.StartTime()) || s.EndTime().After(start.EndTime()) {
+				t.Errorf("%s (%v to %v) is outside start (%v to %v)", s.Name(), s.StartTime(), s.EndTime(), start.StartTime(), start.EndTime())
+			}
+		}
+		if s.Name() == "pod.scheduled" && attrsOf(s)["eduide.timestamp_resolution"] != "1s" {
+			t.Errorf("pod.scheduled lacks the timestamp resolution: %v", attrsOf(s))
+		}
 		if s.Name() == "ide.usable" {
-			if d := s.EndTime().Sub(s.StartTime()); d != 5*time.Second {
+			if d := s.EndTime().Sub(s.StartTime()); d != 5*time.Second || !s.StartTime().Equal(ready) {
 				t.Errorf("ide.usable lasts %v", d)
 			}
 		}
@@ -270,5 +278,43 @@ func TestWarmLaunchTrace(t *testing.T) {
 	}
 	if ev := claimed.Events(); len(ev) != 1 || ev[0].Name != "claim.won" {
 		t.Errorf("events %v", ev)
+	}
+}
+
+// TestStartTimeSimulation runs the order of a launch many times with a creation timestamp truncated to the second:
+// the start span never begins before the session was created (the end of session.create) and, when the operator
+// was not late, begins at the moment it first saw the session.
+func TestStartTimeSimulation(t *testing.T) {
+	base := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	for i := range 2000 {
+		create := base.Add(time.Duration(i*7919%1000) * time.Millisecond)    // the API server commits the session
+		createEnd := create.Add(time.Duration(i%5) * time.Millisecond)       // session.create ends after the response
+		observed := createEnd.Add(time.Duration(i%300+1) * time.Millisecond) // the operator sees the session later
+		stamp := create.Truncate(time.Second)                                // what metav1.Time keeps
+		got := startTime(stamp, observed)
+		if observed.Sub(stamp) <= time.Second && (got.Before(createEnd) || !got.Equal(observed)) {
+			t.Fatalf("start %v before session.create end %v (observed %v, stamp %v)", got, createEnd, observed, stamp)
+		}
+		if got.Before(stamp) {
+			t.Fatalf("start %v before the creation timestamp %v", got, stamp)
+		}
+	}
+	// A late operator falls back to the coarse creation timestamp.
+	stamp := base
+	if got := startTime(stamp, stamp.Add(5*time.Second)); !got.Equal(stamp) {
+		t.Errorf("late observation: %v", got)
+	}
+}
+
+func TestClampKeepsOrder(t *testing.T) {
+	t0 := time.Date(2026, 11, 19, 10, 0, 0, 0, time.UTC)
+	lo, hi := t0.Add(500*time.Millisecond), t0.Add(3500*time.Millisecond)
+	prev := time.Time{}
+	for ms := -2000; ms < 6000; ms += 250 {
+		got := clamp(t0.Add(time.Duration(ms)*time.Millisecond), lo, hi)
+		if got.Before(lo) || got.After(hi) || got.Before(prev) {
+			t.Fatalf("clamp(%d ms) = %v", ms, got)
+		}
+		prev = got
 	}
 }

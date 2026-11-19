@@ -410,7 +410,8 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	r.emit(ctx, s, tmpl, pod, podPhases(pod), s.CreationTimestamp.Time)
+	lo, hi := r.phaseBounds(s)
+	r.emit(ctx, s, tmpl, pod, podPhases(pod), lo, hi)
 	r.endStart(s, "ready", "")
 	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})
 	strategy := string(st.StartStrategy)
