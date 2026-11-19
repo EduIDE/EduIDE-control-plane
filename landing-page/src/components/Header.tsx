@@ -2,6 +2,7 @@ import { ArrowLeft, Check, Languages, LogOut, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { LANGS, useI18n } from '../i18n';
+import { BRAND_LOGO } from '../logos';
 import type { UserInfo } from '../user';
 
 interface HeaderProps {
@@ -51,7 +52,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back, onMenuO
         <header>
             <div className='bar'>
                 <a className='brand' href='/' style={{ color: 'inherit', textDecoration: 'none' }}>
-                    <img src='/assets/logos/theia-logo.png' alt={t('brand.logoAlt')} />
+                    <img src={BRAND_LOGO} alt={t('brand.logoAlt')} />
                     {title}
                 </a>
                 <div className='bar-end'>

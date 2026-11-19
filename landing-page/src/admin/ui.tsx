@@ -105,7 +105,7 @@ export const TplCell = ({ name }: { name: string }): React.JSX.Element => {
     const t = templates?.find(x => x.name === name);
     return (
         <span className='a-tpl'>
-            <Logo url={t?.logoUrl} />
+            <Logo name={name} url={t?.logoUrl} />
             {t?.displayName ?? name}
         </span>
     );

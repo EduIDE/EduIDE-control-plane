@@ -30,6 +30,8 @@ export function startLine(estimate: StartEstimate | undefined): StartLine | unde
 }
 
 export interface LaunchInfo {
+    /** Template name, which the logo is looked up by. */
+    template: string;
     title: string;
     templateName: string;
     logoUrl?: string;
@@ -47,6 +49,7 @@ export function buildLaunchInfo(
     const mode = request.persistence ?? (request.workspace ? 'volume' : (template?.defaultPersistence ?? 'none'));
     const line = templateStartLine(template, mode);
     return {
+        template: request.template,
         title: known.title ?? request.display?.title ?? templateName,
         templateName,
         logoUrl: known.logoUrl ?? template?.logoUrl,

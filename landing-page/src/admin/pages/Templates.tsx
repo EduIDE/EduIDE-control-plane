@@ -24,7 +24,7 @@ export const TemplatesPage = (): React.JSX.Element => {
                                 key={t.name}
                                 title={
                                     <span className='a-tpl big'>
-                                        <Logo url={t.logoUrl} />
+                                        <Logo name={t.name} url={t.logoUrl} />
                                         <span>
                                             <b>{t.displayName}</b>
                                             <Mono>{t.name}</Mono>

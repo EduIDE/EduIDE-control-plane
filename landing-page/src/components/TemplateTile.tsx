@@ -30,7 +30,7 @@ export const TemplateTile = ({ template, onPick, onInfo }: TemplateTileProps): R
                     <Info aria-hidden />
                 </button>
             )}
-            <Logo url={template.logoUrl} />
+            <Logo name={template.name} url={template.logoUrl} />
             <div>
                 <div className='name'>{template.displayName}</div>
                 {line && (

@@ -48,6 +48,12 @@ For local development copy that file (with `legal`) to `public/config.json` (git
 
 The panel needs the Keycloak role that the service config names (`oidc.admin`, see ADR 0021 and the install guide). The service checks the role on every request. The landing page asks `GET /api/v1/admin/status` once: only on `200` the avatar menu shows an "Admin" entry. With `403` or `404` the entry stays hidden, and opening `/admin` directly shows "No access". The check in the browser is a convenience, not a protection.
 
+## Logos
+
+All logos come from the bundle, the page loads no image from another origin (the CSP allows only `'self'` and `data:`). The files live in `src/assets/logos/<key>-logo.png`, Vite hashes them into `dist/assets`, and `src/logos.ts` resolves them. A template looks up its exact name (`java-17`), then its language prefix (`java-17` to `java`, `c-templates` to `c`), then the `logoUrl` of the API, and otherwise shows a folder icon. Project templates (`maven`, `gradle`, `make`, `bazel`) look up their id the same way.
+
+The page uses a `logoUrl` from the API only when it is a path on its own origin (starts with `/`, not `//`). Absolute addresses are ignored. To add a logo, add `<key>-logo.png` to `src/assets/logos` and rebuild the image.
+
 ## Keycloak
 
 The greeting uses the token claim `given_name` (else the first word of `name`). Both come from the `profile` client scope, so the landing page client needs that scope. Without it the page greets without a name and shows `?` in the avatar.

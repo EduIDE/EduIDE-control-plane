@@ -25,6 +25,7 @@ import { usePolling } from '../components/usePolling';
 import { useWatch } from '../components/useWatch';
 import type { AppConfig } from '../config';
 import { type Lang, LANGS, useI18n } from '../i18n';
+import { BRAND_LOGO } from '../logos';
 import { httpHref } from '../url';
 import type { UserInfo } from '../user';
 import { AdminContext, type AdminContextValue } from './context';
@@ -177,7 +178,7 @@ const Panelled = ({ config, api, user, logoutUrl, lang, setLang, ta }: PanelledP
                             go('status');
                         }}
                     >
-                        <img src='/assets/logos/theia-logo.png' alt='' />
+                        <img src={BRAND_LOGO} alt='' />
                         {ta('brand')}
                     </a>
                     {(['status', 'pools', 'sessions', 'workspaces', 'problems'] as const).map(p => (

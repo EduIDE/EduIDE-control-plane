@@ -115,7 +115,7 @@ export const Launch = ({ api, request, info, templates, onBack, onStartRow }: La
     return (
         <div className='launch'>
             <div className='head'>
-                <Logo url={info.logoUrl} />
+                <Logo name={info.template} url={info.logoUrl} />
                 <div>
                     <div className='title'>{info.title}</div>
                     <div className='sub'>{info.templateName}</div>

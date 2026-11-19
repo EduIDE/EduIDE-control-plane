@@ -182,6 +182,27 @@ describe('TemplateTile', () => {
         screen.getByText('Ready instantly');
     });
 
+    it('takes the logo from the bundle and ignores an absolute address from the API', () => {
+        const { container } = render(
+            wrap(<TemplateTile template={{ ...java, logoUrl: 'https://cdn.example.org/java.png' }} onPick={vi.fn()} onInfo={vi.fn()} />)
+        );
+        expect(container.querySelector('.logo img')?.getAttribute('src')).toMatch(/java-17-logo/);
+    });
+
+    it('shows the folder icon for a template without a logo', () => {
+        const { container } = render(
+            wrap(
+                <TemplateTile
+                    template={{ ...python, name: 'zig', logoUrl: 'https://cdn.example.org/zig.png' }}
+                    onPick={vi.fn()}
+                    onInfo={vi.fn()}
+                />
+            )
+        );
+        expect(container.querySelector('.logo img')).toBeNull();
+        expect(container.querySelector('.logo svg')).not.toBeNull();
+    });
+
     it('shows no start time without an estimate', () => {
         render(wrap(<TemplateTile template={{ ...python, startEstimate: undefined }} onPick={vi.fn()} onInfo={vi.fn()} />));
         expect(screen.queryByText(/Ready/)).toBeNull();
@@ -212,6 +233,24 @@ describe('template dialogs', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Start' }));
         expect(onStart).toHaveBeenLastCalledWith(java, '');
         screen.getByText('Saved workspace.');
+    });
+
+    it('shows bundled logos for known project templates and the folder for the empty project', () => {
+        const withIds = {
+            ...java,
+            variants: [
+                { id: 'maven', name: 'Maven' },
+                { id: 'gradle', name: 'Gradle', logoUrl: 'https://cdn.example.org/g.png' },
+                { id: 'custom', name: 'Custom' }
+            ]
+        };
+        render(wrap(<PickDialog template={withIds} onClose={vi.fn()} onInfo={vi.fn()} onStart={vi.fn()} />));
+        const logo = (name: RegExp): Element | null =>
+            screen.getByRole('radio', { name }).closest('label')?.querySelector('.opt-logo img') ?? null;
+        expect(logo(/Maven/)?.getAttribute('src')).toMatch(/maven-logo/);
+        expect(logo(/Gradle/)?.getAttribute('src')).toMatch(/gradle-logo/);
+        expect(logo(/Custom/)).toBeNull();
+        expect(logo(/Empty project/)).toBeNull();
     });
 });
 
@@ -390,7 +429,7 @@ describe('Home', () => {
 });
 
 describe('Launch', () => {
-    const info = { title: 'Hello World', templateName: 'C', seconds: 5 };
+    const info = { template: 'c', title: 'Hello World', templateName: 'C', seconds: 5 };
     const launchApi = (launch: () => Promise<unknown>, watch = async (): Promise<void> => new Promise<void>(() => undefined)): Api =>
         ({ launchDeps: { launch, watch }, client: { DELETE: vi.fn() } }) as unknown as Api;
 

@@ -48,7 +48,7 @@ export const EnvironmentRows = ({ rows, api, onStart, onDeleted, now }: Environm
                     const life = lifeText(row, i18n);
                     return (
                         <div key={row.key} className='row'>
-                            <Logo url={row.logoUrl} />
+                            <Logo name={row.template} url={row.logoUrl} />
                             <div className='meta'>
                                 <div className='title'>{row.title}</div>
                                 <div className='sub'>
@@ -90,7 +90,7 @@ export const EnvironmentRows = ({ rows, api, onStart, onDeleted, now }: Environm
             {deleting && (
                 <Dialog label={t('delete.title', { title: deleting.title })} onClose={close}>
                     <div className='dlg-head'>
-                        <Logo url={deleting.logoUrl} />
+                        <Logo name={deleting.template} url={deleting.logoUrl} />
                         <div>
                             <div className='title'>{t('delete.title', { title: deleting.title })}</div>
                         </div>

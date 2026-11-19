@@ -1,8 +1,12 @@
 import { Folder } from 'lucide-react';
 
-export const Logo = ({ url }: { url?: string }): React.JSX.Element => (
-    <div className='logo'>{url ? <img src={url} alt='' /> : <Folder aria-hidden />}</div>
-);
+import { logoFor } from '../logos';
+
+/** The logo of a template, from the bundle by name, else a same-origin path from the API, else a folder icon. */
+export const Logo = ({ name, url }: { name: string; url?: string }): React.JSX.Element => {
+    const src = logoFor(name, url);
+    return <div className='logo'>{src ? <img src={src} alt='' /> : <Folder aria-hidden />}</div>;
+};
 
 /** The GitHub mark (octicon). lucide-react 1.x dropped brand icons. */
 export const GithubMark = ({ size = 16 }: { size?: number }): React.JSX.Element => (

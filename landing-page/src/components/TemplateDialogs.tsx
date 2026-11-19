@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import type { Template } from '../api-client';
 import { useI18n } from '../i18n';
+import { logoFor } from '../logos';
 import { isSavedByDefault } from '../templates';
 import { Dialog } from './Dialog';
 import { Logo } from './Icons';
@@ -20,7 +21,7 @@ export const InfoDialog = ({ template, onClose, onStart }: InfoDialogProps): Rea
     return (
         <Dialog label={t('info.title')} onClose={onClose}>
             <div className='dlg-head'>
-                <Logo url={template.logoUrl} />
+                <Logo name={template.name} url={template.logoUrl} />
                 <div>
                     <div className='title'>{template.displayName}</div>
                     <div className='sub'>{t('info.title')}</div>
@@ -86,7 +87,7 @@ export const PickDialog = ({ template, onClose, onInfo, onStart }: PickDialogPro
     return (
         <Dialog label={t('pick.title', { name: template.displayName })} onClose={onClose}>
             <div className='dlg-head'>
-                <Logo url={template.logoUrl} />
+                <Logo name={template.name} url={template.logoUrl} />
                 <div>
                     <div className='title'>{t('pick.title', { name: template.displayName })}</div>
                     <div className='sub'>{t('pick.subtitle')}</div>
@@ -107,7 +108,9 @@ export const PickDialog = ({ template, onClose, onInfo, onStart }: PickDialogPro
                             data-autofocus={i === 0 ? true : undefined}
                             onChange={() => setChosen(o.id)}
                         />
-                        <span className='opt-logo'>{o.logoUrl ? <img src={o.logoUrl} alt='' /> : <Folder aria-hidden />}</span>
+                        <span className='opt-logo'>
+                            {o.id && logoFor(o.id, o.logoUrl) ? <img src={logoFor(o.id, o.logoUrl)} alt='' /> : <Folder aria-hidden />}
+                        </span>
                         <span>
                             <span className='opt-t'>{o.name}</span>
                             {o.description && <span className='sub'>{o.description}</span>}

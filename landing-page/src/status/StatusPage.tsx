@@ -88,7 +88,7 @@ const TemplateRow = ({ template, st }: { template: PublicTemplate; st: ReturnTyp
     const noneSeconds = none?.seconds ?? (template.warm ? 0 : undefined);
     return (
         <div className='row'>
-            <Logo url={template.logoUrl} />
+            <Logo name={template.name} url={template.logoUrl} />
             <div className='meta'>
                 <div className='title'>{template.displayName}</div>
                 {/* The API says only whether one is ready right now, never how many. */}
