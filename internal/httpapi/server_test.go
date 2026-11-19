@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/config"
 )
 
 const gitURI = "https://git.example.org/course/ex01-ab12cde.git"
@@ -455,7 +456,7 @@ func TestResponsesCarryHSTS(t *testing.T) {
 			return rec
 		}(),
 	} {
-		if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000; includeSubDomains" {
 			t.Errorf("%s: HSTS %q", name, got)
 		}
 		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
@@ -484,5 +485,12 @@ func TestLaunchIsLoggedWithoutLaunchData(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("log contains %q", bad)
 		}
+	}
+}
+
+func TestHSTSSubdomainsOptOut(t *testing.T) {
+	off := false
+	if got := hstsValue(&config.Config{Security: config.Security{HSTSIncludeSubdomains: &off}}); got != "max-age=31536000" {
+		t.Errorf("opt-out: %q", got)
 	}
 }

@@ -104,6 +104,16 @@ With `prometheusURL` and the pool scaler, the status warns `scaler-silent` when 
 With `prometheusURL` the status page also shows start counts, latency, capacity and time series; without it these parts are absent.
 The service needs `list` and `watch` on events and `get` and `list` on resourcequotas; the chart grants both.
 
+### Monitoring and HSTS
+
+`monitoring.rules.extraLabels` adds labels to every alert, for example `{namespace: eduide-system}` on a cluster whose AlertmanagerConfig routes on that namespace; `eduide_namespace` stays the real namespace.
+`monitoring.dashboard.namespace` (default: the release namespace) places the dashboard ConfigMap where the Grafana sidecar looks.
+
+The service and the landing page send `Strict-Transport-Security: max-age=31536000; includeSubDomains`, because the Envoy OIDC redirects on the session hosts never reach the IDE route and carry no HSTS of their own.
+This assumes `hosts.instance` and `hosts.webview` are subdomains of `hosts.service` (for example `instance.ide.example.org`).
+When they are not, set `config.security.hstsIncludeSubdomains: false` for the service and `hstsIncludeSubdomains: false` in the landing page `config`.
+The route of a session keeps its own HSTS header without `includeSubDomains`.
+
 ## 4. Secrets overview
 
 | Secret | Created by | Content |

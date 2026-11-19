@@ -41,6 +41,15 @@ type Config struct {
 	Overview  Overview  `json:"overview,omitempty"`
 	// Admin tunes the read-only admin API (U16). The API is on only with oidc.admin.
 	Admin Admin `json:"admin,omitempty"`
+	// Security tunes response headers of the service.
+	Security Security `json:"security,omitempty"`
+}
+
+// Security tunes response headers of the service.
+type Security struct {
+	// HSTSIncludeSubdomains adds includeSubDomains to the HSTS header of the service. Default true. It assumes
+	// hosts.instance and hosts.webview are subdomains of hosts.service; set false when they are not.
+	HSTSIncludeSubdomains *bool `json:"hstsIncludeSubdomains,omitempty"`
 }
 
 // Admin tunes the read-only admin API (U16).
@@ -194,6 +203,10 @@ func (c *Config) defaults() {
 	}
 	if c.SessionsPerUser == 0 {
 		c.SessionsPerUser = 3
+	}
+	if c.Security.HSTSIncludeSubdomains == nil {
+		t := true
+		c.Security.HSTSIncludeSubdomains = &t
 	}
 	if c.OIDC.UserClaim == "" {
 		c.OIDC.UserClaim = "preferred_username"

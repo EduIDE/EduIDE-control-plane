@@ -92,6 +92,12 @@ for v in "$cp"/ci/*-values.yaml; do
   grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
   ok "alerts and dashboard per namespace ($v)"
 
+  mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
+  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[]')
+  [ "$(echo "$rules" | yq -p=json 'select(.labels.namespace != "eduide-system" or .labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "extraLabels missing on an alert"
+  [ "$(echo "$mon" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-dashboard") | .metadata.namespace')" = "grafana" ] || fail "dashboard namespace not set"
+  ok "alert extraLabels and dashboard namespace ($v)"
+
   # Admin API (U16): the service may read events and quotas, the scaler may write events, the config carries the role and the scaler interval.
   svc=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules')
   grep -q '"events.k8s.io"' <<<"$svc" && grep -q '"resourcequotas"' <<<"$svc" || fail "service Role lacks events or resourcequotas ($v)"

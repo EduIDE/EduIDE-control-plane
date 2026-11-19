@@ -22,6 +22,8 @@ spec:
 {{- end }}
 {{- with .Values.monitoring.rules }}
 {{- if .enabled }}
+{{- $extra := "" }}
+{{- range $k, $v := .extraLabels }}{{ $extra = printf "%s, %s: %s" $extra $k (toJson $v) }}{{ end }}
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -31,7 +33,7 @@ metadata:
     {{- include "ecp.labels" $ | nindent 4 }}
     {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
 spec:
-  {{- $.Files.Get "files/alerts.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__FULLNAME__" $full | nindent 2 }}
+  {{- $.Files.Get "files/alerts.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__FULLNAME__" $full | replace "__EXTRA_LABELS__" $extra | nindent 2 }}
 {{- end }}
 {{- end }}
 {{- with .Values.monitoring.dashboard }}
@@ -41,6 +43,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ $full }}-dashboard
+  namespace: {{ .namespace | default $.Release.Namespace }}
   labels:
     {{- include "ecp.labels" $ | nindent 4 }}
     {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}

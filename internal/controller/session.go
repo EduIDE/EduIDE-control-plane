@@ -58,6 +58,9 @@ type sessionReconciler struct {
 	// readyWritten holds sessions whose Ready status this operator wrote but the cache does not show yet.
 	// A reconcile on the stale copy would claim the agent a second time.
 	readyWritten sync.Map
+	// failedWritten holds the failure code per session this operator wrote, so a reconcile on a stale cache
+	// does not log, count and emit the same failure again.
+	failedWritten sync.Map
 	// starts and exported hold the tracing state per session (trace.go).
 	starts, exported sync.Map
 }
@@ -130,6 +133,9 @@ func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	pod, err := r.findPod(ctx, s)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if pod != nil && pod.DeletionTimestamp != nil && s.Status.Instance == "" {
+		pod = nil // a pod released after an agent conflict, still in the cache
 	}
 	if tmplErr != nil {
 		if pod == nil && s.Status.Instance == "" {
@@ -393,6 +399,17 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	}
 	err = r.pushClaim(ctx, s, tmpl, pod, base, token, data)
 	switch {
+	case errors.Is(err, agentclient.ErrConflict) && st.StartStrategy != v1.StartCold:
+		// The pod was claimed out of band after we patched it: drop it and take the next candidate or start cold.
+		slog.WarnContext(ctx, "agent refused the claim, releasing the pod", "session", s.Name, "pod", pod.Name)
+		st.Instance, st.PodName, st.StartStrategy, st.Timestamps.Claimed = "", "", "", nil
+		if err := r.patchStatus(ctx, orig, s); err != nil {
+			return ctrl.Result{}, err
+		}
+		if err := r.Delete(ctx, pod); client.IgnoreNotFound(err) != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 200 * time.Millisecond}, nil
 	case errors.Is(err, agentclient.ErrConflict):
 		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance belongs to another session")
 	case err != nil:
@@ -626,6 +643,10 @@ func persistenceOf(s *v1.IDESession) string {
 
 // fail ends the start path for good and discards the instance.
 func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, msg string) (ctrl.Result, error) {
+	key := client.ObjectKeyFromObject(s)
+	if c, ok := r.failedWritten.Load(key); ok && c == code || s.Status.Phase == v1.SessionFailed && s.Status.ErrorCode == code {
+		return r.expire(ctx, s)
+	}
 	orig := s.DeepCopy()
 	s.Status.Phase, s.Status.ErrorCode, s.Status.Message = v1.SessionFailed, code, msg
 	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionFalse, Reason: camel(code), Message: msg,
@@ -633,6 +654,7 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 	if err := r.patchStatus(ctx, orig, s); err != nil {
 		return ctrl.Result{}, err
 	}
+	r.failedWritten.Store(key, code)
 	strategy := strategyName(s.Status.StartStrategy)
 	r.endStart(s, "failed", code)
 	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())

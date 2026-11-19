@@ -70,7 +70,7 @@ func TestHandler(t *testing.T) {
 			if rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
 				t.Error("security headers missing")
 			}
-			if rec.Header().Get("Strict-Transport-Security") != "max-age=31536000" {
+			if rec.Header().Get("Strict-Transport-Security") != "max-age=31536000; includeSubDomains" {
 				t.Error("HSTS missing")
 			}
 			if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "connect-src 'self' https://kc.example.org;") {
@@ -157,5 +157,14 @@ func TestStartReadyShutdownLines(t *testing.T) {
 func TestRequestsAreLoggedAtDebugOnly(t *testing.T) {
 	if out := runLogged(t, slog.LevelDebug); !strings.Contains(out, `"msg":"request"`) {
 		t.Errorf("no request line at debug:\n%s", out)
+	}
+}
+
+func TestHSTSSubdomainsOptOut(t *testing.T) {
+	h := setup(t, `{"keycloak":{"url":"https://kc.example.org"},"hstsIncludeSubdomains":false}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/healthz", nil))
+	if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+		t.Errorf("HSTS %q", got)
 	}
 }
