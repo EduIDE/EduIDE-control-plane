@@ -33,10 +33,10 @@ for v in "$cp"/ci/*-values.yaml; do
   out=$(helm template r "$cp" -f "$v" -n ns)
   docs() { echo "$out" | yq -o=json -I=0 "select($1)"; }
 
-  echo "$out" | grep -q 'failOpen: false' || fail "SecurityPolicy failOpen: false missing ($v)"
+  grep -q 'failOpen: false' <<<"$out" || fail "SecurityPolicy failOpen: false missing ($v)"
   [ "$(docs '.kind == "SecurityPolicy"' | wc -l)" -eq 1 ] || fail "expected one SecurityPolicy"
   [ "$(docs '.kind == "NetworkPolicy"' | wc -l)" -ge 3 ] || fail "NetworkPolicies missing ($v)"
-  ! echo "$out" | grep -qE '^kind: Ingress$' || fail "chart renders an Ingress"
+  ! grep -qE '^kind: Ingress$' <<<"$out" || fail "chart renders an Ingress"
   ok "SecurityPolicy, NetworkPolicy, no Ingress ($v)"
 
   bad=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.resources.requests.memory == null or .resources.limits.memory == null or .securityContext.readOnlyRootFilesystem != true or .securityContext.allowPrivilegeEscalation != false or .securityContext.capabilities.drop[0] != "ALL")' | wc -l)
@@ -58,7 +58,7 @@ for v in "$cp"/ci/*-values.yaml; do
   egress=$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-session-egress")')
   [ -n "$egress" ] || fail "session egress policy missing by default ($v)"
   for cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10 fc00::/7 fe80::/10; do
-    echo "$egress" | grep -q "\"$cidr\"" || fail "session egress does not deny $cidr"
+    grep -q "\"$cidr\"" <<<"$egress" || fail "session egress does not deny $cidr"
   done
   [ "$(echo "$egress" | yq -p=json '.spec.egress[1].to[0].ipBlock.cidr')" = "0.0.0.0/0" ] || fail "session egress lacks 0.0.0.0/0"
   [ "$(echo "$egress" | yq -p=json '.spec.egress[1].to[1].ipBlock.cidr')" = "::/0" ] || fail "session egress lacks ::/0"
@@ -66,9 +66,9 @@ for v in "$cp"/ci/*-values.yaml; do
   ok "default session egress ($v)"
 
   extra=$(helm template r "$cp" -f "$v" -n ns --set 'networkPolicy.sessionEgressExtraDeny={198.51.100.0/24}' | yq -o=json -I=0 'select(.metadata.name == "r-eduide-control-plane-session-egress")')
-  echo "$extra" | grep -q '198.51.100.0/24' || fail "sessionEgressExtraDeny is not rendered"
+  grep -q '198.51.100.0/24' <<<"$extra" || fail "sessionEgressExtraDeny is not rendered"
   custom=$(helm template r "$cp" -f "$v" -n ns --set 'networkPolicy.sessionEgress[0].to[0].ipBlock.cidr=203.0.113.0/24' | yq -o=json -I=0 'select(.metadata.name == "r-eduide-control-plane-session-egress")')
-  echo "$custom" | grep -q '203.0.113.0/24' && ! echo "$custom" | grep -q '10.0.0.0/8' || fail "sessionEgress does not replace the default"
+  grep -q '203.0.113.0/24' <<<"$custom" && ! grep -q '10.0.0.0/8' <<<"$custom" || fail "sessionEgress does not replace the default"
   ok "session egress extra deny and override"
 
   # Unknown instance ids pass the SecurityPolicy like existing ones: catch-all route on both hosts.
@@ -84,22 +84,22 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$(echo "$rules" | grep -c .)" -ge 10 ] || fail "alerts missing"
   [ "$(echo "$rules" | yq -p=json 'select(.labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "an alert lacks eduide_namespace"
   for a in EduIDEOperatorDown EduIDEServiceDown EduIDEAuthzDown EduIDEAgentRequestErrors; do
-    echo "$rules" | grep -q "\"$a\"" || fail "alert $a missing"
+    grep -q "\"$a\"" <<<"$rules" || fail "alert $a missing"
   done
-  ! echo "$mon" | grep -q '__NAMESPACE__\|__FULLNAME__' || fail "alert or dashboard placeholder left"
+  ! grep -q '__NAMESPACE__\|__FULLNAME__' <<<"$mon" || fail "alert or dashboard placeholder left"
   ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
-  echo "$mon" | grep -q 'label_values(eduide_sessions, namespace)' || fail "dashboard lacks the namespace variable"
+  grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
   ok "alerts and dashboard per namespace ($v)"
 
   # Admin API (U16): the service may read events and quotas, the scaler may write events, the config carries the role and the scaler interval.
   svc=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules')
-  echo "$svc" | grep -q '"events.k8s.io"' && echo "$svc" | grep -q '"resourcequotas"' || fail "service Role lacks events or resourcequotas ($v)"
+  grep -q '"events.k8s.io"' <<<"$svc" && grep -q '"resourcequotas"' <<<"$svc" || fail "service Role lacks events or resourcequotas ($v)"
   [ "$(echo "$svc" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | sort | join(",")')" = "list,watch" ] || fail "service may do more than list and watch events"
   scl=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-pool-scaler") | .rules')
   [ "$(echo "$scl" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | join(",")')" = "create" ] || fail "pool-scaler Role must only create events"
   cfg=$(echo "$out" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]')
-  echo "$cfg" | grep -q 'rolePath: realm_access.roles' || fail "oidc.admin is not rendered ($v)"
-  echo "$cfg" | grep -q 'scalerInterval: 30s' || fail "scalerInterval is not rendered with the pool scaler ($v)"
+  grep -q 'rolePath: realm_access.roles' <<<"$cfg" || fail "oidc.admin is not rendered ($v)"
+  grep -q 'scalerInterval: 30s' <<<"$cfg" || fail "scalerInterval is not rendered with the pool scaler ($v)"
   ok "admin API rules and config ($v)"
 
   # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
@@ -112,7 +112,7 @@ for c in charts/eduide-landing-page; do
   for v in "$c"/ci/*-values.yaml; do
     out=$(helm template r "$c" -f "$v")
     [ "$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.resources == null or .securityContext == null)' | wc -l)" -eq 0 ] || fail "landing page container lacks resources or securityContext"
-    echo "$out" | grep -qE '^kind: HTTPRoute$' || fail "landing page HTTPRoute missing"
+    grep -qE '^kind: HTTPRoute$' <<<"$out" || fail "landing page HTTPRoute missing"
   done
   ok "landing page"
 done
