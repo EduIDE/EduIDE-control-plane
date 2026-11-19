@@ -12,3 +12,7 @@ host: ide.e2e.test
 gateway:
   name: eduide
   namespace: eduide-e2e
+# The chart requires both legal pages; the e2e cluster uses placeholders.
+legal:
+  imprint: {url: https://example.org/imprint}
+  privacy: {markdown: "# Privacy\n\nPlaceholder for the e2e cluster."}
