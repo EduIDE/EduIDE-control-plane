@@ -103,6 +103,7 @@ The admin API also needs `telemetry.userSaltFile` (the chart sets it): owners ap
 With `prometheusURL` and the pool scaler, the status warns `scaler-silent` when the scaler's heartbeat metric `pool_scaler_last_decision_timestamp_seconds` is older than two intervals or missing; this needs `monitoring.podMonitor.enabled`.
 With `prometheusURL` the status page also shows start counts, latency, capacity and time series; without it these parts are absent.
 The service needs `list` and `watch` on events and `get` and `list` on resourcequotas; the chart grants both.
+With `poolScaler.enabled` the chart also creates a read-only ClusterRole `<release>-<namespace>-pool-scaler-nodes` (`get` and `list` on nodes and pods) for the scaler's node budget; it is the only cluster-scoped object of the deployment chart.
 
 ### Monitoring and HSTS
 
