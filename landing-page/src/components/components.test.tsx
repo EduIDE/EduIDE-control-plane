@@ -555,6 +555,52 @@ describe('Launch', () => {
     });
 });
 
+describe('Launch with a refused repository host', () => {
+    const info = { template: 'c', title: 'x', templateName: 'C', seconds: 5 };
+    const api = (problem: object): Api =>
+        ({
+            launchDeps: { launch: async () => ({ problem }), watch: async () => undefined },
+            client: { DELETE: vi.fn() }
+        }) as unknown as Api;
+
+    it('names the host instead of the raw API detail', async () => {
+        const detail = 'invalid value for key GIT_URI: host is not allowed';
+        render(
+            wrap(
+                <Launch
+                    api={api({ code: 'invalid-input', detail })}
+                    request={{ template: 'c', data: { GIT_URI: 'https://untrusted.example.org/x.git' } }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        await screen.findByText(
+            'Repositories from untrusted.example.org cannot be opened here. Ask your course team for a link to an approved repository.'
+        );
+        expect(document.body.textContent).not.toContain(detail);
+    });
+
+    it('translates other invalid input instead of showing the detail', async () => {
+        render(
+            wrap(
+                <Launch
+                    api={api({ code: 'invalid-input', detail: 'invalid value for key TEMPLATE: not a variant of this template' })}
+                    request={{ template: 'c' }}
+                    info={info}
+                    templates={[]}
+                    onBack={vi.fn()}
+                    onStartRow={vi.fn()}
+                />
+            )
+        );
+        await screen.findByText('The link contains a value this environment does not accept.');
+        expect(document.body.textContent).not.toContain('invalid value for key');
+    });
+});
+
 describe('LegalPage', () => {
     it('renders sanitized Markdown from the hosted file', async () => {
         vi.stubGlobal(

@@ -78,10 +78,14 @@ export type LaunchState =
     | { kind: 'ready'; url: string }
     | { kind: 'failed'; code: string; message?: string; sessions?: Session[] };
 
+// The service refuses a repository host outside its allowedHosts with this detail; the page names the host instead.
+const hostNotAllowed = /\bkey GIT_URI: host is not allowed\b/;
+
 export function failureFromProblem(problem: Partial<Problem> | undefined): LaunchState {
+    const refusedHost = problem?.code === 'invalid-input' && hostNotAllowed.test(problem.detail ?? '');
     return {
         kind: 'failed',
-        code: problem?.code ?? 'internal',
+        code: refusedHost ? 'host-not-allowed' : (problem?.code ?? 'internal'),
         message: problem?.detail ?? problem?.title,
         sessions: problem?.sessions
     };
@@ -109,6 +113,15 @@ export function buildTileRequest(template: Template, variantId?: string): Launch
 }
 
 export const isFinal = (s: LaunchState): boolean => s.kind === 'ready' || s.kind === 'failed';
+
+/** The host of a git URL for messages, or '' when it does not parse. */
+export function gitHost(gitUri: string | undefined): string {
+    try {
+        return gitUri ? new URL(gitUri).host : '';
+    } catch {
+        return '';
+    }
+}
 
 /** W3C trace context header for the launch, so the service joins the browser's trace. Sampled flag off: no browser exporter. */
 export function newTraceparent(random: (n: number) => Uint8Array = n => crypto.getRandomValues(new Uint8Array(n))): string {

@@ -5,7 +5,7 @@ import type { Api } from '../api';
 import type { LaunchRequest, Template } from '../api-client';
 import { clearArtemisToken } from '../artemisToken';
 import { hasMessage, type MessageKey, type Translate, useI18n } from '../i18n';
-import type { LaunchState } from '../launch';
+import { gitHost, type LaunchState } from '../launch';
 import { type Row, sessionToRow } from '../overview';
 import { runLaunch } from '../runLaunch';
 import type { LaunchInfo } from '../templates';
@@ -27,9 +27,12 @@ const STEPS: MessageKey[] = ['launch.accepted', 'launch.starting', 'launch.openi
 // The steps follow the API phases: the answer to the request, Pending and Starting, then Ready (which redirects).
 const activeStep = (state: LaunchState): number => (state.kind === 'creating' ? 0 : state.kind === 'starting' ? 1 : 2);
 
-function failureText(t: Translate, code: string, message?: string): string {
+function failureText(t: Translate, code: string, message: string | undefined, host: string): string {
     const key = `error.${code}`;
-    return hasMessage(key) ? t(key) : (message ?? t('error.generic'));
+    if (code === 'host-not-allowed' && host === '') {
+        return t('error.invalid-input');
+    }
+    return hasMessage(key) ? t(key, { host }) : (message ?? t('error.generic'));
 }
 
 /** Starts the environment, shows progress and redirects when it is ready. */
@@ -100,7 +103,7 @@ export const Launch = ({ api, request, info, templates, onBack, onStartRow }: La
         return (
             <div className='launch'>
                 <div className='alert danger' role='alert'>
-                    {failureText(t, state.code, state.message)}
+                    {failureText(t, state.code, state.message, gitHost(request.data?.GIT_URI))}
                 </div>
                 <div className='buttons'>
                     {backButton}

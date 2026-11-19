@@ -7,6 +7,7 @@ import {
     buildTileRequest,
     displaySource,
     failureFromProblem,
+    gitHost,
     newTraceparent,
     parseLaunchParams
 } from './launch';
@@ -88,6 +89,25 @@ describe('session state', () => {
         const s = failureFromProblem({ code: 'session-limit-reached', sessions: [session({})] });
         expect(s).toMatchObject({ kind: 'failed', code: 'session-limit-reached' });
         expect(s.kind === 'failed' && s.sessions).toHaveLength(1);
+    });
+
+    it('turns a refused repository host into its own code', () => {
+        expect(failureFromProblem({ code: 'invalid-input', detail: 'invalid value for key GIT_URI: host is not allowed' })).toMatchObject({
+            kind: 'failed',
+            code: 'host-not-allowed'
+        });
+        expect(failureFromProblem({ code: 'invalid-input', detail: 'invalid value for key TEMPLATE: not a variant' })).toMatchObject({
+            code: 'invalid-input'
+        });
+        expect(failureFromProblem({ code: 'unknown-key', detail: 'invalid value for key GIT_URI: host is not allowed' })).toMatchObject({
+            code: 'unknown-key'
+        });
+    });
+
+    it('reads the host of a git URL', () => {
+        expect(gitHost('https://user:secret@untrusted.example.org/x.git')).toBe('untrusted.example.org');
+        expect(gitHost('not a url')).toBe('');
+        expect(gitHost(undefined)).toBe('');
     });
 
     it('builds a traceparent', () => {

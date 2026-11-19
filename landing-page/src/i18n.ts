@@ -73,6 +73,8 @@ const en = {
     'error.unreachable': 'The service could not be reached.',
     'error.connection-lost': 'Lost the connection to the service.',
     'error.no-address': 'The environment has no valid address.',
+    'error.host-not-allowed': 'Repositories from {host} cannot be opened here. Ask your course team for a link to an approved repository.',
+    'error.invalid-input': 'The link contains a value this environment does not accept.',
     'error.generic': 'Something went wrong.',
     startFailed: 'The page could not be started. Please reload.',
     'footer.version': 'EduIDE {version}',
@@ -164,6 +166,9 @@ const de: Record<MessageKey, string> = {
     'error.unreachable': 'Der Dienst ist nicht erreichbar.',
     'error.connection-lost': 'Die Verbindung zum Dienst ist abgebrochen.',
     'error.no-address': 'Die Umgebung hat keine gültige Adresse.',
+    'error.host-not-allowed':
+        'Repositories von {host} können hier nicht geöffnet werden. Frag dein Kursteam nach einem Link zu einem freigegebenen Repository.',
+    'error.invalid-input': 'Der Link enthält einen Wert, den diese Umgebung nicht annimmt.',
     'error.generic': 'Etwas ist schiefgelaufen.',
     startFailed: 'Die Seite konnte nicht gestartet werden. Bitte lade sie neu.',
     'footer.version': 'EduIDE {version}',
