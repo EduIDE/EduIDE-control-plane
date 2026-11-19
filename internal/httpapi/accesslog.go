@@ -78,8 +78,8 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 		ctx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 		attrs := func(rec *logRecorder) []any {
 			a := []any{"method", r.Method, "route", routeLabel(r), "op", operationID(r.Pattern), "status", rec.code}
-			if info.owner != "" {
-				a = append(a, "user", s.userID(info.owner))
+			if id := s.userID(info.owner); info.owner != "" && id != "" {
+				a = append(a, "user", id)
 			}
 			return a
 		}
@@ -95,6 +95,15 @@ func (s *Server) accessLog(next http.Handler) http.Handler {
 			slog.InfoContext(ctx, "stream close", a...)
 		case rec.code >= 500:
 			slog.ErrorContext(ctx, "request", append(a, "error", string(rec.errBody))...)
+		case rec.code == http.StatusUnauthorized:
+			// Anyone can send requests without a valid token: at most 20 such lines per minute, with a count
+			// of the dropped ones, so they cannot flood the log.
+			if ok, n := s.unauthorizedLog.Allow("401"); ok {
+				if n > 0 {
+					a = append(a, "suppressed", n)
+				}
+				slog.InfoContext(ctx, "request", a...)
+			}
 		default:
 			slog.InfoContext(ctx, "request", a...)
 		}

@@ -29,11 +29,14 @@ export function parseLaunchParams(search: string): LaunchParams | undefined {
 }
 
 // The display source is not secret, so a token in the userinfo part of an Artemis git URL must not end up in it.
+// The service refuses a display source with a query or a fragment, so both are dropped as well.
 export function displaySource(gitUri: string): string {
     try {
         const u = new URL(gitUri);
         u.username = '';
         u.password = '';
+        u.search = '';
+        u.hash = '';
         return u.href;
     } catch {
         return '';

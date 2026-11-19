@@ -68,6 +68,8 @@ describe('buildLaunchRequest', () => {
         expect(parseLaunchParams('?appDef=java-17&gitUri=g&title=T')).toMatchObject({ appDef: 'java-17', gitUri: 'g', title: 'T' });
         expect(parseLaunchParams('?gitUri=g')).toBeUndefined();
         expect(displaySource('not a url')).toBe('');
+        // What the service accepts as display.source: no credentials, no query, no fragment.
+        expect(displaySource('https://u:tok@git.example.org/c/r.git?ref=x#frag')).toBe('https://git.example.org/c/r.git');
     });
 });
 

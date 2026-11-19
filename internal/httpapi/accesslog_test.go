@@ -111,3 +111,37 @@ func TestDebugLinesOnlyAtDebugLevel(t *testing.T) {
 		}
 	}
 }
+
+// Anyone can send requests without a token: they must not flood the log.
+func TestAccessLogCapsUnauthorizedLines(t *testing.T) {
+	buf := captureLogs(t, slog.LevelInfo)
+	e := newEnv(t)
+	for range 200 {
+		e.do("GET", "/sessions", "", nil)
+	}
+	e.do("GET", "/sessions", "alice", nil)
+	out := buf.String()
+	if n := strings.Count(out, `"status":401`); n != 20 {
+		t.Errorf("%d lines for 200 unauthorized requests, want 20", n)
+	}
+	if !strings.Contains(out, `"status":200`) {
+		t.Error("the request with a token is not logged")
+	}
+}
+
+// Without a salt the logs carry no user id at all: a hash without a key could be reversed.
+func TestNoUserIDWithoutSalt(t *testing.T) {
+	buf := captureLogs(t, slog.LevelDebug)
+	e := newEnv(t)
+	e.srv.salt = nil
+	e.do("POST", "/sessions", "alice", launchBody(nil))
+	e.do("GET", "/sessions", "alice", nil)
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if i := strings.Index(line, `"user":"`); i >= 0 && !strings.HasPrefix(line[i:], `"user":""`) {
+			t.Fatalf("a user id without a salt: %s", line)
+		}
+	}
+	if e.srv.userID("alice") != "" {
+		t.Fatal("userID must be empty without a salt")
+	}
+}

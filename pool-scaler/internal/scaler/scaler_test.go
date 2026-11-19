@@ -26,6 +26,8 @@ type fakeKube struct {
 	err     error
 	quota   *budget.Resources
 	patches map[string]int
+	// budgetErr and patchErr make the budget read or every patch fail.
+	budgetErr, patchErr error
 }
 
 func (f *fakeKube) Pools(context.Context) (map[string]*model.App, error) {
@@ -41,9 +43,15 @@ func (f *fakeKube) Pools(context.Context) (map[string]*model.App, error) {
 	return out, nil
 }
 func (f *fakeKube) Budget(context.Context) (*budget.Resources, *budget.Resources, error) {
+	if f.budgetErr != nil {
+		return nil, nil, f.budgetErr
+	}
 	return f.quota, nil, nil
 }
 func (f *fakeKube) PatchTargetIdle(_ context.Context, app string, v int) error {
+	if f.patchErr != nil {
+		return f.patchErr
+	}
 	f.patches[app] = v
 	return nil
 }
@@ -392,5 +400,68 @@ func TestOverrideWritesAnEvent(t *testing.T) {
 	_ = s.Tick(context.Background(), now)
 	if len(ev.got) != 1 || !strings.Contains(ev.got[0], "ScaledUp strategy override") {
 		t.Fatalf("%v", ev.got)
+	}
+}
+
+// An answer of Prometheus without any series means "not scraped", not "no demand": the pool keeps its size.
+func TestEmptyPrometheusAnswerIsUnknownDemand(t *testing.T) {
+	k := &fakeKube{apps: map[string]*model.App{"java-17": app("java-17")}, patches: map[string]int{}}
+	p := &fakeProm{rates: map[string]float64{"java-17": 0.1}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, p)
+	_ = s.Tick(context.Background(), now)
+	if k.patches["java-17"] != 8 {
+		t.Fatalf("patches %v", k.patches)
+	}
+	eight := 8
+	k.apps["java-17"].TargetIdle = &eight
+	k.patches = map[string]int{}
+	p.rates = map[string]float64{} // the scrape broke
+	for i := 1; i <= 30; i++ {     // well past every cooldown
+		_ = s.Tick(context.Background(), now.Add(time.Duration(i)*time.Minute))
+	}
+	if v, ok := k.patches["java-17"]; ok {
+		t.Fatalf("the pool was scaled to %d on an empty answer", v)
+	}
+	// Series for another template only: this template really had no claims, and the pool may shrink.
+	p.rates = map[string]float64{"other": 0.1}
+	for i := 31; i <= 90; i++ {
+		_ = s.Tick(context.Background(), now.Add(time.Duration(i)*time.Minute))
+	}
+	if v, ok := k.patches["java-17"]; !ok || v >= 8 {
+		t.Fatalf("with real zero demand the pool should shrink: %v", k.patches)
+	}
+}
+
+// A failed budget read must not turn into "no limit": the last known budget still applies.
+func TestBudgetErrorKeepsTheLastKnownBudget(t *testing.T) {
+	a := app("java-17")
+	a.Annotations = map[string]string{guardrail.AnnotationOverride: "50"}
+	k := &fakeKube{apps: map[string]*model.App{"java-17": a}, patches: map[string]int{}, quota: &budget.Resources{CPU: 6, Memory: 1e12}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 0}})
+	_ = s.Tick(context.Background(), now)
+	if k.patches["java-17"] != 10 { // the quota leaves room for 10 pods
+		t.Fatalf("patches %v", k.patches)
+	}
+	k.budgetErr = errors.New("apiserver timeout")
+	k.patches = map[string]int{}
+	_ = s.Tick(context.Background(), now.Add(time.Minute))
+	if v, ok := k.patches["java-17"]; ok && v != 10 {
+		t.Fatalf("without a budget the override went to %d", v)
+	}
+}
+
+// The heartbeat metric feeds the alert "scaler silent": it must not advance when the writes of a round fail.
+func TestHeartbeatStopsWhenPatchesFail(t *testing.T) {
+	k := &fakeKube{apps: map[string]*model.App{"java-17": app("java-17")}, patches: map[string]int{}}
+	s := newScaler(t, config.ModeActive, config.StrategyReactive, k, &fakeProm{rates: map[string]float64{"java-17": 0.1}})
+	k.patchErr = errors.New("context deadline exceeded")
+	_ = s.Tick(context.Background(), now)
+	if v := testutil.ToFloat64(s.Metrics.LastDecision); v != 0 {
+		t.Fatalf("heartbeat %v after a round whose patch failed", v)
+	}
+	k.patchErr = nil
+	_ = s.Tick(context.Background(), now.Add(time.Minute))
+	if v := testutil.ToFloat64(s.Metrics.LastDecision); v != float64(now.Add(time.Minute).Unix()) {
+		t.Fatalf("heartbeat %v after a good round", v)
 	}
 }
