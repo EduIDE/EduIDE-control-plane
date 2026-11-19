@@ -18,6 +18,7 @@ metadata:
     {{- include "ecp.labels" $ | nindent 4 }}
 spec:
   templateRef: {{ $t.name }}
-  {{- toYaml $t.pool | nindent 2 }}
+  {{- /* targetIdle belongs to the pool scaler (/scale); rendering it makes every Helm upgrade conflict with it. */}}
+  {{- toYaml (omit $t.pool "targetIdle") | nindent 2 }}
 {{- end }}
 {{- end }}

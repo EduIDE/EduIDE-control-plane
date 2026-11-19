@@ -118,7 +118,7 @@ templates: []
 #     displayName: Java
 #     image: registry.example.org/ide/java:latest
 #     persistence: {allowed: [ephemeral], default: ephemeral}
-#   pool: {minIdle: 1, targetIdle: 2, maxInstances: 20}
+#   pool: {minIdle: 1, maxInstances: 20}   # targetIdle is left to the pool scaler
 
 # Network isolation (ADR 0019). Needs a CNI that enforces NetworkPolicies.
 networkPolicy:
@@ -162,6 +162,7 @@ poolScaler:
   logLevel: info
   image:
     repository: ghcr.io/eduide/eduide-control-plane/pool-scaler
+    # Defaults to image.tag, then the chart appVersion, like the other components.
     tag: ""
   # Rendered into /etc/pool-scaler/config.yaml, see pool-scaler/examples/config.yaml.
   mode: shadow

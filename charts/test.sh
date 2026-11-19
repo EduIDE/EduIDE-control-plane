@@ -92,6 +92,11 @@ for v in "$cp"/ci/*-values.yaml; do
   ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
   grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
   grep -q 'alert: EduIDECertificateNotReady' <<<"$mon" || fail "certificate alerts missing"
+  ps=$(helm template r "$cp" -f "$v" -n ns --set poolScaler.enabled=true --set image.tag=sha-abc1234)
+  grep -q 'pool-scaler:sha-abc1234' <<<"$ps" || fail "pool scaler ignores image.tag"
+  tp=$(helm template r "$cp" -f "$v" -n ns --set 'templates[0].name=t' --set 'templates[0].spec.image=i' --set 'templates[0].pool.minIdle=1' --set 'templates[0].pool.targetIdle=2' --set 'templates[0].pool.maxInstances=3')
+  ! grep -q 'targetIdle' <<<"$tp" || fail "chart renders spec.targetIdle, which the pool scaler owns"
+  grep -q 'name: r-eduide-control-plane-ns-pool-scaler-nodes\|pool-scaler-nodes' <<<"$ps" && grep -q 'kind: ClusterRoleBinding' <<<"$ps" || fail "pool scaler lacks its read-only node ClusterRole"
   ok "alerts and dashboard per namespace ($v)"
 
   mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
