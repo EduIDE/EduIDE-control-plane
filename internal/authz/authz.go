@@ -221,6 +221,8 @@ func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string,
 	if late := time.Since(tok.Expiry); late > 0 {
 		sid, _ := claims["sid"].(string)
 		if late > expiredGrace || !sameLogin(refresh, tok.Subject, sid) {
+			slog.DebugContext(ctx, "expired id token not refreshable", "late_s", int(late.Seconds()),
+				"refresh_cookies", len(refresh), "refresh_jwts", countJWTs(refresh), "id_token_sid", sid != "")
 			return "", &oidc.TokenExpiredError{Expiry: tok.Expiry}
 		}
 	}
@@ -253,6 +255,17 @@ func sameLogin(refresh []string, sub, sid string) bool {
 		}
 	}
 	return true
+}
+
+// countJWTs counts the values that look like a JWT, for the debug log; it never logs a value.
+func countJWTs(values []string) int {
+	n := 0
+	for _, v := range values {
+		if strings.Count(v, ".") == 2 {
+			n++
+		}
+	}
+	return n
 }
 
 // login builds the redirect that restarts the login; it falls back to a 403 for odd hosts or paths.
