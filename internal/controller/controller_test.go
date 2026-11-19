@@ -89,11 +89,17 @@ func TestColdStartCreatesInstance(t *testing.T) {
 	if len(pod.Spec.Containers) != 2 || pod.Spec.Containers[0].Name != "ide" || pod.Spec.Containers[1].Name != "agent" {
 		t.Fatalf("containers: %+v", pod.Spec.Containers)
 	}
-	prefix := ""
+	prefix, idCookie := "", ""
 	for _, e := range pod.Spec.Containers[1].Env {
-		if e.Name == "AGENT_PATH_PREFIX" {
+		switch e.Name {
+		case "AGENT_PATH_PREFIX":
 			prefix = e.Value
+		case "AGENT_ID_TOKEN_COOKIE":
+			idCookie = e.Value
 		}
+	}
+	if idCookie != testIDTokenCookie {
+		t.Errorf("AGENT_ID_TOKEN_COOKIE = %q, want the configured cookie name %q", idCookie, testIDTokenCookie)
 	}
 	if prefix != "/"+pod.Labels[v1.LabelInstance]+"/" {
 		t.Errorf("AGENT_PATH_PREFIX = %q, want /<instance>/", prefix)
@@ -1241,4 +1247,85 @@ func TestWorkspaceVolumeLost(t *testing.T) {
 	}
 	createSession(t, "s-lost", "tpl-lost", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-lost" })
 	eventually(t, "session fails", func() bool { return sessionStatus("s-lost").ErrorCode == v1.ErrorWorkspaceLost })
+}
+
+// The service reuses the session name for the same launch key. A relaunch right after a stop meets the pod of
+// the stopped session, which still terminates and carries the same session label: it is not the new instance.
+func TestRelaunchWhileOldPodTerminates(t *testing.T) {
+	requireEnv(t)
+	ctx := context.Background()
+	mustCreate(t, newTemplate("tpl-relaunch"))
+	const name = "s-relaunch"
+	createSession(t, name, "tpl-relaunch")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus(name); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus(name).Phase == v1.SessionReady })
+
+	// envtest has no kubelet: a finalizer holds the old pod in Terminating, as the grace period does.
+	old := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(old); err != nil {
+		t.Fatal(err)
+	}
+	old.Finalizers = append(old.Finalizers, "test.example.org/terminating")
+	if err := k8s.Update(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if get(old) == nil {
+			old.Finalizers = nil
+			_ = k8s.Update(ctx, old)
+		}
+	})
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+	if err := k8s.Delete(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "session gone", func() bool { return notFound(s) })
+	_ = k8s.Delete(ctx, old) // envtest has no garbage collector either
+	_ = k8s.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-data", Namespace: testNS}})
+
+	createSession(t, name, "tpl-relaunch")
+	eventually(t, "new pod", func() bool {
+		st = sessionStatus(name)
+		return st.PodName != "" && st.PodName != old.Name
+	})
+	setReady(t, st.PodName)
+	eventually(t, "ready again", func() bool {
+		st = sessionStatus(name)
+		if st.Phase == v1.SessionFailed {
+			t.Fatalf("the relaunch failed: %s %q", st.ErrorCode, st.Message)
+		}
+		return st.Phase == v1.SessionReady
+	})
+	// The old pod stays around for a while; the session must keep its own instance.
+	time.Sleep(time.Second)
+	if st = sessionStatus(name); st.Phase != v1.SessionReady || st.PodName == old.Name {
+		t.Fatalf("phase %s on pod %s (old pod %s): %q", st.Phase, st.PodName, old.Name, st.Message)
+	}
+}
+
+// An evicted pod keeps its object in phase Failed. The session must not stay Ready with a dead URL.
+func TestReadySessionFailsWhenPodFails(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-evict"))
+	createSession(t, "s-evict", "tpl-evict")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-evict"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-evict").Phase == v1.SessionReady })
+
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Status.Phase, p.Status.Reason = corev1.PodFailed, "Evicted"
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.Now()}}
+	if err := k8s.Status().Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "start-failed", func() bool {
+		st = sessionStatus("s-evict")
+		return st.Phase == v1.SessionFailed && st.ErrorCode == v1.ErrorStartFailed
+	})
 }

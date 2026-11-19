@@ -23,8 +23,14 @@ type Client struct {
 	HTTP *http.Client
 }
 
-// New returns a client with a short timeout; callers retry.
-func New() *Client { return &Client{HTTP: &http.Client{Timeout: 5 * time.Second}} }
+// New returns a client with a short timeout; callers retry. It never follows a redirect: whatever answers on
+// the control port of a session pod must not send the operator, and the claim body, to another address.
+func New() *Client {
+	return &Client{HTTP: &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
+}
 
 // Claim pushes the launch data once. The data is never logged or put into errors.
 func (c *Client) Claim(ctx context.Context, base, token string, req agentapi.ClaimRequest) error {

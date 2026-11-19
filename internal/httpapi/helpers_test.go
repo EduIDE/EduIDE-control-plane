@@ -45,7 +45,7 @@ func testConfig() *config.Config {
 	return &config.Config{
 		Namespace: testNS, SessionsPerUser: 3, AllowedHosts: []string{"git.example.org"},
 		RateLimit:  config.RateLimit{LaunchesPerMinute: 100},
-		Workspaces: config.Workspaces{Grace: &metav1.Duration{Duration: 24 * time.Hour}},
+		Workspaces: config.Workspaces{Grace: &metav1.Duration{Duration: 24 * time.Hour}, PerUser: 20},
 		Overview:   config.Overview{TitleStripPattern: `-[a-z]{2}[0-9]{2}[a-z]{3}$`},
 	}
 }

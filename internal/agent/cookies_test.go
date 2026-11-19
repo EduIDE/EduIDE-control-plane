@@ -23,3 +23,31 @@ func TestStripAuthCookies(t *testing.T) {
 		}
 	}
 }
+
+// The ID token cookie has a configurable name (oidc.idTokenCookie); the agent must strip that one, too.
+func TestStripCookieAddsTheConfiguredName(t *testing.T) {
+	saved := authCookiePrefixes
+	t.Cleanup(func() { authCookiePrefixes = saved })
+	h := http.Header{"Cookie": {"uni-id=ID.TOKEN.JWT; theme=dark"}}
+	stripAuthCookies(h)
+	if got := h.Get("Cookie"); got != "uni-id=ID.TOKEN.JWT; theme=dark" {
+		t.Fatalf("before: %q", got)
+	}
+	StripCookie("uni-id")
+	StripCookie("uni-id")
+	StripCookie("eduide-id")
+	StripCookie("")
+	if len(authCookiePrefixes) != len(saved)+1 {
+		t.Fatalf("list: %v", authCookiePrefixes)
+	}
+	stripAuthCookies(h)
+	if got := h.Get("Cookie"); got != "theme=dark" {
+		t.Fatalf("after: %q", got)
+	}
+	// Cookies the IDE sets under that name are dropped as well.
+	rh := http.Header{"Set-Cookie": {"uni-id=x; Path=/", "theme=dark"}}
+	scopeCookies(rh, "/abc/")
+	if got := rh.Values("Set-Cookie"); len(got) != 1 || got[0] != "theme=dark" {
+		t.Fatalf("set-cookie: %q", got)
+	}
+}

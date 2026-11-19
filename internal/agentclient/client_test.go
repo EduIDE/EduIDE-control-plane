@@ -61,3 +61,25 @@ func TestClient(t *testing.T) {
 		t.Error("want connection error")
 	}
 }
+
+// A session pod is student territory: whatever answers on its control port must not redirect the operator
+// (and the claim body with the launch data) to another address.
+func TestClientDoesNotFollowRedirects(t *testing.T) {
+	reached := false
+	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true }))
+	defer target.Close()
+	for _, code := range []int{http.StatusFound, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		pod := httptest.NewServer(http.RedirectHandler(target.URL+"/elsewhere", code))
+		c, ctx := New(), context.Background()
+		if err := c.Claim(ctx, pod.URL, "tok", agentapi.ClaimRequest{Session: "s", Data: map[string]string{"K": "v"}}); err == nil {
+			t.Errorf("claim answered with %d: want an error", code)
+		}
+		if _, err := c.Status(ctx, pod.URL, "tok"); err == nil {
+			t.Errorf("status answered with %d: want an error", code)
+		}
+		pod.Close()
+	}
+	if reached {
+		t.Fatal("the client followed a redirect")
+	}
+}

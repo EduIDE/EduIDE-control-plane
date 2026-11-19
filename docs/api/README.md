@@ -23,7 +23,7 @@ Admin changes go through Helm values and the CRDs; there is no write endpoint.
 
 ## Errors
 
-Errors are RFC 9457 Problem Details with stable codes, for example `capacity-exhausted` and `session-limit-reached`. A client matches on the code, never on the text.
+Errors are RFC 9457 Problem Details with stable codes, for example `capacity-exhausted`, `session-limit-reached` and `workspace-limit-reached` (the user holds `workspaces.perUser` workspaces and must delete one first). A client matches on the code, never on the text.
 
 ## Versioning rules
 

@@ -111,6 +111,7 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 	if len(s.salt) > 0 {
 		attrs = append(attrs, attribute.String("eduide.user_id", telemetry.UserID(s.salt, u.Owner)))
 	}
+	defer s.lockOwner(u.Owner)()
 	p, perr := phase(ctx, "validate", attrs, func(ctx context.Context) (*launchPlan, *apiError) { return s.validate(ctx, u, req) })
 	if perr != nil {
 		return nil, false, perr
@@ -134,7 +135,48 @@ func (s *Server) launch(ctx context.Context, u auth.User, req *LaunchRequest) (*
 			return nil, false, problem(CodeWorkspaceLost, "the volume of the workspace is gone")
 		}
 	}
-	return s.createSession(ctx, attrs, u.Owner, &p.tpl, ws, p.key, p.data, p.display)
+	sess, created, perr := s.createSession(ctx, attrs, u.Owner, &p.tpl, ws, p.key, p.data, p.display)
+	if perr == nil && created {
+		perr = s.overLimit(ctx, u.Owner, sess)
+	}
+	if perr != nil {
+		return nil, false, perr
+	}
+	return sess, created, nil
+}
+
+// overLimit closes the gap between the session count in validate and the create for launches that ran in
+// another replica at the same time (lockOwner covers this one). With the new session over the limit, it stays
+// only if fewer than the limit are as old or older; otherwise it is deleted again. On equal timestamps every
+// one of them goes: the limit holds, and the client retries.
+func (s *Server) overLimit(ctx context.Context, owner string, sess *v1alpha1.IDESession) *apiError {
+	sessions, err := s.ownedSessions(ctx, s.w, owner)
+	if err != nil {
+		return internalError(err)
+	}
+	var before []v1alpha1.IDESession
+	for i := range sessions {
+		if o := &sessions[i]; o.Name != sess.Name && isActive(o) && !o.CreationTimestamp.After(sess.CreationTimestamp.Time) {
+			before = append(before, *o)
+		}
+	}
+	if len(before) < s.cfg.SessionsPerUser {
+		return nil
+	}
+	if err := s.w.Delete(ctx, sess); client.IgnoreNotFound(err) != nil {
+		return internalError(err)
+	}
+	return s.sessionLimit(ctx, before)
+}
+
+func (s *Server) sessionLimit(ctx context.Context, running []v1alpha1.IDESession) *apiError {
+	e := problem(CodeSessionLimit, "session limit reached")
+	e.sessions = []Session{}
+	for i := range running {
+		e.sessions = append(e.sessions, s.sessionAPI(ctx, &running[i]))
+	}
+	slices.SortFunc(e.sessions, func(a, b Session) int { return strings.Compare(a.Name, b.Name) })
+	return e
 }
 
 func persistenceOfSession(s *v1alpha1.IDESession) string {
@@ -205,13 +247,7 @@ func (s *Server) validate(ctx context.Context, u auth.User, req *LaunchRequest) 
 		running = append(running, sessions[i])
 	}
 	if len(running) >= s.cfg.SessionsPerUser {
-		e := problem(CodeSessionLimit, "session limit reached")
-		e.sessions = []Session{}
-		for i := range running {
-			e.sessions = append(e.sessions, s.sessionAPI(ctx, &running[i]))
-		}
-		slices.SortFunc(e.sessions, func(a, b Session) int { return strings.Compare(a.Name, b.Name) })
-		return nil, e
+		return nil, s.sessionLimit(ctx, running)
 	}
 
 	return &launchPlan{tpl: tpl, display: display, data: data, wsName: wsName, createWS: createWS, key: key}, nil
@@ -300,6 +336,21 @@ func (s *Server) ensureWorkspace(ctx context.Context, name, owner, template stri
 	var ws v1alpha1.IDEWorkspace
 	err := s.r.Get(ctx, key, &ws)
 	if apierrors.IsNotFound(err) {
+		// Each workspace is a volume. Live read with the owner label, as for sessions: the cache may lag behind
+		// a workspace this user created a moment ago.
+		var owned v1alpha1.IDEWorkspaceList
+		if err := s.w.List(ctx, &owned, client.InNamespace(s.cfg.Namespace), client.MatchingLabels{v1alpha1.LabelOwnerHash: v1alpha1.OwnerHash(owner)}); err != nil {
+			return nil, internalError(err)
+		}
+		n := 0
+		for i := range owned.Items {
+			if o := &owned.Items[i]; o.Spec.Owner == owner && o.DeletionTimestamp == nil {
+				n++
+			}
+		}
+		if n >= s.cfg.Workspaces.PerUser {
+			return nil, problem(CodeWorkspaceLimit, "workspace limit reached, delete a workspace first")
+		}
 		ws = v1alpha1.IDEWorkspace{
 			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: s.cfg.Namespace, Labels: managedLabels(owner, map[string]string{v1alpha1.LabelTemplate: template})},
 			Spec: v1alpha1.IDEWorkspaceSpec{
