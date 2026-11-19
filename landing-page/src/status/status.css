@@ -1,0 +1,178 @@
+.status {
+    max-width: 760px;
+    margin: 0 auto;
+}
+
+.status h2 {
+    display: block;
+}
+
+.status section + section {
+    margin-top: 28px;
+}
+
+.hero {
+    border-radius: 14px;
+    padding: 22px;
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.hero.ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+}
+
+.hero.warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+}
+
+.hero.danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.hero svg {
+    width: 34px;
+    height: 34px;
+    flex: none;
+}
+
+.hero h1 {
+    font-size: 22px;
+}
+
+.hero p {
+    margin: 2px 0 0;
+    color: var(--text-2);
+    font-size: 14px;
+}
+
+.status .list .row {
+    flex-wrap: wrap;
+}
+
+.icon-box {
+    width: 36px;
+    height: 36px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    display: grid;
+    place-items: center;
+    flex: none;
+    color: var(--text-2);
+}
+
+.icon-box svg {
+    width: 18px;
+    height: 18px;
+}
+
+.status-tag {
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 999px;
+    padding: 2px 9px;
+    white-space: nowrap;
+    display: inline-flex;
+    gap: 5px;
+    align-items: center;
+}
+
+.status-tag svg {
+    width: 13px;
+    height: 13px;
+}
+
+.status-tag.ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+}
+
+.status-tag.warn {
+    background: var(--warn-soft);
+    color: var(--warn);
+}
+
+.status-tag.danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.pool-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-2);
+}
+
+.ok-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex: none;
+}
+
+.waits {
+    display: grid;
+    gap: 2px;
+    text-align: right;
+    font-size: 13px;
+    color: var(--text-2);
+}
+
+.wait-line {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.wait-line .k {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    color: var(--text-3);
+    font-size: 12px;
+}
+
+.wait-line .k svg {
+    width: 13px;
+    height: 13px;
+}
+
+.wait-line b {
+    min-width: 72px;
+    text-align: right;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.wait-line b.slow {
+    color: var(--warn);
+}
+
+.note {
+    font-size: 13px;
+    color: var(--text-3);
+    margin: 8px 2px 0;
+}
+
+@media (max-width: 560px) {
+    .hero {
+        padding: 18px;
+    }
+
+    .status .waits {
+        width: 100%;
+    }
+
+    .wait-line {
+        justify-content: space-between;
+    }
+}

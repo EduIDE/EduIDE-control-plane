@@ -1,4 +1,5 @@
 import { createControlPlaneClient, type Overview, readEvents, type Session } from './api-client';
+import type { AdminSessionList, AdminStatus } from './apiTypes';
 import { newTraceparent } from './launch';
 import type { LaunchDeps } from './runLaunch';
 
@@ -6,6 +7,8 @@ export interface Api {
     client: ReturnType<typeof createControlPlaneClient>;
     launchDeps: LaunchDeps;
     watchOverview: (onOverview: (o: Overview) => void, signal: AbortSignal) => Promise<void>;
+    watchAdminStatus: (on: (s: AdminStatus) => void, signal: AbortSignal) => Promise<void>;
+    watchAdminSessions: (on: (s: AdminSessionList) => void, signal: AbortSignal) => Promise<void>;
 }
 
 export function createApi(baseUrl: string, token: () => Promise<string>): Api {
@@ -27,6 +30,8 @@ export function createApi(baseUrl: string, token: () => Promise<string>): Api {
         client,
         launchDeps,
         watchOverview: (onOverview: (o: Overview) => void, signal: AbortSignal) =>
-            stream<Overview>('/me/overview/events', 'overview', onOverview, signal)
+            stream<Overview>('/me/overview/events', 'overview', onOverview, signal),
+        watchAdminStatus: (on, signal) => stream<AdminStatus>('/admin/status/events', 'status', on, signal),
+        watchAdminSessions: (on, signal) => stream<AdminSessionList>('/admin/sessions/events', 'sessions', on, signal)
     };
 }

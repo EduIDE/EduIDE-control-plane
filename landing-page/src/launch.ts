@@ -1,8 +1,5 @@
 import type { LaunchRequest, Problem, Session, Template } from './api-client';
-
-export function persistenceHint(ephemeral: boolean): string {
-    return ephemeral ? 'Files are lost when the session ends.' : 'Files are kept between sessions.';
-}
+import { httpHref } from './url';
 
 export interface LaunchParams {
     appDef: string;
@@ -74,57 +71,57 @@ export function buildLaunchRequest(params: LaunchParams, template: Template): La
     return request;
 }
 
+/** `message` is the service's own text, shown only when the page has no translation for the code. */
 export type LaunchState =
     | { kind: 'creating' }
     | { kind: 'starting'; session: Session }
     | { kind: 'ready'; url: string }
-    | { kind: 'failed'; code: string; message: string; sessions?: Session[] };
+    | { kind: 'failed'; code: string; message?: string; sessions?: Session[] };
 
-const MESSAGES: Record<string, string> = {
-    'capacity-exhausted': 'The cluster is full right now. Please try again in a few minutes.',
-    'session-limit-reached': 'You reached the maximum number of running sessions. Stop one of them to start another.',
-    'persistence-not-allowed': 'This environment does not support the requested storage mode.',
-    'template-not-found': 'This environment does not exist.',
-    'start-failed': 'The session could not be started.',
-    'rate-limited': 'Too many requests. Please wait a moment and try again.',
-    unauthorized: 'Your login expired. Reload the page to sign in again.',
-    forbidden: 'You are not allowed to start this session.'
-};
+// The service refuses a repository host outside its allowedHosts with this detail; the page names the host instead.
+const hostNotAllowed = /\bkey GIT_URI: host is not allowed\b/;
 
 export function failureFromProblem(problem: Partial<Problem> | undefined): LaunchState {
-    const code = problem?.code ?? 'internal';
+    const refusedHost = problem?.code === 'invalid-input' && hostNotAllowed.test(problem.detail ?? '');
     return {
         kind: 'failed',
-        code,
-        message: MESSAGES[code] ?? problem?.detail ?? problem?.title ?? 'Something went wrong.',
+        code: refusedHost ? 'host-not-allowed' : (problem?.code ?? 'internal'),
+        message: problem?.detail ?? problem?.title,
         sessions: problem?.sessions
     };
-}
-
-// Only http(s) targets: the URL comes from the API, but a redirect to javascript: must never be possible.
-function safeUrl(url: string | undefined): string | undefined {
-    try {
-        const u = new URL(url ?? '');
-        return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
-    } catch {
-        return undefined;
-    }
 }
 
 /** The state machine step: every session event maps to the next state. Ready and Failed are final. */
 export function applySession(session: Session): LaunchState {
     if (session.phase === 'Ready') {
-        const url = safeUrl(session.url);
-        return url ? { kind: 'ready', url } : { kind: 'failed', code: 'internal', message: 'The session has no valid address.' };
+        const url = httpHref(session.url);
+        return url ? { kind: 'ready', url } : { kind: 'failed', code: 'no-address' };
     }
     if (session.phase === 'Failed') {
-        const code = session.errorCode ?? 'start-failed';
-        return { kind: 'failed', code, message: MESSAGES[code] ?? session.message ?? MESSAGES['start-failed'] };
+        return { kind: 'failed', code: session.errorCode ?? 'start-failed', message: session.message };
     }
     return { kind: 'starting', session };
 }
 
+/** Launches a template, optionally with one of its project templates (only if the template accepts `TEMPLATE`). */
+export function buildTileRequest(template: Template, variantId?: string): LaunchRequest {
+    const request = buildLaunchRequest({ appDef: template.name }, template);
+    if (variantId && template.injectableKeys.includes('TEMPLATE')) {
+        request.data = { ...request.data, TEMPLATE: variantId };
+    }
+    return request;
+}
+
 export const isFinal = (s: LaunchState): boolean => s.kind === 'ready' || s.kind === 'failed';
+
+/** The host of a git URL for messages, or '' when it does not parse. */
+export function gitHost(gitUri: string | undefined): string {
+    try {
+        return gitUri ? new URL(gitUri).host : '';
+    } catch {
+        return '';
+    }
+}
 
 /** W3C trace context header for the launch, so the service joins the browser's trace. Sampled flag off: no browser exporter. */
 export function newTraceparent(random: (n: number) => Uint8Array = n => crypto.getRandomValues(new Uint8Array(n))): string {

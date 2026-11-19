@@ -8,10 +8,17 @@ The section of a version becomes the notes of its GitHub Release.
 ### Changes
 
 - The landing page runs on the control plane REST API (`@eduide/control-plane-client`) instead of Theia Cloud; sessions are followed through server-sent events
-- New overview at `/me/overview` with running sessions and workspaces
+- New home page: your environments on top (also at `/me/overview`), new environments as tiles below, with start time, saved or temporary workspace, what an image includes and project templates; English and German; no Artemis wording; colors follow the system setting (the theme switch is gone)
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
 - Runtime config is `/config.json`, served by a small Go static server that replaces nginx
-- Imprint and privacy texts are no longer part of the page: set `legal.imprintUrl` and `legal.privacyUrl` in `config.json` to show footer links to your own pages; the `privacy` config and the `/imprint` and `/privacy` routes are removed
+- Imprint and privacy are mandatory: `config.json` needs `legal.imprint` and `legal.privacy` (an external `url` or a hosted Markdown `path`), the chart needs `legal.imprint` and `legal.privacy` values. `legal.imprintUrl` and `legal.privacyUrl` are removed. `/imprint` and `/privacy` render the Markdown without a login
+- New public status page at `/status` (no login) and read-only admin panel at `/admin` (lazy loaded, needs the admin role); the footer links to `/status`
+- The status page lists every template (a warm template is instant for temporary workspaces even without an estimate), and the connection banner appears only after about 10 s without a stream
+- The environment list retries `/templates` with a growing pause until it works (and asks again when the event stream comes back), so the tiles appear after a service outage without a reload
+- Language and build tool logos are part of the bundle (`src/assets/logos`, resolved by `src/logos.ts`); an API `logoUrl` counts only as a same-origin path, absolute addresses are ignored. The logo files moved out of `public/`
+- The "Admin" menu entry is looked up when the avatar menu first opens, not on every page load
+- `footerLinks.attribution.text` and `.url` are no longer used; the footer shows "EduIDE" plus `attribution.version`
+- The footer is the same on every page (GitHub, bug report, imprint, privacy) and sits at the bottom of the viewport; `footerLinks.github` is new
 - The browser tab title comes from `config.title` (index.html says "EduIDE" until then)
 - Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
 

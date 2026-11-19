@@ -1,9 +1,13 @@
 export interface FooterLinksConfig {
     attribution?: { text?: string; url?: string; version?: string };
+    github?: { url: string };
     bugReport?: { text: string; url: string; target?: string; rel?: string };
     featureRequest?: { text: string; url: string; target?: string; rel?: string };
     about?: { text: string; url: string; target?: string; rel?: string };
 }
+
+/** A legal page is either an external page (`url`) or a Markdown file served by the landing page (`path`). */
+export type LegalPage = { url: string } | { path: string };
 
 /** Runtime config served as /config.json by the landing page server. */
 export interface AppConfig {
@@ -13,8 +17,7 @@ export interface AppConfig {
     /** Reserved: the deployment still runs the pre control plane API. Not used by this page. */
     legacy?: boolean;
     footerLinks?: FooterLinksConfig;
-    /** Links to the operator's legal pages. A footer link shows only when its URL is set. */
-    legal?: { imprintUrl?: string; privacyUrl?: string };
+    legal: { imprint: LegalPage; privacy: LegalPage };
 }
 
 function isHttpUrl(value: unknown): boolean {
@@ -25,18 +28,39 @@ function isHttpUrl(value: unknown): boolean {
     }
 }
 
+function parseLegalPage(name: string, raw: unknown): LegalPage {
+    const entry = raw as { url?: unknown; path?: unknown } | undefined;
+    const hasUrl = entry?.url !== undefined;
+    const hasPath = entry?.path !== undefined;
+    if (hasUrl === hasPath) {
+        throw new Error(`config.json: legal.${name} needs exactly one of url or path`);
+    }
+    if (hasUrl) {
+        if (!isHttpUrl(entry?.url)) {
+            throw new Error(`config.json: legal.${name}.url must be an http(s) URL`);
+        }
+        return { url: entry?.url as string };
+    }
+    // Only the two files the server knows, so a config can never point the page at another path.
+    if (entry?.path !== `/legal/${name}.md`) {
+        throw new Error(`config.json: legal.${name}.path must be /legal/${name}.md`);
+    }
+    return { path: entry.path };
+}
+
 export function parseConfig(raw: unknown): AppConfig {
     const c = raw as Partial<AppConfig> | undefined;
     if (!c || typeof c.apiBaseUrl !== 'string' || !c.keycloak?.url || !c.keycloak.realm || !c.keycloak.clientId) {
         throw new Error('config.json needs apiBaseUrl and keycloak.url, keycloak.realm, keycloak.clientId');
     }
-    for (const key of ['imprintUrl', 'privacyUrl'] as const) {
-        const url = c.legal?.[key];
+    for (const key of ['github', 'bugReport', 'featureRequest', 'about'] as const) {
+        const url = c.footerLinks?.[key]?.url;
         if (url !== undefined && !isHttpUrl(url)) {
-            throw new Error(`config.json: legal.${key} must be an http(s) URL`);
+            throw new Error(`config.json: footerLinks.${key}.url must be an http(s) URL`);
         }
     }
-    return c as AppConfig;
+    const legal = { imprint: parseLegalPage('imprint', c.legal?.imprint), privacy: parseLegalPage('privacy', c.legal?.privacy) };
+    return { ...c, legal } as AppConfig;
 }
 
 export async function loadConfig(): Promise<AppConfig> {

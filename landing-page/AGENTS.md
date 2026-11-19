@@ -11,8 +11,15 @@ src/main.tsx             startup order: fragment capture, config.json, Keycloak,
 src/artemisToken.ts      #artemisToken handling (G16)
 src/launch.ts            launch request, state mapping, traceparent
 src/runLaunch.ts         launch state machine: POST, follow SSE, reconnect
-src/overview.ts          overview rows (G15)
+src/overview.ts           environment rows and delete (G15)
+src/i18n.ts, I18nProvider.tsx  English and German strings, language choice
+src/legal.ts             /imprint and /privacy routes, sanitized Markdown
+src/templates.ts         start time lines and launch info from templates
+src/logos.ts           logo lookup: bundled files by name, then language prefix
 src/api.ts               control plane client and SSE streams
+src/routes.ts            what a path shows: home, legal, status, admin
+src/status/              public status page (no login, lazy)
+src/admin/               admin panel (login and role, lazy, own messages and CSS)
 src/api-client/          committed copy of clients/typescript/src, never edit (npm run sync-client)
 src/components/          presentational and page components
 server/                  Go static server (own module, stdlib only)
@@ -24,5 +31,10 @@ server/                  Go static server (own module, stdlib only)
 - Launch data (token, git URL) never goes into logs, `display` (credentials are stripped from `display.source`), URLs or localStorage.
 - The `display` fields are shown to the user, so they must stay non-secret.
 - Runtime config comes only from the served config.json. Nothing is baked in at build time.
+- The legal pages and the footer render before Keycloak (`main.tsx`), so they work without a login.
+- `/status` and `/admin` are lazy chunks. The admin and status strings live in their own dictionaries (`admin/messages.ts`, `status/messages.ts`), so they stay out of the main bundle.
+- Never run Prettier over `src/api-client` (see `.prettierignore`): `npm run check-client` fails on a reformatted copy.
+- Logos are bundled (`src/assets/logos`, `src/logos.ts`); never load an image from another origin. An API `logoUrl` is used only as a same-origin path.
+- Every UI string exists in English and German in `i18n.ts`; no emojis, icons come from `lucide-react`; the GitHub mark is an inline SVG in `components/Icons.tsx`.
 - Prettier with 4-space indent, `simple-import-sort` and `no-null` are errors, warnings are fatal.
 - Run `npm run lint`, `npm test`, `npm run build` and `cd server && go test ./...`.

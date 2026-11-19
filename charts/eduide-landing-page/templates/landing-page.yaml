@@ -1,3 +1,32 @@
+{{- /* Both legal pages are mandatory: exactly one of url or markdown each. Checked here as well, so --skip-schema-validation cannot bypass it. */}}
+{{- if hasKey .Values.config "legal" }}
+{{- fail "config.legal was removed: set legal.imprint and legal.privacy (each with url or markdown)" }}
+{{- end }}
+{{- $cfg := deepCopy .Values.config }}
+{{- $legalCfg := dict }}
+{{- $files := dict }}
+{{- range $key := list "imprint" "privacy" }}
+{{- $entry := get ($.Values.legal | default dict) $key }}
+{{- if not (kindIs "map" $entry) }}
+{{- fail (printf "legal.%s is required: set exactly one of url or markdown" $key) }}
+{{- end }}
+{{- if eq (hasKey $entry "url") (hasKey $entry "markdown") }}
+{{- fail (printf "legal.%s needs exactly one of url or markdown" $key) }}
+{{- end }}
+{{- if hasKey $entry "url" }}
+{{- if not (and (kindIs "string" $entry.url) (regexMatch "^https?://[^\\s]+$" $entry.url)) }}
+{{- fail (printf "legal.%s.url must be an http or https URL" $key) }}
+{{- end }}
+{{- $_ := set $legalCfg $key (dict "url" $entry.url) }}
+{{- else }}
+{{- if not (and (kindIs "string" $entry.markdown) $entry.markdown) }}
+{{- fail (printf "legal.%s.markdown must be a non-empty string" $key) }}
+{{- end }}
+{{- $_ := set $legalCfg $key (dict "path" (printf "/legal/%s.md" $key)) }}
+{{- $_ := set $files (printf "%s.md" $key) $entry.markdown }}
+{{- end }}
+{{- end }}
+{{- $_ := set $cfg "legal" $legalCfg }}
 {{- $name := printf "%s-landing-page" .Release.Name | trunc 63 | trimSuffix "-" }}
 {{- $labels := dict "app.kubernetes.io/name" "eduide-landing-page" "app.kubernetes.io/instance" .Release.Name }}
 apiVersion: v1
@@ -8,7 +37,10 @@ metadata:
     {{- toYaml $labels | nindent 4 }}
 data:
   config.json: |
-    {{- .Values.config | toPrettyJson | nindent 4 }}
+    {{- $cfg | toPrettyJson | nindent 4 }}
+  {{- range $file, $text := $files }}
+  {{ $file }}: {{ $text | toJson }}
+  {{- end }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -26,7 +58,7 @@ spec:
       labels:
         {{- toYaml $labels | nindent 8 }}
       annotations:
-        checksum/config: {{ .Values.config | toJson | sha256sum }}
+        checksum/config: {{ dict "config" $cfg "files" $files | toJson | sha256sum }}
     spec:
       securityContext:
         runAsNonRoot: true

@@ -1,7 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Session, Template } from './api-client';
-import { applySession, buildLaunchRequest, displaySource, failureFromProblem, newTraceparent, parseLaunchParams } from './launch';
+import {
+    applySession,
+    buildLaunchRequest,
+    buildTileRequest,
+    displaySource,
+    failureFromProblem,
+    gitHost,
+    newTraceparent,
+    parseLaunchParams
+} from './launch';
 import { runLaunch } from './runLaunch';
 
 const template: Template = {
@@ -48,6 +57,13 @@ describe('buildLaunchRequest', () => {
         expect(buildLaunchRequest({ appDef: 'x', persistence: 'weird' }, template).persistence).toBeUndefined();
     });
 
+    it('sends the chosen project template only when the template accepts TEMPLATE', () => {
+        const withKey = { ...template, injectableKeys: ['TEMPLATE'] };
+        expect(buildTileRequest(withKey, 'maven')).toEqual({ template: 'java-17', data: { TEMPLATE: 'maven' } });
+        expect(buildTileRequest(withKey, '')).toEqual({ template: 'java-17' });
+        expect(buildTileRequest(template, 'maven')).toEqual({ template: 'java-17' });
+    });
+
     it('reads the link parameters', () => {
         expect(parseLaunchParams('?appDef=java-17&gitUri=g&title=T')).toMatchObject({ appDef: 'java-17', gitUri: 'g', title: 'T' });
         expect(parseLaunchParams('?gitUri=g')).toBeUndefined();
@@ -73,6 +89,25 @@ describe('session state', () => {
         const s = failureFromProblem({ code: 'session-limit-reached', sessions: [session({})] });
         expect(s).toMatchObject({ kind: 'failed', code: 'session-limit-reached' });
         expect(s.kind === 'failed' && s.sessions).toHaveLength(1);
+    });
+
+    it('turns a refused repository host into its own code', () => {
+        expect(failureFromProblem({ code: 'invalid-input', detail: 'invalid value for key GIT_URI: host is not allowed' })).toMatchObject({
+            kind: 'failed',
+            code: 'host-not-allowed'
+        });
+        expect(failureFromProblem({ code: 'invalid-input', detail: 'invalid value for key TEMPLATE: not a variant' })).toMatchObject({
+            code: 'invalid-input'
+        });
+        expect(failureFromProblem({ code: 'unknown-key', detail: 'invalid value for key GIT_URI: host is not allowed' })).toMatchObject({
+            code: 'unknown-key'
+        });
+    });
+
+    it('reads the host of a git URL', () => {
+        expect(gitHost('https://user:secret@untrusted.example.org/x.git')).toBe('untrusted.example.org');
+        expect(gitHost('not a url')).toBe('');
+        expect(gitHost(undefined)).toBe('');
     });
 
     it('builds a traceparent', () => {
@@ -136,9 +171,9 @@ describe('runLaunch', () => {
         await runLaunch(
             { launch: async () => ({ session: session({}) }), watch: async () => undefined, delay: noDelay },
             { template: 't' },
-            s => (last = s.kind === 'failed' ? s.message : s.kind),
+            s => (last = s.kind === 'failed' ? s.code : s.kind),
             new AbortController().signal
         );
-        expect(last).toContain('Lost the connection');
+        expect(last).toBe('connection-lost');
     });
 });
