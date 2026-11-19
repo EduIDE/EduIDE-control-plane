@@ -392,6 +392,16 @@ tr.click:focus-visible {
     margin-bottom: 0;
 }
 
+/* A panel whose neighbour is hidden (no data yet) takes the whole row instead of leaving a gap. */
+.a-cols > :only-child {
+    grid-column: 1 / -1;
+}
+
+/* The landing page spaces stacked sections apart; in the admin grids that pushes every later column down. */
+.admin section.a-panel + section.a-panel {
+    margin-top: 0;
+}
+
 .a-panel {
     background: var(--surface);
     border: 1px solid var(--border);
