@@ -34,6 +34,7 @@ for v in "$cp"/ci/*-values.yaml; do
   docs() { echo "$out" | yq -o=json -I=0 "select($1)"; }
 
   grep -q 'failOpen: false' <<<"$out" || fail "SecurityPolicy failOpen: false missing ($v)"
+  grep -q 'name: Sec-Fetch-Mode, type: RegularExpression' <<<"$out" || fail "OIDC denyRedirect for non-navigation requests missing ($v)"
   grep -q 'value: "^/api/v1/.\*/events$"' <<<"$out" || fail "no SSE route rule without request timeout ($v)"
   [ "$(docs '.kind == "SecurityPolicy"' | wc -l)" -eq 1 ] || fail "expected one SecurityPolicy"
   [ "$(docs '.kind == "NetworkPolicy"' | wc -l)" -ge 3 ] || fail "NetworkPolicies missing ($v)"

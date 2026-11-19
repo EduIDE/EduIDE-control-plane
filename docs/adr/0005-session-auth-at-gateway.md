@@ -97,12 +97,20 @@ The SecurityPolicy therefore sets `oidc.disableTokenEncryption: true`.
 The cookies stay `Secure` and `HttpOnly` and are scoped to the instance host.
 The agent strips all gateway login cookies (`eduide-id`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.
 
-## Amendment 2026-11-19: expired ID token with a refresh token
+## Amendment 2026-11-19: expired ID token with a refresh token, no redirect for XHR
 
 Case (b) cleared the cookies of every request with an expired ID token.
 Because ext_authz runs before oauth2, the oauth2 filter never got to refresh the tokens with `refreshToken: true`.
 A page navigation survived this through a silent Keycloak round trip, but XHR and WebSocket reconnects of an open IDE cannot follow a redirect to Keycloak (CORS), so the IDE lost its connection once the ID token expired (found on test3, Keycloak ID token lifetime 5 minutes).
-authz now accepts an ID token whose signature, issuer and audience verify and which expired less than 12 hours ago, but only when the request also carries a non-empty `RefreshToken*` cookie.
-The ownership check (c) is unchanged.
-The oauth2 filter that follows refreshes the tokens and sets new cookies, or restarts the login when Keycloak refuses the refresh, so an ended Keycloak session still ends access.
-Without a refresh token cookie, or later than 12 hours, case (b) applies as before.
+Worse, every redirect sets two new login flow cookies (`OauthNonce-*.<flow>`, `CodeVerifier.<flow>`, Max-Age 600); an IDE that retried every second pushed the browser past Envoy's limit of 100 request headers (`http2.too_many_headers`) and locked it out of every session on the instance host for 10 minutes.
+
+Two changes:
+
+- authz accepts an ID token whose signature, issuer and audience verify and which expired less than 12 hours ago, when the request carries refresh token cookies (`RefreshToken*`) and every one of them is a JWT with the same `sub` and, when both carry one, the same `sid` as the ID token.
+  authz reads the refresh token payload without verifying it; Keycloak verifies it when the oauth2 filter uses it.
+  The binding stops a user from pairing someone else's expired ID token with their own valid refresh token.
+  The ownership check (c) is unchanged.
+  The oauth2 filter that follows refreshes the tokens and sets new cookies, or restarts the login when Keycloak refuses the refresh, so an ended Keycloak session still ends access.
+  Without a matching refresh token, with an opaque one, or later than 12 hours, case (b) applies as before.
+- The SecurityPolicy sets `oidc.denyRedirect` for requests with `Sec-Fetch-Mode` `cors`, `no-cors`, `same-origin` or `websocket`: they get a 401 instead of a login redirect and no flow cookies.
+  Page navigations (`navigate`) still log in through the redirect.

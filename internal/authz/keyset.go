@@ -117,6 +117,7 @@ func Verifier(p *oidc.Provider, clientID string, client *http.Client, interval t
 		}
 	}
 	ks := &KeySet{URL: c.JWKS, Client: client, Interval: interval}
-	// Server.owner checks the expiry itself, see expiredGrace.
+	// Server.owner checks the expiry itself, see expiredGrace. The flag also skips the nbf check, which Keycloak
+	// does not set.
 	return oidc.NewVerifier(c.Issuer, ks, &oidc.Config{ClientID: clientID, SupportedSigningAlgs: algs, SkipExpiryCheck: true}), nil
 }

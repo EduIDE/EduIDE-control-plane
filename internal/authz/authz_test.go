@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -104,13 +105,20 @@ func (i *issuer) token(t testing.TB, key *rsa.PrivateKey, iss, aud, user string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	claims := map[string]any{"preferred_username": user}
+	claims := map[string]any{"preferred_username": user, "sid": "s1"}
 	s, err := jwt.Signed(sig).Claims(jwt.Claims{Issuer: iss, Audience: jwt.Audience{aud}, Subject: "sub",
 		Expiry: jwt.NewNumericDate(time.Now().Add(exp)), IssuedAt: jwt.NewNumericDate(time.Now().Add(-2 * time.Hour))}).Claims(claims).Serialize()
 	if err != nil {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// refreshJWT builds a Keycloak-style refresh token. authz reads its payload only, so the signature is a dummy.
+func refreshJWT(sub, sid string) string {
+	enc := base64.RawURLEncoding.EncodeToString
+	p, _ := json.Marshal(map[string]string{"sub": sub, "sid": sid, "typ": "Refresh"})
+	return enc([]byte(`{"alg":"HS512"}`)) + "." + enc(p) + ".c2ln"
 }
 
 type fakeSessions struct {
@@ -167,7 +175,8 @@ func TestDecisionTable(t *testing.T) {
 	}}
 	s := newServer(t, iss, sessions)
 	good := idCookie + "=" + iss.token(t, nil, "", "", "alice", 0)
-	refresh := "RefreshToken-abc=r"
+	refresh := "RefreshToken-abc=" + refreshJWT("sub", "s1")
+	expired := idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute)
 	tests := []struct {
 		name, path, cookie string
 		result, reason     string
@@ -184,11 +193,17 @@ func TestDecisionTable(t *testing.T) {
 		{"unrelated cookies", "/" + instanceA + "/", "a=b; theme=dark", "allow", "no-cookie", 0},
 		{"BearerToken only, no id token", "/" + instanceA + "/", "BearerToken=x", "login", "invalid-token", typev3.StatusCode_Found},
 		{"expired token", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
-		{"expired token with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "allow", "owner", 0},
-		{"expired token with empty refresh cookie", "/" + instanceA + "/", "RefreshToken-abc=; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with refresh token of the same login", "/" + instanceA + "/", refresh + "; " + expired, "allow", "owner", 0},
+		{"expired token with refresh token without sid", "/" + instanceA + "/", "RefreshToken-abc=" + refreshJWT("sub", "") + "; " + expired, "allow", "owner", 0},
+		{"expired token with two matching refresh cookies", "/" + instanceA + "/", refresh + "; RefreshToken-def=" + refreshJWT("sub", "s1") + "; " + expired, "allow", "owner", 0},
+		{"expired token with a second, foreign refresh cookie", "/" + instanceA + "/", refresh + "; RefreshToken-def=" + refreshJWT("other-sub", "s1") + "; " + expired, "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with refresh token of another user", "/" + instanceA + "/", "RefreshToken-abc=" + refreshJWT("other-sub", "s9") + "; " + expired, "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with refresh token of another login session", "/" + instanceA + "/", "RefreshToken-abc=" + refreshJWT("sub", "s2") + "; " + expired, "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with an opaque refresh token", "/" + instanceA + "/", "RefreshToken-abc=opaque; " + expired, "login", "invalid-token", typev3.StatusCode_Found},
+		{"expired token with empty refresh cookie", "/" + instanceA + "/", "RefreshToken-abc=; " + expired, "login", "invalid-token", typev3.StatusCode_Found},
 		{"expired token beyond grace with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "alice", -expiredGrace-time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
 		{"expired token with bad signature and refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, otherKey, "", "", "alice", -time.Minute), "login", "invalid-token", typev3.StatusCode_Found},
-		{"expired foreign token with refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "mallory", -time.Minute), "deny", "not-owner", typev3.StatusCode_Forbidden},
+		{"expired foreign token with its refresh cookie", "/" + instanceA + "/", refresh + "; " + idCookie + "=" + iss.token(t, nil, "", "", "mallory", -time.Minute), "deny", "not-owner", typev3.StatusCode_Forbidden},
 		{"wrong audience", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "", "other", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
 		{"wrong issuer", "/" + instanceA + "/", idCookie + "=" + iss.token(t, nil, "https://evil.example.org", "", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
 		{"bad signature", "/" + instanceA + "/", idCookie + "=" + iss.token(t, otherKey, "", "", "alice", 0), "login", "invalid-token", typev3.StatusCode_Found},
@@ -435,5 +450,26 @@ func TestCheckSpanOnlyForSampledParent(t *testing.T) {
 		if tc.want == 1 && ended[0].Name() != "authz.check" {
 			t.Errorf("span name %q", ended[0].Name())
 		}
+	}
+}
+
+func TestTokenWithoutExpiryIsRefused(t *testing.T) {
+	iss := newIssuer(t)
+	s := newServer(t, iss, fakeSessions{by: map[string][]v1alpha1.IDESession{
+		instanceA: {session("alice", instanceA, v1alpha1.SessionReady, false)},
+	}})
+	sig, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: iss.signingKey()}, (&jose.SignerOptions{}).WithType("JWT").WithHeader("kid", "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := jwt.Signed(sig).Claims(jwt.Claims{Issuer: iss.srv.URL, Audience: jwt.Audience{clientID}, Subject: "sub"}).
+		Claims(map[string]any{"preferred_username": "alice", "sid": "s1"}).Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := "RefreshToken-abc=" + refreshJWT("sub", "s1") + "; " + idCookie + "=" + raw
+	d, _ := s.decide(context.Background(), req("/"+instanceA+"/", cookie).GetAttributes().GetRequest().GetHttp())
+	if d.result != "login" {
+		t.Fatalf("got %s/%s, want login", d.result, d.reason)
 	}
 }
