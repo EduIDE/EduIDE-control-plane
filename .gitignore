@@ -5,3 +5,4 @@ dist/
 *.out
 .DS_Store
 /.e2e-run*.log
+docs/architecture/diagrams/*.drawio
