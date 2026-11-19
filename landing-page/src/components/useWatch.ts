@@ -6,13 +6,15 @@ export const LOST_AFTER_MS = 10_000;
 /**
  * Follows an event stream: it starts with the current state, and reconnects with a growing pause when it drops.
  * `lost` turns true only when reconnecting has failed for `LOST_AFTER_MS`, and turns false with the next event.
+ * `recovered` counts the reconnects that brought an event after the stream had dropped.
  */
 export function useWatch<T>(
     watch: (on: (data: T) => void, signal: AbortSignal) => Promise<void>,
     enabled = true
-): { data?: T; lost: boolean } {
+): { data?: T; lost: boolean; recovered: number } {
     const [data, setData] = useState<T>();
     const [lost, setLost] = useState(false);
+    const [recovered, setRecovered] = useState(0);
 
     useEffect(() => {
         if (!enabled) {
@@ -20,6 +22,7 @@ export function useWatch<T>(
         }
         const controller = new AbortController();
         let wait = 1000;
+        let dropped = false;
         let lostTimer: ReturnType<typeof setTimeout> | undefined;
         const clearLostTimer = (): void => {
             clearTimeout(lostTimer);
@@ -30,6 +33,10 @@ export function useWatch<T>(
                 try {
                     await watch(d => {
                         wait = 1000;
+                        if (dropped) {
+                            dropped = false;
+                            setRecovered(n => n + 1);
+                        }
                         clearLostTimer();
                         setLost(false);
                         setData(d);
@@ -42,6 +49,7 @@ export function useWatch<T>(
                 if (controller.signal.aborted) {
                     return;
                 }
+                dropped = true;
                 lostTimer ??= setTimeout(() => setLost(true), LOST_AFTER_MS);
                 await new Promise(resolve => setTimeout(resolve, wait));
                 wait = Math.min(wait * 2, 15000);
@@ -56,5 +64,5 @@ export function useWatch<T>(
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [enabled]);
 
-    return { data, lost };
+    return { data, lost, recovered };
 }

@@ -14,6 +14,7 @@ The section of a version becomes the notes of its GitHub Release.
 - Imprint and privacy are mandatory: `config.json` needs `legal.imprint` and `legal.privacy` (an external `url` or a hosted Markdown `path`), the chart needs `legal.imprint` and `legal.privacy` values. `legal.imprintUrl` and `legal.privacyUrl` are removed. `/imprint` and `/privacy` render the Markdown without a login
 - New public status page at `/status` (no login) and read-only admin panel at `/admin` (lazy loaded, needs the admin role); the footer links to `/status`
 - The status page lists every template (a warm template is instant for temporary workspaces even without an estimate), and the connection banner appears only after about 10 s without a stream
+- The environment list retries `/templates` with a growing pause until it works (and asks again when the event stream comes back), so the tiles appear after a service outage without a reload
 - Language and build tool logos are part of the bundle (`src/assets/logos`, resolved by `src/logos.ts`); an API `logoUrl` counts only as a same-origin path, absolute addresses are ignored. The logo files moved out of `public/`
 - The "Admin" menu entry is looked up when the avatar menu first opens, not on every page load
 - `footerLinks.attribution.text` and `.url` are no longer used; the footer shows "EduIDE" plus `attribution.version`

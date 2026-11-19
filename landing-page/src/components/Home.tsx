@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { Api } from '../api';
 import type { LaunchRequest, Template } from '../api-client';
@@ -18,14 +18,23 @@ interface HomeProps {
     firstName?: string;
     onLaunch: (request: LaunchRequest, template: Template) => void;
     onStartRow: (row: Row) => void;
+    /** The overview stream came back after a drop: a good moment to ask for the templates again. */
+    onReconnect?: () => void;
 }
 
 type Dialogs = { kind: 'info' | 'pick'; template: Template } | undefined;
 
 /** Your environments on top, new ones below. Both `/` and `/me/overview` show this page. */
-export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow }: HomeProps): React.JSX.Element => {
+export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, onReconnect }: HomeProps): React.JSX.Element => {
     const { t } = useI18n();
-    const { overview, lost } = useOverview(api);
+    const { overview, lost, recovered } = useOverview(api);
+    const reconnect = useRef(onReconnect);
+    reconnect.current = onReconnect;
+    useEffect(() => {
+        if (recovered > 0) {
+            reconnect.current?.();
+        }
+    }, [recovered]);
     const [dialog, setDialog] = useState<Dialogs>();
     const now = useNow();
     const rows = overview ? toRows(overview, now) : undefined;
@@ -57,9 +66,13 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow }:
                     {t('section.mine')} {returning && <small>{rows?.length}</small>}
                 </h2>
                 {!rows ? (
-                    <p role='status' className='sub'>
-                        {t('loading.mine')}
-                    </p>
+                    // The alert above already says what is wrong, so the loading text would contradict it.
+                    !error &&
+                    !lost && (
+                        <p role='status' className='sub'>
+                            {t('loading.mine')}
+                        </p>
+                    )
                 ) : returning ? (
                     <EnvironmentRows rows={rows} api={api} onStart={onStartRow} now={now} />
                 ) : (

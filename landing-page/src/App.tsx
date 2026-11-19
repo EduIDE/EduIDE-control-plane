@@ -3,11 +3,12 @@ import './App.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Api } from './api';
-import type { LaunchRequest, Template } from './api-client';
+import type { LaunchRequest } from './api-client';
 import { readArtemisToken } from './artemisToken';
 import { Home } from './components/Home';
 import { Launch } from './components/Launch';
 import { Shell } from './components/Shell';
+import { useTemplates } from './components/useTemplates';
 import type { AppConfig } from './config';
 import { useI18n } from './i18n';
 import { buildLaunchRequest, parseLaunchParams } from './launch';
@@ -25,25 +26,11 @@ interface AppProps {
 function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     const { t } = useI18n();
     const [launch, setLaunch] = useState<{ request: LaunchRequest; info: LaunchInfo }>();
-    const [templates, setTemplates] = useState<Template[]>();
-    const [error, setError] = useState<string>();
+    const { templates, error: templatesError, reload } = useTemplates(api, t('templatesFailed'));
+    const [linkError, setLinkError] = useState<string>();
+    const error = linkError ?? templatesError;
     const [admin, setAdmin] = useState(false);
     const link = useMemo(() => parseLaunchParams(window.location.search), []);
-
-    useEffect(() => {
-        api.client
-            .GET('/templates')
-            .then(({ data, error: problem }) => {
-                if (data) {
-                    setTemplates(data);
-                } else {
-                    setError(problem?.detail ?? problem?.title ?? t('templatesFailed'));
-                }
-            })
-            .catch(console.error);
-        // The message language does not need to restart the request.
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [api]);
 
     // The menu entry is a convenience: the service checks the role again on every admin request. The check runs the
     // first time the menu opens, so students do not cause a 403 on every page load.
@@ -77,7 +64,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
         }
         const template = templates.find(tpl => tpl.name === link.appDef);
         if (!template) {
-            setError(t('unknownTemplate', { name: link.appDef }));
+            setLinkError(t('unknownTemplate', { name: link.appDef }));
             return;
         }
         const request = buildLaunchRequest(
@@ -125,6 +112,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
                     firstName={user?.firstName}
                     onLaunch={request => begin(request)}
                     onStartRow={startRow}
+                    onReconnect={reload}
                 />
             )}
         </Shell>

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Api } from './api';
@@ -53,5 +53,75 @@ describe('admin menu entry', () => {
         await openMenu(code);
         expect(screen.queryByRole('link', { name: 'Admin' })).toBeNull();
         screen.getByRole('link', { name: 'Sign out' });
+    });
+});
+
+describe('templates after an outage', () => {
+    it('keeps asking, then shows the tiles and drops the alert, and hides the loading text meanwhile', async () => {
+        vi.useFakeTimers();
+        try {
+            const java = { name: 'java-17', displayName: 'Java 17', persistence: ['none'], defaultPersistence: 'none', injectableKeys: [] };
+            const get = vi
+                .fn()
+                .mockResolvedValueOnce({ response: { status: 503 }, error: { title: 'Service Unavailable', status: 503 } })
+                .mockResolvedValue({ data: [java], response: { status: 200 } });
+            const api = { client: { GET: get }, watchOverview: () => new Promise<void>(() => undefined) } as unknown as Api;
+            render(
+                <I18nProvider initial='en'>
+                    <App config={config} api={api} user={{ initials: 'AS', label: 'Alex (ga1)' }} />
+                </I18nProvider>
+            );
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            screen.getByRole('alert');
+            screen.getByText('Service Unavailable');
+            expect(screen.queryByText('Loading your environments...')).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Start Java 17' })).toBeNull();
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1000);
+            });
+            screen.getByRole('button', { name: 'Start Java 17' });
+            expect(screen.queryByRole('alert')).toBeNull();
+            screen.getByText('Loading your environments...');
+            expect(get.mock.calls.filter(c => c[0] === '/templates')).toHaveLength(2);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it('asks again when the overview stream comes back after a drop', async () => {
+        vi.useFakeTimers();
+        try {
+            let streams = 0;
+            const get = vi.fn().mockResolvedValue({ data: [], response: { status: 200 } });
+            const api = {
+                client: { GET: get },
+                watchOverview: async (on: (o: unknown) => void) => {
+                    streams += 1;
+                    on({ items: [] });
+                    if (streams === 1) {
+                        throw new Error('dropped');
+                    }
+                    await new Promise<void>(() => undefined);
+                }
+            } as unknown as Api;
+            render(
+                <I18nProvider initial='en'>
+                    <App config={config} api={api} user={{ initials: 'AS', label: 'Alex (ga1)' }} />
+                </I18nProvider>
+            );
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            expect(get.mock.calls.filter(c => c[0] === '/templates')).toHaveLength(1);
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(1000);
+            });
+            expect(streams).toBe(2);
+            expect(get.mock.calls.filter(c => c[0] === '/templates')).toHaveLength(2);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 });
