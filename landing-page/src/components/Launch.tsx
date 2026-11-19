@@ -32,6 +32,10 @@ function failureText(t: Translate, code: string, message: string | undefined, ho
     if (code === 'host-not-allowed' && host === '') {
         return t('error.invalid-input');
     }
+    // The service names the key and the rule that failed (never the value); show it so a wrong link can be reported.
+    if (code === 'invalid-input' && message) {
+        return `${t('error.invalid-input')} (${message})`;
+    }
     return hasMessage(key) ? t(key, { host }) : (message ?? t('error.generic'));
 }
 

@@ -140,7 +140,10 @@ func validateValue(k v1alpha1.InjectableKey, val string, allowedHosts []string) 
 	switch k.Format {
 	case v1alpha1.FormatHTTPSURL:
 		u, err := url.Parse(val)
-		if err != nil || u.Scheme != "https" || u.User != nil || u.Hostname() == "" {
+		if err != nil || u.Scheme != "https" || u.Hostname() == "" {
+			return errors.New("must be an https URL")
+		}
+		if u.User != nil && !k.AllowCredentials {
 			return errors.New("must be an https URL without credentials")
 		}
 		if !slices.ContainsFunc(allowedHosts, func(h string) bool { return strings.EqualFold(h, u.Hostname()) }) {
@@ -168,6 +171,17 @@ func validateValue(k v1alpha1.InjectableKey, val string, allowedHosts []string) 
 }
 
 // validateDisplay checks the non-secret display fields; the source must carry no credentials.
+// withoutCredentials drops user:password from a URL, so a GIT_URI with an Artemis VCS token can still name its
+// repository in display.source (which users and the admin API see) without the token.
+func withoutCredentials(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
+}
+
 func validateDisplay(d *Display) *apiError {
 	if d == nil {
 		return nil

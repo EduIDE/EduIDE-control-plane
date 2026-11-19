@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Api } from './api';
 import type { LaunchRequest } from './api-client';
-import { readArtemisToken } from './artemisToken';
+import { clearArtemisToken, readArtemisToken, readGitUri } from './artemisToken';
 import { Home } from './components/Home';
 import { Launch } from './components/Launch';
 import { Shell } from './components/Shell';
@@ -21,6 +21,14 @@ interface AppProps {
     api: Api;
     user?: UserInfo;
     logoutUrl?: string;
+}
+
+function forgetLaunchData(): void {
+    try {
+        clearArtemisToken(window.sessionStorage);
+    } catch {
+        // Blocked storage holds nothing.
+    }
 }
 
 function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
@@ -59,16 +67,26 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     // A link from Artemis (?appDef=...) starts right away once the templates are known. Launches are idempotent (G14),
     // so a reload returns to the same session.
     useEffect(() => {
-        if (!link || !templates) {
+        if (!link) {
+            // No launch link: launch data a former link left behind must not end up in a later launch.
+            forgetLaunchData();
+            return;
+        }
+        if (!templates) {
             return;
         }
         const template = templates.find(tpl => tpl.name === link.appDef);
         if (!template) {
+            forgetLaunchData();
             setLinkError(t('unknownTemplate', { name: link.appDef }));
             return;
         }
         const request = buildLaunchRequest(
-            { ...link, artemisToken: readArtemisToken(window.location.search, window.sessionStorage) },
+            {
+                ...link,
+                gitUri: readGitUri(window.location.search, window.sessionStorage),
+                artemisToken: readArtemisToken(window.location.search, window.sessionStorage)
+            },
             template
         );
         setLaunch({ request, info: buildLaunchInfo(template, request) });

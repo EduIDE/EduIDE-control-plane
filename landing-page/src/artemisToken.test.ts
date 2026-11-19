@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { captureArtemisToken, clearArtemisToken, readArtemisToken } from './artemisToken';
+import { captureArtemisToken, clearArtemisToken, readArtemisToken, readGitUri } from './artemisToken';
 
 describe('artemis token fragment', () => {
     beforeEach(() => sessionStorage.clear());
@@ -33,5 +33,52 @@ describe('artemis token fragment', () => {
         expect(readArtemisToken('?artemisToken=q', sessionStorage, warn)).toBe('q');
         expect(warn).toHaveBeenCalledOnce();
         expect(warn.mock.calls[0][0]).not.toContain('q');
+    });
+
+    it('moves gitUri with credentials out of the fragment, before Keycloak sees it', () => {
+        const url = captureArtemisToken(
+            {
+                hash: '#artemisToken=t&gitUri=https%3A%2F%2Fu%3Avcs@artemis.example.org%2Fgit%2Fx.git',
+                search: '?appDef=java',
+                pathname: '/'
+            },
+            sessionStorage
+        );
+        expect(url).toBe('/?appDef=java');
+        expect(readGitUri('?appDef=java', sessionStorage)).toBe('https://u:vcs@artemis.example.org/git/x.git');
+        clearArtemisToken(sessionStorage);
+        expect(sessionStorage.length).toBe(0);
+    });
+
+    it('captures a gitUri fragment without a token', () => {
+        expect(captureArtemisToken({ hash: '#gitUri=https%3A%2F%2Fh%2Fr.git', search: '', pathname: '/' }, sessionStorage)).toBe('/');
+        expect(readGitUri('', sessionStorage)).toBe('https://h/r.git');
+    });
+
+    it('prefers the fragment gitUri over the query one', () => {
+        sessionStorage.setItem('eduide.gitUri', 'https://fragment/r.git');
+        expect(readGitUri('?gitUri=https://query/r.git', sessionStorage)).toBe('https://fragment/r.git');
+    });
+
+    it('reads gitUri from the query, and warns only when it carries credentials', () => {
+        const warn = vi.fn();
+        expect(readGitUri('?gitUri=https://github.com/a/b.git', sessionStorage, warn)).toBe('https://github.com/a/b.git');
+        expect(warn).not.toHaveBeenCalled();
+        expect(readGitUri('?gitUri=https://u:secret@h/r.git', sessionStorage, warn)).toBe('https://u:secret@h/r.git');
+        expect(warn).toHaveBeenCalledOnce();
+        expect(warn.mock.calls[0][0]).not.toContain('secret');
+    });
+
+    it('strips the fragment even when storage refuses the value', () => {
+        const store = {
+            setItem: () => {
+                throw new Error('quota');
+            }
+        } as unknown as Storage;
+        const url = captureArtemisToken(
+            { hash: '#artemisToken=t&gitUri=https%3A%2F%2Fu%3As@h%2Fr.git', search: '?appDef=c', pathname: '/' },
+            store
+        );
+        expect(url).toBe('/?appDef=c');
     });
 });

@@ -8,7 +8,7 @@ The page a student lands on (experimental). Vite and React SPA on the control pl
 
 ```
 src/main.tsx             startup order: fragment capture, config.json, Keycloak, render
-src/artemisToken.ts      #artemisToken handling (G16)
+src/artemisToken.ts      #artemisToken and #gitUri handling (G16, Artemis#14702)
 src/launch.ts            launch request, state mapping, traceparent
 src/runLaunch.ts         launch state machine: POST, follow SSE, reconnect
 src/overview.ts           environment rows and delete (G15)
@@ -27,7 +27,7 @@ server/                  Go static server (own module, stdlib only)
 
 ## Rules
 
-- `captureFromWindow` must run before `initKeycloak`: keycloak-js uses the fragment and Keycloak rejects fragments in redirect URIs.
+- `captureFromWindow` must run before `initKeycloak`: keycloak-js uses the fragment and Keycloak rejects fragments in redirect URIs. It moves `artemisToken` and `gitUri` (which can carry VCS credentials) into sessionStorage.
 - Launch data (token, git URL) never goes into logs, `display` (credentials are stripped from `display.source`), URLs or localStorage.
 - The `display` fields are shown to the user, so they must stay non-secret.
 - Runtime config comes only from the served config.json. Nothing is baked in at build time.

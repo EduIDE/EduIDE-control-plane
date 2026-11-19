@@ -57,3 +57,12 @@ Chosen option: "allowlist per template".
 
 - Good, because closed by default.
 - Bad, because stricter for template authors.
+
+## Amendment 2026-11-19: repository URLs with credentials (Artemis#14702)
+
+Artemis passes the student's repository URL with a VCS token in the user info, `https://<user>:<vcs-token>@<artemis-host>/git/...`, and puts it into the URL fragment next to the Artemis token.
+The landing page moves `gitUri` out of the fragment into `sessionStorage` before Keycloak starts, exactly like `artemisToken`, and deletes both once the launch is done; `?gitUri` in the query still works and logs a deprecation warning when it carries credentials.
+A key rule gets `allowCredentials` (only with `format: HTTPSURL`, enforced by CEL): with it the service accepts user info in the URL, with it the host allowlist and the `https` rule still apply.
+The value reaches only the launch data Secret: `display.source` gets the URL without user info, and the problem detail and the launch log name the key and the rule that failed, never the value.
+Deployments set it only for `GIT_URI` of templates that Artemis opens.
+

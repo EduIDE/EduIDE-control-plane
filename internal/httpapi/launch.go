@@ -70,7 +70,8 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 	telemetry.Launches.WithLabelValues(template, "rejected").Inc()
 	// The detail names keys and rules, never values.
 	slog.DebugContext(ctx, "launch rejected", "template", template, "code", string(perr.code), "detail", perr.detail)
-	slog.InfoContext(ctx, "launch", "template", template, "result", "rejected", "code", string(perr.code), "user", s.userID(u.Owner))
+	// The detail names the key and the rule that failed, never a value (validateData and problem() keep it so).
+	slog.InfoContext(ctx, "launch", "template", template, "result", "rejected", "code", string(perr.code), "detail", perr.detail, "user", s.userID(u.Owner))
 	writeProblem(w, perr)
 }
 
@@ -175,7 +176,7 @@ func (s *Server) validate(ctx context.Context, u auth.User, req *LaunchRequest) 
 		display = v1alpha1.Display{Title: deref(req.Display.Title), Source: deref(req.Display.Source)}
 	}
 	if display.Source == "" {
-		if src := data["GIT_URI"]; validateDisplay(&Display{Source: &src}) == nil {
+		if src := withoutCredentials(data["GIT_URI"]); validateDisplay(&Display{Source: &src}) == nil {
 			display.Source = src
 		}
 	}
@@ -246,7 +247,8 @@ func (s *Server) resolvePersistence(ctx context.Context, owner string, tpl *v1al
 	if name != "" {
 		return name, false, nil
 	}
-	src := data["GIT_URI"]
+	// Without user info: a new Artemis VCS token for the same repository must reattach the same workspace.
+	src := withoutCredentials(data["GIT_URI"])
 	if src == "" {
 		src = display.Source
 	}

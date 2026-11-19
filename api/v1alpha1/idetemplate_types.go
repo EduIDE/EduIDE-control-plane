@@ -35,6 +35,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="self.source != 'Request' || has(self.format)",message="format is required for keys from the request"
 // +kubebuilder:validation:XValidation:rule="!has(self.format) || self.format != 'Enum' || size(self.values) > 0",message="Enum needs values"
 // +kubebuilder:validation:XValidation:rule="!has(self.format) || self.format != 'Pattern' || size(self.pattern) > 0",message="Pattern needs pattern"
+// +kubebuilder:validation:XValidation:rule="!has(self.allowCredentials) || !self.allowCredentials || (has(self.format) && self.format == 'HTTPSURL')",message="allowCredentials needs format HTTPSURL"
 type InjectableKey struct {
 	// +kubebuilder:validation:Pattern=`^[A-Z][A-Z0-9_]{0,63}$`
 	Name string `json:"name"`
@@ -57,6 +58,10 @@ type InjectableKey struct {
 	Pattern string `json:"pattern,omitempty"`
 	// +optional
 	Required bool `json:"required,omitempty"`
+	// AllowCredentials accepts user:password in an HTTPSURL value, for example Artemis repository URLs with a VCS
+	// token. The host allowlist still applies; the value only ever reaches the launch data Secret.
+	// +optional
+	AllowCredentials bool `json:"allowCredentials,omitempty"`
 }
 
 // EnvVar is a static environment variable. There is deliberately no valueFrom (G18).

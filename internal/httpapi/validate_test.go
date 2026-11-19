@@ -146,3 +146,50 @@ func FuzzDecodeLaunchRequest(f *testing.F) {
 		}
 	})
 }
+
+func TestAllowCredentials(t *testing.T) {
+	tpl := &v1alpha1.IDETemplate{Spec: v1alpha1.IDETemplateSpec{InjectableKeys: []v1alpha1.InjectableKey{
+		{Name: "GIT_URI", Format: v1alpha1.FormatHTTPSURL, AllowCredentials: true},
+		{Name: "ARTEMIS_URL", Format: v1alpha1.FormatHTTPSURL},
+	}}}
+	hosts := []string{"artemis.example.org"}
+	tests := []struct {
+		name, key, val, detail string
+	}{
+		{"credentials allowed on GIT_URI", "GIT_URI", "https://u:vcs-token@artemis.example.org/git/x.git", ""},
+		{"credentials still need an allowed host", "GIT_URI", "https://u:t@evil.example.com/x.git", "invalid value for key GIT_URI: host is not allowed"},
+		{"credentials still need https", "GIT_URI", "http://u:t@artemis.example.org/x.git", "invalid value for key GIT_URI: must be an https URL"},
+		{"credentials refused where not allowed", "ARTEMIS_URL", "https://u:t@artemis.example.org", "invalid value for key ARTEMIS_URL: must be an https URL without credentials"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := validateData(tpl, map[string]string{tt.key: tt.val}, alice, hosts)
+			if tt.detail == "" {
+				if err != nil || out[tt.key] != tt.val {
+					t.Fatalf("got %v %v", out, err)
+				}
+				return
+			}
+			if err == nil || err.detail != tt.detail {
+				t.Fatalf("got %v, want detail %q", err, tt.detail)
+			}
+			// The detail names key and rule, never the value or its credentials.
+			if strings.Contains(err.detail, "vcs-token") || strings.Contains(err.detail, "u:t@") {
+				t.Fatalf("detail leaks the value: %q", err.detail)
+			}
+		})
+	}
+}
+
+func TestWithoutCredentials(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://u:vcs-token@artemis.example.org/git/x.git": "https://artemis.example.org/git/x.git",
+		"https://u@artemis.example.org/git/x.git":           "https://artemis.example.org/git/x.git",
+		"https://github.com/a/b.git":                        "https://github.com/a/b.git",
+		"":                                                  "",
+	} {
+		if got := withoutCredentials(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}

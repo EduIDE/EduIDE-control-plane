@@ -10,6 +10,8 @@ The section of a version becomes the notes of its GitHub Release.
 - The landing page runs on the control plane REST API (`@eduide/control-plane-client`) instead of Theia Cloud; sessions are followed through server-sent events
 - New home page: your environments on top (also at `/me/overview`), new environments as tiles below, with start time, saved or temporary workspace, what an image includes and project templates; English and German; no Artemis wording; colors follow the system setting (the theme switch is gone)
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated
+- The repository URL is read from the URL fragment too (`#gitUri=`, Artemis#14702), because it can carry VCS credentials: it moves into sessionStorage before the login and is removed after the launch; `?gitUri` still works and warns when it carries credentials
+- A refused repository host names the host; other invalid launch values show the key and rule the service reports (never the value)
 - Runtime config is `/config.json`, served by a small Go static server that replaces nginx
 - Imprint and privacy are mandatory: `config.json` needs `legal.imprint` and `legal.privacy` (an external `url` or a hosted Markdown `path`), the chart needs `legal.imprint` and `legal.privacy` values. `legal.imprintUrl` and `legal.privacyUrl` are removed. `/imprint` and `/privacy` render the Markdown without a login
 - New public status page at `/status` (no login) and read-only admin panel at `/admin` (lazy loaded, needs the admin role); the footer links to `/status`

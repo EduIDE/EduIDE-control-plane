@@ -65,6 +65,16 @@ func TestCRDValidation(t *testing.T) {
 	mustReject(t, c, ctx, bad, "format is required")
 
 	bad = tmpl.DeepCopy()
+	bad.Name, bad.ResourceVersion = "bad-credentials", ""
+	bad.Spec.InjectableKeys = []v1.InjectableKey{{Name: "T", Format: v1.FormatToken, AllowCredentials: true}}
+	mustReject(t, c, ctx, bad, "allowCredentials needs format HTTPSURL")
+
+	creds := tmpl.DeepCopy()
+	creds.Name, creds.ResourceVersion = "credentials", ""
+	creds.Spec.InjectableKeys = []v1.InjectableKey{{Name: "GIT_URI", Format: v1.FormatHTTPSURL, AllowCredentials: true}}
+	mustCreate(t, c, ctx, creds)
+
+	bad = tmpl.DeepCopy()
 	bad.Name, bad.ResourceVersion = "bad-timeouts", ""
 	bad.Spec.Timeouts.Warning = &metav1.Duration{Duration: 7200e9}
 	mustReject(t, c, ctx, bad, "warning must be shorter")
