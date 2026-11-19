@@ -27,7 +27,7 @@ The skill `release` in [.claude/skills/release/SKILL.md](../../.claude/skills/re
 
 1. Pick the version. A breaking REST change is a new API version, not just a new tag ([api/README.md](../api/README.md)).
 2. `make generate`, `make verify-generate`, `make lint`, `make test`, `make e2e` all pass. CI also runs `oasdiff`, the CRD schema diff, `govulncheck`, Trivy and Gitleaks. `govulncheck` and the Trivy filesystem scan also run every night.
-   CI does not run on the tag itself, so wait for a green `ci-ok` on the release commit on `main` before you tag.
+   CI does not run on the tag itself, so wait for a green `ci-ok` of the push run on the release commit on `main` before you tag. The nightly run skips the code jobs and does not count.
 3. Update `CHANGELOG.md` and set chart `version` and `appVersion` and the `clients/typescript/package.json` version to the release version.
 4. Ask the maintainer, then create the tag `vX.Y.Z` on a commit of `main`. Both workflows stop unless the tag matches `vX.Y.Z` and its commit is on `main`. Never force-push a tag.
 5. `images.yml` builds, scans and pushes the images; `release.yml` pushes the charts as OCI artifacts. Watch them and act on failures.
