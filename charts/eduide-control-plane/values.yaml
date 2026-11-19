@@ -118,7 +118,7 @@ templates: []
 #     displayName: Java
 #     image: registry.example.org/ide/java:latest
 #     persistence: {allowed: [ephemeral], default: ephemeral}
-#   pool: {minIdle: 1, targetIdle: 2, maxInstances: 20}
+#   pool: {minIdle: 1, maxInstances: 20}   # targetIdle is left to the pool scaler
 
 # Network isolation (ADR 0019). Needs a CNI that enforces NetworkPolicies.
 networkPolicy:

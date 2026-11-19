@@ -49,7 +49,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `config` | see values.yaml | Content of `config.yaml`; `agent.image` defaults to the chart's agent image, `telemetry.userSaltFile` is set by the chart |
 | `oidc.clientSecretName` | required | Existing Secret with `client-secret` |
 | `operator.*`, `service.*`, `authz.*` | replicas 1/2/2 | `logLevel` (debug, info, warn), `replicas`, `resources`, `nodeSelector`, `tolerations`, `affinity` |
-| `templates` | `[]` | List of `{name, spec, pool}`; `spec` is the IDETemplate spec, `pool` (optional) is `{minIdle, targetIdle, maxInstances}` |
+| `templates` | `[]` | List of `{name, spec, pool}`; `spec` is the IDETemplate spec, `pool` (optional) is `{minIdle, maxInstances}`; a `targetIdle` here is not rendered, it belongs to the pool scaler (scale subresource), and Helm would otherwise conflict with it on every upgrade |
 | `networkPolicy.enabled` | `true` | Needs a CNI that enforces policies |
 | `networkPolicy.envoy.namespaceSelector`, `.podSelector` | `envoy-gateway-system`, `app.kubernetes.io/name: envoy` | Pods allowed to reach sessions, service and authz |
 | `networkPolicy.monitoringNamespace` | `monitoring` | Namespace allowed to scrape the metrics ports |
