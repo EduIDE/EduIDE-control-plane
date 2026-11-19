@@ -24,13 +24,14 @@ For every request on a session route, in this order:
 | Path starts with `/oauth2/` | allow |
 | No auth cookie at all: no ID token cookie and no cookie named `BearerToken*`, `OauthHMAC*`, `OauthExpires*`, `IdToken*`, `RefreshToken*` | allow; the oauth2 filter runs next and forces the login, so nothing reaches the IDE |
 | ID token cookie present but invalid or expired | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
+| No valid ID token, but an `eduide-authz` cookie whose HMAC verifies, which has not expired and which is bound to the request's only `RefreshToken*` cookie | its owner counts like a valid token's in the rows below |
 | Valid token, first path segment is the `status.instance` of an `IDESession` in phase `Ready`, not being deleted, and `spec.owner` equals the token claim `oidc.userClaim` | allow |
 | Valid token, anything else (unknown, free, foreign, released instance) | 403 |
 | Internal error | 403 |
 
 The instance id is random and unguessable, so allowing a request without cookies leaks nothing about sessions.
 The oauth2 filter redirects only page navigations to Keycloak; XHR, fetch and WebSocket requests (`Sec-Fetch-Mode` other than `navigate`) get a 401 (`oidc.denyRedirect`), because they cannot follow the redirect and each redirect leaves two login flow cookies behind.
-The ID token cookie lives as long as the token (Keycloak's access token lifespan of the gateway client), so after that an open IDE needs a page reload for new connections (ADR 0005, amendment 2026-11-19).
+The ID token cookie lives only as long as the token, so `authz` keeps the owner in its own signed cookie `eduide-authz`, bound to the refresh token cookie; without an ID token it accepts that cookie with the same refresh token, and the oauth2 filter then refreshes the tokens or restarts the login (ADR 0005, amendment 2026-11-19).
 Release removes access first: the session leaves `Ready`, `authz` denies at once, then the operator deletes the pod.
 WebSockets are checked at the upgrade request.
 

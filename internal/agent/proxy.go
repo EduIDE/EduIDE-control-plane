@@ -136,7 +136,7 @@ func (bufPool) Put(b []byte) { bufs.Put(&b) }
 
 // authCookiePrefixes are the gateway's login cookies (ADR 0005). The IDE never needs them, so code
 // running in the IDE cannot read the user's tokens from requests.
-var authCookiePrefixes = []string{"eduide-id", "IdToken", "AccessToken", "BearerToken", "RefreshToken", "OauthHMAC", "OauthExpires", "OauthNonce", "CodeVerifier"}
+var authCookiePrefixes = []string{"eduide-id", "eduide-authz", "IdToken", "AccessToken", "BearerToken", "RefreshToken", "OauthHMAC", "OauthExpires", "OauthNonce", "CodeVerifier"}
 
 func stripAuthCookies(h http.Header) {
 	var keep []string
