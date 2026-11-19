@@ -29,7 +29,7 @@ INK = "#1F1F1F"            # lines, borders, text
 ACCENT = "#6D28D9"         # own subsystem names; technology text in deployment diagrams
 ACCENT_LINE = "#7C3AED"    # own subsystem borders, namespace groups
 ACCENT_FILL = "#F5F3FF"    # own subsystem fill
-EXTERNAL_FILL = "#F4F4F5"  # external systems
+EXTERNAL_FILL = "#D4D4D8"  # external systems: clearly darker than the white components
 MUTED = "#52525B"          # responsibility text in component diagrams
 NOTE_FILL = "#FFFBEA"
 FONT = "fontFamily=Helvetica;fontSize=13;fontColor=#1F1F1F;"
