@@ -31,29 +31,44 @@ func TestSessionCookie(t *testing.T) {
 	}
 	tampered := sessionValue(s, "mallory", in, "r1")
 	tampered = b64.EncodeToString([]byte("alice")) + tampered[strings.Index(tampered, "."):]
+	bob := idCookie + "=" + iss.token(t, nil, "", "", "bob", 0)
+	s.Sessions = fakeSessions{by: map[string][]v1alpha1.IDESession{
+		instanceA:              {session("alice", instanceA, v1alpha1.SessionReady, false)},
+		"bbbbbbbbbbbbbbbbbbbb": {session("bob", "bbbbbbbbbbbbbbbbbbbb", v1alpha1.SessionReady, false)},
+	}}
 	tests := []struct {
 		name, cookie   string
 		result, reason string
 		setsCookie     bool
+		path           string // default: instance A
 	}{
-		{"valid id token issues the cookie", good + "; " + refresh, "allow", "owner", true},
-		{"valid id token without refresh token issues none", good, "allow", "owner", false},
-		{"fresh cookie is not renewed", good + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false},
-		{"cookie close to expiry is renewed", good + "; " + refresh + "; " + sess("alice", time.Now().Add(time.Hour), "r1"), "allow", "owner", true},
-		{"cookie of a rotated refresh token is renewed", good + "; RefreshToken-abc=r2; " + sess("alice", in, "r1"), "allow", "owner", true},
-		{"no id token, cookie bound to this refresh token", refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false},
-		{"expired id token cookie, valid session", idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute) + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false},
-		{"no id token, cookie bound to another refresh token", "RefreshToken-abc=other; " + sess("alice", in, "r1"), "login", "invalid-token", false},
-		{"no id token, cookie without refresh token", sess("alice", in, "r1"), "login", "invalid-token", false},
-		{"no id token, two refresh tokens", refresh + "; RefreshToken-def=r1; " + sess("alice", in, "r1"), "login", "invalid-token", false},
-		{"no id token, expired cookie", refresh + "; " + sess("alice", time.Now().Add(-time.Second), "r1"), "login", "invalid-token", false},
-		{"no id token, tampered owner", refresh + "; " + sessionCookie + "=" + tampered, "login", "invalid-token", false},
-		{"no id token, garbage cookie", refresh + "; " + sessionCookie + "=a.b.c.d", "login", "invalid-token", false},
-		{"no id token, foreign owner", refresh + "; " + sess("mallory", in, "r1"), "deny", "not-owner", false},
+		{"valid id token issues the cookie", good + "; " + refresh, "allow", "owner", true, ""},
+		{"valid id token without refresh token issues none", good, "allow", "owner", false, ""},
+		{"fresh cookie is not renewed", good + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false, ""},
+		{"cookie close to expiry is renewed", good + "; " + refresh + "; " + sess("alice", time.Now().Add(time.Hour), "r1"), "allow", "owner", true, ""},
+		{"cookie of a rotated refresh token is renewed", good + "; RefreshToken-abc=r2; " + sess("alice", in, "r1"), "allow", "owner", true, ""},
+		{"no id token, cookie bound to this refresh token", refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false, ""},
+		{"expired id token cookie, valid session", idCookie + "=" + iss.token(t, nil, "", "", "alice", -time.Minute) + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false, ""},
+		{"no id token, cookie bound to another refresh token", "RefreshToken-abc=other; " + sess("alice", in, "r1"), "login", "invalid-token", false, ""},
+		{"no id token, cookie without refresh token", sess("alice", in, "r1"), "login", "invalid-token", false, ""},
+		{"no id token, two refresh tokens", refresh + "; RefreshToken-def=r1; " + sess("alice", in, "r1"), "login", "invalid-token", false, ""},
+		{"no id token, expired cookie", refresh + "; " + sess("alice", time.Now().Add(-time.Second), "r1"), "login", "invalid-token", false, ""},
+		{"no id token, tampered owner", refresh + "; " + sessionCookie + "=" + tampered, "login", "invalid-token", false, ""},
+		{"no id token, garbage cookie", refresh + "; " + sessionCookie + "=a.b.c.d", "login", "invalid-token", false, ""},
+		{"no id token, foreign owner", refresh + "; " + sess("mallory", in, "r1"), "deny", "not-owner", false, ""},
+		{"no id token, tossed garbage cookie after the real one", refresh + "; " + sess("alice", in, "r1") + "; " + sessionCookie + "=x.y.z.w", "allow", "owner", false, ""},
+		{"no id token, tossed garbage cookie before the real one", refresh + "; " + sessionCookie + "=x.y.z.w; " + sess("alice", in, "r1"), "allow", "owner", false, ""},
+		{"valid id token of bob beats alice's cookie and reissues it", bob + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", true, "/bbbbbbbbbbbbbbbbbbbb/"},
+		{"valid id token of bob on alice's instance: deny without a cookie", bob + "; " + refresh, "deny", "not-owner", false, ""},
+		{"id token copies of two owners fall back to the session cookie", good + "; " + bob + "; " + refresh + "; " + sess("alice", in, "r1"), "allow", "owner", false, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d, _ := s.decide(context.Background(), req("/"+instanceA+"/", tc.cookie).GetAttributes().GetRequest().GetHttp())
+			path := tc.path
+			if path == "" {
+				path = "/" + instanceA + "/"
+			}
+			d, _ := s.decide(context.Background(), req(path, tc.cookie).GetAttributes().GetRequest().GetHttp())
 			if d.result != tc.result || d.reason != tc.reason {
 				t.Fatalf("got %s/%s, want %s/%s", d.result, d.reason, tc.result, tc.reason)
 			}
@@ -68,7 +83,7 @@ func TestSessionCookie(t *testing.T) {
 					t.Errorf("cookie %q lacks %s", d.setCookie, attr)
 				}
 			}
-			resp, err := s.Check(context.Background(), req("/"+instanceA+"/", tc.cookie))
+			resp, err := s.Check(context.Background(), req(path, tc.cookie))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -76,10 +91,15 @@ func TestSessionCookie(t *testing.T) {
 			if len(hs) != 1 || hs[0].GetHeader().GetKey() != "Set-Cookie" {
 				t.Fatalf("OkResponse headers %v", hs)
 			}
-			// The issued cookie works on its own with the same refresh token.
+			// The issued cookie works on its own with the refresh token of the request.
 			v := strings.TrimPrefix(strings.SplitN(d.setCookie, ";", 2)[0], sessionCookie+"=")
-			rt := strings.TrimPrefix(strings.SplitN(strings.TrimPrefix(tc.cookie, good+"; "), ";", 2)[0], "RefreshToken-abc=")
-			if o, ok := s.sessionOwner(v, []string{rt}); !ok || o != "alice" {
+			var rt []string
+			for _, c := range parseCookies([]string{tc.cookie}) {
+				if strings.HasPrefix(c.name, "RefreshToken") {
+					rt = append(rt, c.value)
+				}
+			}
+			if o, ok := s.sessionOwner([]string{v}, rt); !ok || o == "" {
 				t.Fatalf("issued cookie does not verify: %q %v", o, ok)
 			}
 		})
@@ -102,6 +122,9 @@ func TestSessionCookieOffWithoutKey(t *testing.T) {
 		t.Fatalf("got %s with cookie %q", d.result, d.setCookie)
 	}
 	d, _ = s.decide(context.Background(), req("/"+instanceA+"/", "RefreshToken-abc=r1; "+sessionCookie+"="+forged).GetAttributes().GetRequest().GetHttp())
+	if string(SessionKey([]byte("salt"))) == string(SessionKey([]byte("other"))) {
+		t.Fatal("key does not depend on the salt")
+	}
 	if d.result != "login" {
 		t.Fatalf("got %s, want login", d.result)
 	}

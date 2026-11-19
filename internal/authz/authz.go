@@ -136,8 +136,7 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 		return allow("oauth2"), ""
 	}
 	cookies := parseCookies(cookieHeaders(h))
-	var tokens, expire, refresh []string
-	session := ""
+	var tokens, expire, refresh, authzCookies []string
 	seen := map[string]bool{}
 	for _, c := range cookies {
 		if !isAuthCookie(c.name, s.IDTokenCookie) {
@@ -145,7 +144,7 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 		}
 		switch {
 		case c.name == sessionCookie:
-			session = c.value
+			authzCookies = append(authzCookies, c.value)
 		case strings.HasPrefix(c.name, "RefreshToken"):
 			refresh = append(refresh, c.value)
 		}
@@ -179,12 +178,12 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	}
 	setCookie := ""
 	if idTokenOK {
-		setCookie = s.renewSession(session, owner, refresh)
+		setCookie = s.renewSession(authzCookies, owner, refresh)
 	} else {
 		// The browser drops the ID token cookie when the token expires; the session cookie keeps the owner
 		// until the oauth2 filter after authz has refreshed the tokens with the refresh token (session.go).
 		var ok bool
-		if owner, ok = s.sessionOwner(session, refresh); !ok {
+		if owner, ok = s.sessionOwner(authzCookies, refresh); !ok {
 			return s.login(h, expire), ""
 		}
 	}

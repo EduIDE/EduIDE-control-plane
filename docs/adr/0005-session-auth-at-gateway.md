@@ -115,3 +115,5 @@ Without a valid ID token, authz takes the owner from this cookie only when the r
 The oauth2 filter that follows refreshes the tokens and sets new cookies, or restarts the login when Keycloak refuses the refresh, so the cookie never outlives the Keycloak session and is useless without the refresh token it is bound to.
 After a refresh the next request carries a valid ID token again and authz rebinds the cookie to the new refresh token.
 The agent strips `eduide-authz` like the other login cookies.
+Parallel requests without an ID token each refresh with the same refresh token, so Keycloak's "Revoke Refresh Token" must stay off for the gateway client.
+Rotating the user salt changes the cookie key and signs everybody out of open IDEs once.
