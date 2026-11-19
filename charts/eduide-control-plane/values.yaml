@@ -187,6 +187,8 @@ monitoring:
     # Extra labels on every alert, e.g. {namespace: eduide-system} when the AlertmanagerConfig routes on that
     # namespace. eduide_namespace stays the real namespace.
     extraLabels: {}
+    # cert-manager certificate alerts for the release namespace. Turn off where a cluster-wide rule covers it.
+    certificates: true
   # Grafana dashboard ConfigMap, picked up by the sidecar through the label.
   dashboard:
     enabled: false

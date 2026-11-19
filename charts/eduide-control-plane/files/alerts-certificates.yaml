@@ -1,0 +1,16 @@
+- name: eduide-control-plane-certificates
+  rules:
+  - alert: EduIDECertificateExpiringSoon
+    expr: ((certmanager_certificate_expiration_timestamp_seconds{namespace="__NAMESPACE__"} > 0) - time()) / 86400 < 21
+    for: 1h
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
+    annotations:
+      summary: Certificate {{ $labels.name }} expires in {{ $value | printf "%.0f" }} days
+      description: cert-manager renews these certificates by itself, so renewal is failing. Read the CertificateRequest, Order and Challenge of {{ $labels.name }}.
+  - alert: EduIDECertificateNotReady
+    expr: certmanager_certificate_ready_status{namespace="__NAMESPACE__", condition="True"} == 0
+    for: 1h
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
+    annotations:
+      summary: Certificate {{ $labels.name }} has not been ready for an hour
+      description: The Gateway listener keeps serving whatever the Secret held before, possibly an expired certificate. Read the CertificateRequest, Order and Challenge of {{ $labels.name }}.
