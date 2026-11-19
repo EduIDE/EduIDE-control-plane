@@ -22,6 +22,7 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 type Server struct {
@@ -56,6 +57,8 @@ type Server struct {
 	streams    map[string]int
 	maxStreams int
 	writeWait  time.Duration
+	// unauthorizedLog caps the access log lines of requests without a valid token.
+	unauthorizedLog *logx.Limiter
 	// bodyWait bounds reading a request body, so a client cannot hold a handler open by sending it slowly.
 	bodyWait time.Duration
 
@@ -75,7 +78,7 @@ type Server struct {
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
 	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now,
-		streams: map[string]int{}, maxStreams: 16, writeWait: 30 * time.Second, bodyWait: 10 * time.Second}
+		unauthorizedLog: logx.NewLimiter(20), streams: map[string]int{}, maxStreams: 16, writeWait: 30 * time.Second, bodyWait: 10 * time.Second}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
 	}

@@ -175,6 +175,11 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 			}
 			return "", "", err
 		}
+		// A claim that another workspace (or any other controller) owns is not shared: two workspaces on one
+		// volume would see each other's files, and the retention of the owner would delete the data of both.
+		if c := metav1.GetControllerOf(pvc); c != nil && c.UID != ws.UID {
+			return "", fmt.Sprintf("claim %s belongs to %s %s", name, c.Kind, c.Name), nil
+		}
 		// Adopt the claim, so the retention deletes it like one the operator created.
 		if err := r.adopt(ctx, ws, pvc); err != nil {
 			return "", "", err

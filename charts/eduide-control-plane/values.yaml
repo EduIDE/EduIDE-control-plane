@@ -152,6 +152,9 @@ networkPolicy:
       kubernetes.io/metadata.name: kube-system
 
 # Secret with the salt for pseudonymous user ids in spans (G17). Generated once, kept on upgrade.
+# authz derives the key of its session cookie from it: treat it as an authentication secret.
+# Renderers without cluster access (helm template, Argo CD) generate a new salt on every render:
+# create the Secret yourself (key "salt") and name it here.
 userSalt:
   secretName: ""
 

@@ -38,14 +38,15 @@ func TestQueries(t *testing.T) {
 	if _, ok := rates["c"]; ok {
 		t.Fatal("NaN must be dropped")
 	}
-	if !strings.Contains(queries[0], `eduide_claim_total{namespace="eduide-test"}[5m]`) {
+	// Only claimed and empty are demand: a conflict is a lost attempt of a claim that is retried.
+	if !strings.Contains(queries[0], `eduide_claim_total{namespace="eduide-test",result=~"claimed|empty"}[5m]`) {
 		t.Fatalf("query %s", queries[0])
 	}
 	hist, err := p.ClaimHistory(ctx, time.Unix(1763280000, 0), time.Unix(1763281800, 0))
 	if err != nil || len(hist["java-17"]) != 2 || hist["java-17"][1].V != 1.5 {
 		t.Fatalf("%v %v", hist, err)
 	}
-	if !strings.Contains(queries[1], "increase(eduide_claim_total") {
+	if !strings.Contains(queries[1], `increase(eduide_claim_total{namespace="eduide-test",result=~"claimed|empty"}`) {
 		t.Fatalf("query %s", queries[1])
 	}
 	if _, err := p.ReadySeconds(ctx, time.Now()); err != nil {

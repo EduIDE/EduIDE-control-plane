@@ -1394,3 +1394,23 @@ func TestEnsureVolumeAsksTheAPIServerBeforeTheVolumeIsLost(t *testing.T) {
 		t.Fatalf("claim really gone: name %q, message %q, err %v; want no claim and a reason", name, msg, err)
 	}
 }
+
+// An imported claim belongs to one workspace. A second workspace that names it must not get the volume.
+func TestImportedClaimIsNotShared(t *testing.T) {
+	owner := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-owner", Namespace: "ns", UID: "uid-owner"}}
+	yes := true
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "ns", OwnerReferences: []metav1.OwnerReference{
+		{APIVersion: v1.GroupVersion.String(), Kind: "IDEWorkspace", Name: owner.Name, UID: owner.UID, Controller: &yes}}}}
+	c := fake.NewClientBuilder().WithScheme(NewScheme()).WithObjects(pvc).Build()
+	r := &workspaceReconciler{&deps{Client: c, reader: c, scheme: NewScheme()}}
+	imports := func(name string, uid types.UID) *v1.IDEWorkspace {
+		return &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", UID: uid},
+			Spec: v1.IDEWorkspaceSpec{Persistence: v1.WorkspacePersistence{ExistingClaimName: "data"}}}
+	}
+	if name, msg, err := r.ensureVolume(context.Background(), imports("w-other", "uid-other"), newTemplate("x")); err != nil || name != "" || !strings.Contains(msg, "w-owner") {
+		t.Fatalf("second workspace: name %q, message %q, err %v; want no claim and the owner in the message", name, msg, err)
+	}
+	if name, _, err := r.ensureVolume(context.Background(), imports("w-owner", "uid-owner"), newTemplate("x")); err != nil || name != "data" {
+		t.Fatalf("the owner itself: name %q, err %v", name, err)
+	}
+}

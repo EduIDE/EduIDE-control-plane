@@ -14,28 +14,40 @@ export interface Location {
 
 /**
  * Reads `#artemisToken=...` and `#gitUri=...`, stores them and returns the URL without them (undefined if there were
- * none). Other fragment parameters stay.
+ * none). Other fragment parameters stay. The deprecated query forms (`?artemisToken=`, and `?gitUri=` with
+ * credentials) are moved the same way: the query would otherwise travel to Keycloak inside the redirect URI and
+ * stay in the history. A fragment value wins over a query value.
  */
 export function captureArtemisToken(loc: Location, store: Storage): string | undefined {
     const fragment = new URLSearchParams(loc.hash.replace(/^#/, ''));
+    const query = new URLSearchParams(loc.search);
     let found = false;
+    const keep = (key: string, value: string): void => {
+        found = true;
+        try {
+            store.setItem(key, value);
+        } catch {
+            // Blocked or full storage: the launch goes without this value, but it still leaves the address bar.
+        }
+    };
     for (const [param, key] of Object.entries(FRAGMENT_KEYS)) {
+        const secretInQuery = query.get(param);
+        if (secretInQuery && (param !== 'gitUri' || hasCredentials(secretInQuery))) {
+            keep(key, secretInQuery);
+            query.delete(param);
+        }
         const value = fragment.get(param);
         if (value) {
-            found = true;
-            try {
-                store.setItem(key, value);
-            } catch {
-                // Blocked or full storage: the launch goes without this value, but it still leaves the address bar.
-            }
+            keep(key, value);
         }
         fragment.delete(param);
     }
     if (!found) {
         return undefined;
     }
+    const search = query.toString();
     const rest = fragment.toString();
-    return loc.pathname + loc.search + (rest ? `#${rest}` : '');
+    return loc.pathname + (search ? `?${search}` : '') + (rest ? `#${rest}` : '');
 }
 
 /** Moves the token from the fragment to sessionStorage and strips it from the address bar. Call before Keycloak init. */

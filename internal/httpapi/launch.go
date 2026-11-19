@@ -450,4 +450,10 @@ func (s *Server) createSession(ctx context.Context, attrs []attribute.KeyValue, 
 func randomName() string { return "s-" + strings.ToLower(rand.Text()[:10]) }
 
 // userID is the pseudonymous user id of logs and spans (G17).
-func (s *Server) userID(owner string) string { return telemetry.UserID(s.salt, owner) }
+// Without a salt there is no id: a hash without a key could be reversed with a list of user names.
+func (s *Server) userID(owner string) string {
+	if len(s.salt) == 0 {
+		return ""
+	}
+	return telemetry.UserID(s.salt, owner)
+}

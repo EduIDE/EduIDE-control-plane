@@ -28,6 +28,32 @@ describe('artemis token fragment', () => {
         expect(readArtemisToken('', sessionStorage)).toBeUndefined();
     });
 
+    it('moves the deprecated query token out of the URL, so it never reaches Keycloak in the redirect URI', () => {
+        const url = captureArtemisToken({ hash: '', search: '?appDef=java&artemisToken=q%2B1&title=T', pathname: '/' }, sessionStorage);
+        expect(url).toBe('/?appDef=java&title=T');
+        expect(readArtemisToken('?appDef=java&title=T', sessionStorage)).toBe('q+1');
+    });
+
+    it('prefers the fragment token over the query token', () => {
+        const url = captureArtemisToken({ hash: '#artemisToken=f', search: '?artemisToken=q', pathname: '/' }, sessionStorage);
+        expect(url).toBe('/');
+        expect(sessionStorage.getItem('eduide.artemisToken')).toBe('f');
+    });
+
+    it('moves a query gitUri with credentials out of the URL and leaves one without credentials', () => {
+        const withCreds = captureArtemisToken(
+            { hash: '', search: '?appDef=java&gitUri=https%3A%2F%2Fu%3Avcs%40git.example.org%2Fx.git', pathname: '/' },
+            sessionStorage
+        );
+        expect(withCreds).toBe('/?appDef=java');
+        expect(readGitUri('?appDef=java', sessionStorage)).toBe('https://u:vcs@git.example.org/x.git');
+        sessionStorage.clear();
+        expect(
+            captureArtemisToken({ hash: '', search: '?appDef=java&gitUri=https%3A%2F%2Fgit.example.org%2Fx.git', pathname: '/' }, sessionStorage)
+        ).toBeUndefined();
+        expect(sessionStorage.length).toBe(0);
+    });
+
     it('still reads the query parameter and logs a deprecation warning', () => {
         const warn = vi.fn();
         expect(readArtemisToken('?artemisToken=q', sessionStorage, warn)).toBe('q');

@@ -274,7 +274,8 @@ func Default() Config {
 			PodOverhead:           Quantity{CPU: "100m", Memory: "128Mi"},
 			UsageHeadroomFraction: 0.8,
 		},
-		Prometheus: Prometheus{Timeout: Duration{30 * time.Second}},
+		// Well below the decision interval: a slow Prometheus must leave time for the writes of the round.
+		Prometheus: Prometheus{Timeout: Duration{10 * time.Second}},
 		Artemis: Artemis{
 			Days:     14,
 			Interval: Duration{15 * time.Minute},
