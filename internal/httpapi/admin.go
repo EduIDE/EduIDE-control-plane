@@ -19,7 +19,6 @@ import (
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -482,22 +481,19 @@ func (s *Server) ListAdminTemplates(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, perr)
 		return
 	}
-	secs := func(d *metav1.Duration, def time.Duration) int {
-		if d != nil {
-			return int(d.Seconds())
-		}
-		return int(def.Seconds())
-	}
 	out := []AdminTemplate{}
 	for _, b := range base {
 		t := tpls[b.Name]
+		if t == nil {
+			continue // deleted between the two cache reads
+		}
+		idle, warning, max := t.ResolvedTimeouts() // what the operator applies, not only what the template says
 		a := AdminTemplate{
 			Name: b.Name, DisplayName: b.DisplayName, LogoUrl: b.LogoUrl, Image: t.Spec.Image, ImageVersion: b.ImageVersion,
 			Persistence: b.Persistence, DefaultPersistence: b.DefaultPersistence, Variants: b.Variants, Includes: b.Includes, StartEstimate: b.StartEstimate,
 			InjectableKeys: []AdminInjectableKey{},
 			Timeouts: AdminTimeouts{
-				IdleSeconds: secs(t.Spec.Timeouts.Idle, v1alpha1.DefaultIdleTimeout), WarningSeconds: secs(t.Spec.Timeouts.Warning, v1alpha1.DefaultWarningTimeout),
-				MaxSeconds: secs(t.Spec.Timeouts.Max, v1alpha1.DefaultMaxTimeout),
+				IdleSeconds: int(idle.Seconds()), WarningSeconds: int(warning.Seconds()), MaxSeconds: int(max.Seconds()),
 			},
 		}
 		if t.Spec.Retention != nil {

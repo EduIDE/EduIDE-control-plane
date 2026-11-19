@@ -188,6 +188,13 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 		return "", "", err
 	}
 	if ws.Status.ClaimName != "" {
+		// The cache can be behind the claim this operator created a moment ago. Ask the API server before the
+		// workspace is reported as lost: a session that starts on that report fails for good.
+		if err := r.reader.Get(ctx, key, &corev1.PersistentVolumeClaim{}); err == nil {
+			return ws.Name, "", nil
+		} else if !apierrors.IsNotFound(err) {
+			return "", "", err
+		}
 		return "", fmt.Sprintf("claim %s is gone", ws.Status.ClaimName), nil
 	}
 	size := r.cfg.Workspaces.DefaultSize

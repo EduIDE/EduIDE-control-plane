@@ -40,6 +40,17 @@ func main() {
 	}
 }
 
+// httpServers returns the API server and the server for probes and metrics. Neither has a WriteTimeout or a
+// ReadTimeout: SSE streams stay open, and the handlers bound their own body reads and stream writes. Idle
+// keep-alive connections and oversized headers are bounded here.
+func httpServers(ctx context.Context, api, ops http.Handler) []*http.Server {
+	return []*http.Server{
+		{Addr: ":8080", Handler: api, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10,
+			BaseContext: func(net.Listener) context.Context { return ctx }}, // ends SSE streams on shutdown
+		{Addr: ":9090", Handler: ops, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10},
+	}
+}
+
 func run() error {
 	configPath := flag.String("config", "/etc/eduide/config.yaml", "path of the deployment config")
 	flag.Parse()
@@ -139,12 +150,7 @@ func run() error {
 	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
 	go api.RunSignInCheck(ctx)
-	// No WriteTimeout: SSE streams stay open.
-	servers := []*http.Server{
-		{Addr: ":8080", Handler: api.Handler(auth.NewOIDC(cfg.OIDC)), ReadHeaderTimeout: 10 * time.Second,
-			BaseContext: func(net.Listener) context.Context { return ctx }}, // ends SSE streams on shutdown
-		{Addr: ":9090", Handler: ops, ReadHeaderTimeout: 10 * time.Second},
-	}
+	servers := httpServers(ctx, api.Handler(auth.NewOIDC(cfg.OIDC)), ops)
 	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)
 	errc := make(chan error, len(servers))
 	for _, s := range servers {

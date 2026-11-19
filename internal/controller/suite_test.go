@@ -406,13 +406,16 @@ func setReady(t *testing.T, name string) {
 	}
 }
 
-func setUnschedulable(t *testing.T, name string) {
+func setUnschedulable(t *testing.T, name string) { setUnschedulableBecause(t, name, "") }
+
+// setUnschedulableBecause sets the scheduler message, too: it tells a full node pool from a pod that fits no node.
+func setUnschedulableBecause(t *testing.T, name, message string) {
 	t.Helper()
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
 	if err := get(p); err != nil {
 		t.Fatal(err)
 	}
-	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, LastTransitionTime: metav1.Now()}}
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: message, LastTransitionTime: metav1.Now()}}
 	if err := k8s.Status().Update(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}

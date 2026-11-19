@@ -223,3 +223,27 @@ func TestStarted(t *testing.T) {
 		t.Error("Started")
 	}
 }
+
+func TestOutOfCapacity(t *testing.T) {
+	sched := func(status corev1.ConditionStatus, reason, msg string) *corev1.Pod {
+		return &corev1.Pod{Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: status, Reason: reason, Message: msg}}}}
+	}
+	for name, tc := range map[string]struct {
+		pod  *corev1.Pod
+		want bool
+	}{
+		"no condition":    {&corev1.Pod{}, false},
+		"scheduled":       {sched(corev1.ConditionTrue, "", ""), false},
+		"no message":      {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, ""), true},
+		"cpu":             {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, "0/3 nodes are available: 3 Insufficient cpu."), true},
+		"pods":            {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, "0/3 nodes are available: 3 Too many pods."), true},
+		"mixed":           {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, "0/3 nodes are available: 1 node(s) had volume node affinity conflict, 2 Insufficient memory."), true},
+		"volume affinity": {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, "0/3 nodes are available: 3 node(s) had volume node affinity conflict."), false},
+		"selector":        {sched(corev1.ConditionFalse, corev1.PodReasonUnschedulable, "0/3 nodes are available: 3 node(s) didn't match Pod's node affinity/selector."), false},
+		"other reason":    {sched(corev1.ConditionFalse, "SchedulerError", "Insufficient cpu"), false},
+	} {
+		if got := OutOfCapacity(tc.pod); got != tc.want {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
+	}
+}

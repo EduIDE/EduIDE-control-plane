@@ -46,15 +46,7 @@ func stopsAt(s *v1alpha1.IDESession, t *v1alpha1.IDETemplate) (time.Time, Sessio
 	if st.LastActivity != nil && st.LastActivity.After(at) {
 		at = st.LastActivity.Time
 	}
-	idle, max := v1alpha1.DefaultIdleTimeout, v1alpha1.DefaultMaxTimeout
-	if t != nil {
-		if d := t.Spec.Timeouts.Idle; d != nil {
-			idle = d.Duration
-		}
-		if d := t.Spec.Timeouts.Max; d != nil {
-			max = d.Duration
-		}
-	}
+	idle, _, max := t.ResolvedTimeouts() // the values the operator ends the session by
 	idleAt, maxAt := at.Add(idle), s.CreationTimestamp.Add(max)
 	if maxAt.Before(idleAt) {
 		return maxAt, Max, true

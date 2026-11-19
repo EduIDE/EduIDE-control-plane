@@ -9,17 +9,8 @@ import (
 type timeouts struct{ idle, warning, max time.Duration }
 
 func resolveTimeouts(t *v1.IDETemplate) timeouts {
-	to := timeouts{idle: v1.DefaultIdleTimeout, warning: v1.DefaultWarningTimeout, max: v1.DefaultMaxTimeout}
-	if d := t.Spec.Timeouts.Idle; d != nil {
-		to.idle = d.Duration
-	}
-	if d := t.Spec.Timeouts.Warning; d != nil {
-		to.warning = d.Duration
-	}
-	if d := t.Spec.Timeouts.Max; d != nil {
-		to.max = d.Duration
-	}
-	return to
+	idle, warning, max := t.ResolvedTimeouts()
+	return timeouts{idle: idle, warning: warning, max: max}
 }
 
 type action int

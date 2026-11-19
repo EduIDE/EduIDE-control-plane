@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"log/slog"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -38,6 +39,18 @@ func TestStartingLine(t *testing.T) {
 	for _, bad := range []string{"salt-secret-bytes", "otel:4317", "gw-client-id", "landing-client-id"} {
 		if strings.Contains(out, bad) {
 			t.Errorf("log contains %q:\n%s", bad, out)
+		}
+	}
+}
+
+// SSE streams need a server without write and read timeouts; everything else must be bounded.
+func TestHTTPServersAreBounded(t *testing.T) {
+	for _, s := range httpServers(t.Context(), http.NotFoundHandler(), http.NotFoundHandler()) {
+		if s.ReadHeaderTimeout <= 0 || s.IdleTimeout <= 0 || s.MaxHeaderBytes <= 0 {
+			t.Errorf("%s: header timeout %s, idle timeout %s, header bytes %d", s.Addr, s.ReadHeaderTimeout, s.IdleTimeout, s.MaxHeaderBytes)
+		}
+		if s.WriteTimeout != 0 || s.ReadTimeout != 0 {
+			t.Errorf("%s: a write or read timeout would cut event streams", s.Addr)
 		}
 	}
 }

@@ -184,6 +184,12 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request, ownerHash, event
 
 // streamEvery is stream with at least gap between two events; changes in between coalesce into the next event.
 func (s *Server) streamEvery(w http.ResponseWriter, r *http.Request, ownerHash, event string, gap time.Duration, snap snapshot) {
+	closeStream, ok := s.openStream(user(r).Owner)
+	if !ok {
+		writeProblem(w, problem(CodeRateLimited, "too many open event streams, close one first"))
+		return
+	}
+	defer closeStream()
 	changes, cancel := s.hub.subscribe(ownerHash)
 	defer cancel()
 	if slog.Default().Enabled(r.Context(), slog.LevelDebug) {
@@ -215,6 +221,7 @@ func (s *Server) streamEvery(w http.ResponseWriter, r *http.Request, ownerHash, 
 			return true
 		}
 		last, sentAt = b, time.Now()
+		_ = rc.SetWriteDeadline(time.Now().Add(s.writeWait)) // a client that stopped reading must not pin the stream
 		if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
 			return false
 		}
@@ -230,6 +237,7 @@ func (s *Server) streamEvery(w http.ResponseWriter, r *http.Request, ownerHash, 
 		case <-r.Context().Done():
 			return
 		case <-tick.C:
+			_ = rc.SetWriteDeadline(time.Now().Add(s.writeWait))
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil || rc.Flush() != nil {
 				return
 			}

@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
@@ -1328,4 +1329,68 @@ func TestReadySessionFailsWhenPodFails(t *testing.T) {
 		st = sessionStatus("s-evict")
 		return st.Phase == v1.SessionFailed && st.ErrorCode == v1.ErrorStartFailed
 	})
+}
+
+// A pod that fits no node for a reason other than room (here: the node affinity of its volume) fails its own
+// session, but it must not put the node pool under pressure: that would delete the idle pods of every pool there.
+func TestUnschedulableWithoutCapacityReasonKeepsThePools(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-nopressure")
+	tm.Spec.Placement.NodeSelector = map[string]string{nodePoolKey: "np-nopressure"}
+	mustCreate(t, tm)
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-tpl-nopressure", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-nopressure", MinIdle: 2, TargetIdle: 2, MaxInstances: 10}})
+	idle := client.MatchingLabels{v1.LabelNodePool: "np-nopressure", v1.LabelState: v1.StateIdle}
+	eventually(t, "idle pods", func() bool { return len(podsWith(idle)) == 2 })
+	names := func() map[string]bool {
+		m := map[string]bool{}
+		for _, p := range podsWith(idle) {
+			m[p.Name] = true
+		}
+		return m
+	}
+	before := names()
+
+	other := newTemplate("tpl-nofit")
+	other.Spec.Placement.NodeSelector = map[string]string{nodePoolKey: "np-nopressure"}
+	mustCreate(t, other)
+	createSession(t, "s-nofit", "tpl-nofit")
+	var st v1.IDESessionStatus
+	eventually(t, "cold pod", func() bool { st = sessionStatus("s-nofit"); return st.PodName != "" })
+	evictions := testutil.ToFloat64(telemetry.CapacityEvictions.WithLabelValues("np-nopressure"))
+	setUnschedulableBecause(t, st.PodName, "0/3 nodes are available: 3 node(s) had volume node affinity conflict.")
+
+	eventually(t, "start-failed", func() bool {
+		st = sessionStatus("s-nofit")
+		return st.Phase == v1.SessionFailed
+	})
+	if st.ErrorCode != v1.ErrorStartFailed {
+		t.Errorf("error code %s, want %s: the cluster is not full", st.ErrorCode, v1.ErrorStartFailed)
+	}
+	if d := testutil.ToFloat64(telemetry.CapacityEvictions.WithLabelValues("np-nopressure")) - evictions; d != 0 {
+		t.Errorf("%v idle pods were evicted", d)
+	}
+	after := names()
+	for n := range before {
+		if !after[n] {
+			t.Errorf("idle pod %s of the pool is gone", n)
+		}
+	}
+}
+
+// The cache can be behind a claim the operator created a moment ago: that is not a lost volume.
+func TestEnsureVolumeAsksTheAPIServerBeforeTheVolumeIsLost(t *testing.T) {
+	ws := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-stale", Namespace: "ns"}, Status: v1.IDEWorkspaceStatus{ClaimName: "w-stale"}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "w-stale", Namespace: "ns"}}
+	empty := func() client.WithWatch { return fake.NewClientBuilder().WithScheme(NewScheme()).Build() }
+	live := fake.NewClientBuilder().WithScheme(NewScheme()).WithObjects(pvc).Build()
+
+	r := &workspaceReconciler{&deps{Client: empty(), reader: live}}
+	if name, msg, err := r.ensureVolume(context.Background(), ws, newTemplate("x")); err != nil || name != "w-stale" {
+		t.Fatalf("stale cache: name %q, message %q, err %v; want the existing claim", name, msg, err)
+	}
+	r = &workspaceReconciler{&deps{Client: empty(), reader: empty()}}
+	if name, msg, err := r.ensureVolume(context.Background(), ws, newTemplate("x")); err != nil || name != "" || msg == "" {
+		t.Fatalf("claim really gone: name %q, message %q, err %v; want no claim and a reason", name, msg, err)
+	}
 }
