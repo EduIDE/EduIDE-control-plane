@@ -23,14 +23,14 @@ For every request on a session route, in this order:
 |---|---|
 | Path starts with `/oauth2/` | allow |
 | No auth cookie at all: no ID token cookie and no cookie named `BearerToken*`, `OauthHMAC*`, `OauthExpires*`, `IdToken*`, `RefreshToken*` | allow; the oauth2 filter runs next and forces the login, so nothing reaches the IDE |
-| ID token cookie expired, but its signature, issuer and audience verify, it expired less than 12 hours ago, and every `RefreshToken*` cookie of the request is a JWT with the same `sub` (and `sid`, when both carry one) | treated as a valid token (the rows below); the oauth2 filter then refreshes the tokens or restarts the login (ADR 0005, amendment 2026-11-19) |
-| ID token cookie present but invalid or expired (otherwise) | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
+| ID token cookie present but invalid or expired | 302 to the same URL with `Set-Cookie` expiring all those cookies (Domain `hosts.instance`, Path `/`); the next request logs in again, silent through Keycloak SSO |
 | Valid token, first path segment is the `status.instance` of an `IDESession` in phase `Ready`, not being deleted, and `spec.owner` equals the token claim `oidc.userClaim` | allow |
 | Valid token, anything else (unknown, free, foreign, released instance) | 403 |
 | Internal error | 403 |
 
 The instance id is random and unguessable, so allowing a request without cookies leaks nothing about sessions.
 The oauth2 filter redirects only page navigations to Keycloak; XHR, fetch and WebSocket requests (`Sec-Fetch-Mode` other than `navigate`) get a 401 (`oidc.denyRedirect`), because they cannot follow the redirect and each redirect leaves two login flow cookies behind.
+The ID token cookie lives as long as the token (Keycloak's access token lifespan of the gateway client), so after that an open IDE needs a page reload for new connections (ADR 0005, amendment 2026-11-19).
 Release removes access first: the session leaves `Ready`, `authz` denies at once, then the operator deletes the pod.
 WebSockets are checked at the upgrade request.
 

@@ -5,8 +5,6 @@ package authz
 import (
 	"cmp"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -30,13 +28,6 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
-
-// expiredGrace bounds how long after its expiry an ID token still names the owner, and only while the browser
-// also sends a refresh token of the same user and login session: the oauth2 filter after authz then refreshes the
-// tokens, or restarts the login when Keycloak refuses the refresh. Without this, authz would clear the cookies
-// before the refresh can happen, and every XHR and WebSocket reconnect of an open IDE would fail once the ID token
-// expires. 12 h is above Keycloak's default SSO session maximum (10 h), after which no refresh succeeds anyway.
-const expiredGrace = 12 * time.Hour
 
 // Server implements authv3.AuthorizationServer.
 type Server struct {
@@ -144,13 +135,9 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	cookies := parseCookies(cookieHeaders(h))
 	var tokens, expire []string
 	seen := map[string]bool{}
-	var refresh []string
 	for _, c := range cookies {
 		if !isAuthCookie(c.name, s.IDTokenCookie) {
 			continue
-		}
-		if strings.HasPrefix(c.name, "RefreshToken") {
-			refresh = append(refresh, c.value)
 		}
 		if !seen[c.name] {
 			seen[c.name] = true
@@ -170,7 +157,7 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	// Every copy of the ID token cookie must verify and name the same owner.
 	owner := ""
 	for _, raw := range tokens {
-		o, err := s.owner(ctx, v, raw, refresh)
+		o, err := s.owner(ctx, v, raw)
 		if err != nil {
 			slog.DebugContext(ctx, "id token rejected", "err", err)
 		}
@@ -206,10 +193,7 @@ func (s *Server) decide(ctx context.Context, h *authv3.AttributeContext_HttpRequ
 	return deny(reason), user
 }
 
-// owner verifies the ID token and returns its user claim. The verifier skips the expiry check; owner accepts an
-// expired token only within expiredGrace and only when every refresh token cookie belongs to the same user and
-// login session (sameLogin), so nobody can pair another user's expired ID token with their own refresh token.
-func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string, refresh []string) (string, error) {
+func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string) (string, error) {
 	tok, err := v.Verify(ctx, raw)
 	if err != nil {
 		return "", err
@@ -218,54 +202,11 @@ func (s *Server) owner(ctx context.Context, v *oidc.IDTokenVerifier, raw string,
 	if err := tok.Claims(&claims); err != nil {
 		return "", err
 	}
-	if late := time.Since(tok.Expiry); late > 0 {
-		sid, _ := claims["sid"].(string)
-		if late > expiredGrace || !sameLogin(refresh, tok.Subject, sid) {
-			slog.DebugContext(ctx, "expired id token not refreshable", "late_s", int(late.Seconds()),
-				"refresh_cookies", len(refresh), "refresh_jwts", countJWTs(refresh), "id_token_sid", sid != "")
-			return "", &oidc.TokenExpiredError{Expiry: tok.Expiry}
-		}
-	}
 	o, _ := claims[s.UserClaim].(string)
 	if o == "" {
 		return "", http.ErrNoCookie // any error: treated as an invalid token
 	}
 	return o, nil
-}
-
-// sameLogin reports whether there is at least one refresh token and every one is a JWT of the subject sub and, when
-// both carry one, of the login session sid. The payload is read without verifying the signature: Keycloak verifies
-// the refresh token when the oauth2 filter uses it, so a forged one only ends in a new login.
-func sameLogin(refresh []string, sub, sid string) bool {
-	if len(refresh) == 0 || sub == "" {
-		return false
-	}
-	for _, raw := range refresh {
-		parts := strings.Split(raw, ".")
-		if len(parts) != 3 {
-			return false
-		}
-		payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return false
-		}
-		var c struct{ Sub, Sid string }
-		if json.Unmarshal(payload, &c) != nil || c.Sub != sub || (sid != "" && c.Sid != "" && c.Sid != sid) {
-			return false
-		}
-	}
-	return true
-}
-
-// countJWTs counts the values that look like a JWT, for the debug log; it never logs a value.
-func countJWTs(values []string) int {
-	n := 0
-	for _, v := range values {
-		if strings.Count(v, ".") == 2 {
-			n++
-		}
-	}
-	return n
 }
 
 // login builds the redirect that restarts the login; it falls back to a 403 for odd hosts or paths.
