@@ -96,3 +96,15 @@ authz then sees no JWT and every request ends in a fresh login (found in the kin
 The SecurityPolicy therefore sets `oidc.disableTokenEncryption: true`.
 The cookies stay `Secure` and `HttpOnly` and are scoped to the instance host.
 The agent strips all gateway login cookies (`eduide-id`, `IdToken*`, `AccessToken*`, `RefreshToken*`, `OauthHMAC*`, `OauthExpires*`, `OauthNonce*`, `CodeVerifier*`) before a request reaches the IDE, so code in the IDE never sees the tokens.
+
+## Amendment 2026-11-19: no login redirect for XHR and WebSocket requests
+
+Every login redirect of the oauth2 filter sets two new flow cookies (`OauthNonce-*.<flow>`, `CodeVerifier.<flow>`, Max-Age 600).
+XHR, fetch and WebSocket requests cannot follow the redirect to Keycloak (CORS), so an IDE that retried every second collected about 100 cookies within a minute; Envoy then rejected every request of that browser to the instance host with `http2.too_many_headers` for up to 10 minutes (found on test3).
+The SecurityPolicy therefore sets `oidc.denyRedirect` for requests with `Sec-Fetch-Mode` `cors`, `no-cors`, `same-origin` or `websocket`: they get a 401 and no flow cookies.
+Page navigations (`navigate`) still log in through the redirect.
+
+Open: Envoy sets the Max-Age of the ID token cookie to the token lifetime, so the browser drops the cookie when the token expires (Keycloak default 5 minutes).
+Because ext_authz runs before oauth2, the refresh with `refreshToken: true` never happens: authz sees no ID token and restarts the login.
+A page navigation passes through a silent Keycloak round trip, but an open IDE whose WebSocket reconnects, or that needs a new HTTP request, gets a 401 until the student reloads the page.
+An expired ID token cannot be accepted by authz instead, because the cookie is gone.

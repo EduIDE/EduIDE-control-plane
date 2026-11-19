@@ -85,6 +85,12 @@ spec:
     # authz verifies the ID token cookie itself because ext_authz runs before oauth2 (ADR 0005);
     # the agent strips these cookies before requests reach the IDE.
     disableTokenEncryption: true
+    # XHR, fetch and WebSocket requests get a 401 instead of the login redirect. They cannot follow it to Keycloak
+    # (CORS), and every redirect sets two new flow cookies (Max-Age 600), so an IDE that retries would push the
+    # browser past Envoy's limit of 100 request headers and lock it out of the instance host for 10 minutes.
+    denyRedirect:
+      headers:
+      - {name: Sec-Fetch-Mode, type: RegularExpression, value: "cors|no-cors|same-origin|websocket"}
     scopes: [openid, profile, email]
   extAuth:
     failOpen: false
