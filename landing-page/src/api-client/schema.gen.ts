@@ -392,7 +392,7 @@ export interface components {
              * @description Stable machine-readable code. New codes may be added within v1.
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-in-use" | "session-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
+            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
             /** @description Running sessions of the user, only with `session-limit-reached`. */
             sessions?: components["schemas"]["Session"][];
         };

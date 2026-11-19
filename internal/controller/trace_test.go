@@ -152,7 +152,8 @@ func TestLaunchTraceStructure(t *testing.T) {
 	}
 	eventually(t, "ready", func() bool { st = sessionStatus("s-trace"); return st.Phase == v1.SessionReady })
 
-	ready := st.Timestamps.Ready.Time
+	// Milestones come from the agent with full precision, after the operator saw the session Ready.
+	ready := clk.Now()
 	agent.set(func(a *fakeAgent) {
 		a.milestones = []agentapi.Milestone{ms("claim-received", ready), ms("data-delivered", ready.Add(3200*time.Millisecond)),
 			ms("first-request", ready.Add(time.Second)), ms("plugin-host-started", ready.Add(3*time.Second)), ms("workspace-ready", ready.Add(5*time.Second))}
