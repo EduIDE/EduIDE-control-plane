@@ -51,7 +51,7 @@ spec:
       {{- end }}
       containers:
       - name: pool-scaler
-        image: {{ .Values.poolScaler.image.repository }}:{{ .Values.poolScaler.image.tag | default .Chart.AppVersion }}
+        image: {{ .Values.poolScaler.image.repository }}:{{ .Values.poolScaler.image.tag | default .Values.image.tag | default .Chart.AppVersion }}
         imagePullPolicy: {{ .Values.image.pullPolicy }}
         args: [--config, /etc/pool-scaler/config.yaml]
         env:

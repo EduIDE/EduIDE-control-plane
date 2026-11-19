@@ -92,6 +92,8 @@ for v in "$cp"/ci/*-values.yaml; do
   ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
   grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
   grep -q 'alert: EduIDECertificateNotReady' <<<"$mon" || fail "certificate alerts missing"
+  ps=$(helm template r "$cp" -f "$v" -n ns --set poolScaler.enabled=true --set image.tag=sha-abc1234)
+  grep -q 'pool-scaler:sha-abc1234' <<<"$ps" || fail "pool scaler ignores image.tag"
   ok "alerts and dashboard per namespace ($v)"
 
   mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
