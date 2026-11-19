@@ -10,6 +10,7 @@
 #   E2E_SKIP_IMAGES=1 do not build and load images
 #   E2E_SKIP_BROWSER=1 skip the Playwright test
 #   E2E_RUN          go test -run expression
+#   EG_VERSION       Envoy Gateway version (default v1.8.3, the version of the test cluster)
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -18,7 +19,7 @@ CLUSTER=${E2E_CLUSTER:-eduide-e2e}
 PORT=${E2E_PORT:-18443}
 TAG=${TAG:-e2e}
 NS=eduide-e2e
-EG_VERSION=v1.8.3
+EG_VERSION=${EG_VERSION:-v1.8.3}
 CALICO_VERSION=v3.33.1
 KIND_VERSION=v0.33.0
 HOSTS=ide.e2e.test,instance.ide.e2e.test,webview.instance.ide.e2e.test,keycloak.e2e.test,smoke.e2e.test
