@@ -67,7 +67,7 @@ func instanceLabels(template, instance string, extra map[string]string) map[stri
 	return l
 }
 
-// buildPod renders a session pod. claimName is the workspace PVC, empty for an emptyDir.
+// buildPod renders a session pod. claimName is the workspace PVC, empty for none: nothing is mounted then, so the IDE sees no separate volume and writes to its container filesystem.
 func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]string, claimName string) *corev1.Pod {
 	port := t.Spec.Port
 	if port == 0 {
@@ -88,8 +88,10 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 	}
 	ide := corev1.Container{
 		Name: "ide", Image: t.Spec.Image, ImagePullPolicy: t.Spec.ImagePullPolicy, Env: env,
-		Resources:    t.Spec.Resources,
-		VolumeMounts: []corev1.VolumeMount{{Name: "workspace", MountPath: mount}},
+		Resources: t.Spec.Resources,
+	}
+	if claimName != "" {
+		ide.VolumeMounts = []corev1.VolumeMount{{Name: "workspace", MountPath: mount}}
 	}
 	podSec := &corev1.PodSecurityContext{SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}}
 	yes, no := true, false
@@ -116,15 +118,15 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 	}
-	ws := corev1.Volume{Name: "workspace", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}
-	if claimName != "" {
-		ws.VolumeSource = corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}
-	}
 	mode := int32(0o444)
 	tok := corev1.Volume{Name: "token", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 		SecretName: tokenName(instance), DefaultMode: &mode,
 		Items: []corev1.KeyToPath{{Key: v1.InstanceTokenKey, Path: v1.InstanceTokenKey}},
 	}}}
+	volumes := []corev1.Volume{tok}
+	if claimName != "" {
+		volumes = []corev1.Volume{{Name: "workspace", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}}}, tok}
+	}
 	ann := map[string]string{v1.AnnotationSpecHash: d.specHash(t)}
 	if b := t.Spec.Bandwidth; b != nil {
 		if b.Ingress != nil {
@@ -142,7 +144,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			TerminationGracePeriodSeconds: &grace,
 			NodeSelector:                  pl.NodeSelector, Tolerations: pl.Tolerations, Affinity: pl.Affinity,
 			Containers: []corev1.Container{ide, agent},
-			Volumes:    []corev1.Volume{ws, tok},
+			Volumes:    volumes,
 		},
 	}
 }

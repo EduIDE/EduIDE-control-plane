@@ -192,6 +192,10 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 			res, err := r.fail(ctx, s, v1.ErrorWorkspaceInUse, "the workspace is used by another running session")
 			return nil, res, err
 		}
+		if ws.VolumeLost() {
+			res, err := r.fail(ctx, s, v1.ErrorWorkspaceLost, fmt.Sprintf("the volume of workspace %s is gone", ref))
+			return nil, res, err
+		}
 		if ws.Status.Phase != v1.WorkspaceReady || ws.Status.ClaimName == "" {
 			// The workspace watch wakes the session when the volume is there.
 			orig := s.DeepCopy()

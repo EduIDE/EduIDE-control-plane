@@ -26,7 +26,7 @@ Notes:
 ### Session phases
 
 `Pending`, `Starting`, `Ready`, `Failed`.
-Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `workspace-in-use` (unused since U14), `start-failed`.
+Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `workspace-lost`, `workspace-in-use` (unused since U14), `start-failed`.
 A session that has an instance keeps running when its template is deleted; it ends by the default timeouts. Only a session without an instance fails with `template-not-found`.
 Duration fields (`timeouts.*`, `retention`) accept Go durations such as `90m` or `48h`; the CRD rejects `2d`. `timeouts.max` must not be shorter than `timeouts.idle`.
 Timestamps in `status.timestamps`: `claimed`, `podReady`, `agentReady`, `ready` (see [start-path.md](start-path.md)).
@@ -88,7 +88,7 @@ Kubernetes garbage collection removes dependents. No manual cleanup.
 ## Session pod
 
 Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`).
-The workspace mounts at `persistence.mountPath` (default `/home/project`), otherwise an `emptyDir`.
+The workspace mounts at `persistence.mountPath` (default `/home/project`), otherwise nothing is mounted (sessions with persistence `none` write to the container filesystem).
 Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egress-bandwidth` come from the template.
 
 ## Deployment config

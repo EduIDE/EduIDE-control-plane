@@ -26,6 +26,7 @@ const (
 	CodePersistence       ProblemCode = "persistence-not-allowed"
 	CodeTemplateNotFound  ProblemCode = "template-not-found"
 	CodeWorkspaceNotFound ProblemCode = "workspace-not-found"
+	CodeWorkspaceLost     ProblemCode = "workspace-lost"
 	CodeWorkspaceInUse    ProblemCode = "workspace-in-use"
 	CodeSessionLimit      ProblemCode = "session-limit-reached"
 	CodeRateLimited       ProblemCode = "rate-limited"
@@ -42,6 +43,7 @@ var problemStatus = map[ProblemCode]int{
 	CodePersistence:       http.StatusBadRequest,
 	CodeTemplateNotFound:  http.StatusNotFound,
 	CodeWorkspaceNotFound: http.StatusNotFound,
+	CodeWorkspaceLost:     http.StatusConflict,
 	CodeWorkspaceInUse:    http.StatusConflict,
 	CodeSessionLimit:      http.StatusConflict,
 	CodeRateLimited:       http.StatusTooManyRequests,

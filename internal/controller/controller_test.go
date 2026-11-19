@@ -386,7 +386,7 @@ func TestWorkspaceSessionAndExpiry(t *testing.T) {
 	eventually(t, "session pod", func() bool { st = sessionStatus("s-ws"); return st.PodName != "" })
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
 	_ = get(pod)
-	if st.StartStrategy != v1.StartCold || pod.Spec.Volumes[0].PersistentVolumeClaim == nil || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "w-test" {
+	if st.StartStrategy != v1.StartCold || len(pod.Spec.Volumes) == 0 || pod.Spec.Volumes[0].PersistentVolumeClaim == nil || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "w-test" {
 		t.Errorf("session with workspace: %+v %+v", st, pod.Spec.Volumes[0])
 	}
 	clk.Step(2 * time.Hour)
@@ -1166,4 +1166,34 @@ func TestPressureMayEvict(t *testing.T) {
 	if p.mayEvict("np", "a") || !p.mayEvict("np", "b") {
 		t.Error("after the window only a different pod may go")
 	}
+}
+
+func TestWorkspaceVolumeLost(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-lost"))
+	ws := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-lost", Namespace: testNS},
+		Spec: v1.IDEWorkspaceSpec{Owner: "carol", TemplateRef: "tpl-lost", Persistence: v1.WorkspacePersistence{Mode: v1.WorkspaceVolume}}}
+	mustCreate(t, ws)
+	eventually(t, "workspace ready", func() bool { _ = get(ws); return ws.Status.Phase == v1.WorkspaceReady })
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "w-lost", Namespace: testNS}}
+	if err := k8s.Delete(context.Background(), pvc); err != nil {
+		t.Fatal(err)
+	}
+	// envtest has no PVC protection controller, so drop its finalizer.
+	_ = get(pvc)
+	pvc.Finalizers = nil
+	_ = k8s.Update(context.Background(), pvc)
+	eventually(t, "volume lost", func() bool { _ = get(ws); return ws.VolumeLost() })
+	if ws.Status.Phase != v1.WorkspaceReady {
+		t.Errorf("phase changed to %s", ws.Status.Phase)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := get(pvc); err == nil {
+		t.Fatal("the operator recreated an empty claim")
+	}
+	if !logs.has("workspace volume lost", "workspace", "w-lost") {
+		t.Error("the loss is not logged")
+	}
+	createSession(t, "s-lost", "tpl-lost", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-lost" })
+	eventually(t, "session fails", func() bool { return sessionStatus("s-lost").ErrorCode == v1.ErrorWorkspaceLost })
 }

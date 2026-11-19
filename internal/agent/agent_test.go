@@ -513,3 +513,26 @@ func TestMilestonesBounded(t *testing.T) {
 		t.Errorf("allowlist (%d) plus agent milestones exceed the bound", len(reportable))
 	}
 }
+
+func TestExpiredNoticesAreDropped(t *testing.T) {
+	a := newAgent(t, "1")
+	past := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	for _, at := range []string{past, future} {
+		body := `{"kind":"max-warning","message":"soon","at":"` + at + `"}`
+		if w := do(t, a.ControlHandler(), "POST", "/v1/notify", body, bearer); w.Code != 204 {
+			t.Fatalf("notify: %d", w.Code)
+		}
+	}
+	s, _ := poll(t, a, "after=0&timeout=0")
+	if s.Notices == nil || len(*s.Notices) != 1 || (*s.Notices)[0].At.Before(time.Now()) {
+		t.Errorf("notices: %+v", s.Notices)
+	}
+	// A queued notice that expires later disappears from the snapshot.
+	a.mu.Lock()
+	a.notices[0].At = new(time.Now().Add(-time.Second))
+	a.mu.Unlock()
+	if s, _ := poll(t, a, "after=0&timeout=0"); s.Notices != nil {
+		t.Errorf("expired notice still served: %+v", s.Notices)
+	}
+}

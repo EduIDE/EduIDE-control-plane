@@ -19,7 +19,7 @@ function show(client: () => AgentClient | undefined, n: Notice) {
 
 export function activate(context: vscode.ExtensionContext) {
   // Loopback only: launch data never comes from anywhere else.
-  const c = new AgentClient({ baseUrl: "http://127.0.0.1:8082", onNotice: (n) => show(() => client, n) });
+  const c = new AgentClient({ baseUrl: "http://127.0.0.1:8082", onNotice: (n) => show(() => client, n), store: context.globalState });
   client = c;
   c.start();
   void c.milestone("plugin-host-started");

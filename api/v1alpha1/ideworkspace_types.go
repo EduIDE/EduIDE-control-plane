@@ -1,6 +1,7 @@
 package v1alpha1
 
 import (
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -97,3 +98,12 @@ type IDEWorkspaceList struct {
 }
 
 func init() { register(&IDEWorkspace{}, &IDEWorkspaceList{}) }
+
+// ReasonVolumeLost is the reason of Ready=False when the PVC of a bound workspace is gone.
+const ReasonVolumeLost = "VolumeLost"
+
+// VolumeLost reports whether the volume of a bound workspace disappeared.
+func (w *IDEWorkspace) VolumeLost() bool {
+	c := meta.FindStatusCondition(w.Status.Conditions, ConditionReady)
+	return c != nil && c.Status == metav1.ConditionFalse && c.Reason == ReasonVolumeLost
+}

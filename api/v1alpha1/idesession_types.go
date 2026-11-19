@@ -45,6 +45,7 @@ const (
 	ErrorCapacityExhausted = "capacity-exhausted"
 	ErrorTemplateNotFound  = "template-not-found"
 	ErrorWorkspaceNotFound = "workspace-not-found"
+	ErrorWorkspaceLost     = "workspace-lost" // the volume of a bound workspace is gone
 	ErrorStartFailed       = "start-failed"
 	ErrorWorkspaceInUse    = "workspace-in-use" // unused since U14, kept for compatibility
 )

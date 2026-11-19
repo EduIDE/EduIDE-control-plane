@@ -207,6 +207,21 @@ func TestLaunchPersistence(t *testing.T) {
 	if p := problemCode(t, e, "POST", "/sessions", "alice", map[string]any{"template": "java", "workspace": *s.Workspace, "persistence": "none"}, 400); p.Code != CodeInvalidInput {
 		t.Fatalf("code %s", p.Code)
 	}
+	// A workspace whose volume is lost refuses new sessions (an existing one with the same launch key is not new).
+	var running v1alpha1.IDESessionList
+	_ = e.k.List(context.Background(), &running)
+	for i := range running.Items {
+		_ = e.k.Delete(context.Background(), &running.Items[i])
+	}
+	var lost v1alpha1.IDEWorkspace
+	_ = e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: *s.Workspace}, &lost)
+	lost.Status.Conditions = []metav1.Condition{{Type: v1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: v1alpha1.ReasonVolumeLost, LastTransitionTime: metav1.Now()}}
+	if err := e.k.Update(context.Background(), &lost); err != nil {
+		t.Fatal(err)
+	}
+	if p := problemCode(t, e, "POST", "/sessions", "alice", launchBody(map[string]any{"workspace": *s.Workspace}), 409); p.Code != CodeWorkspaceLost {
+		t.Fatalf("code %s", p.Code)
+	}
 }
 
 func TestSessionLimitAndRate(t *testing.T) {
