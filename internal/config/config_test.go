@@ -25,6 +25,9 @@ func TestParseDefaults(t *testing.T) {
 		c.Capacity.ExhaustedAfter.Duration != 45*time.Second || c.Gateway.Namespace != "eduide-test" {
 		t.Fatalf("defaults not applied: %+v", c)
 	}
+	if c.Security.HSTSIncludeSubdomains == nil || !*c.Security.HSTSIncludeSubdomains {
+		t.Fatal("hstsIncludeSubdomains must default to true")
+	}
 	if got := c.InstanceURL("abc"); got != "https://instance.ide.example.org/abc/" {
 		t.Fatal(got)
 	}

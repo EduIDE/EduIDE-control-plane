@@ -4,70 +4,70 @@ groups:
   - alert: EduIDEAuthzDenyRateHigh
     expr: sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__", result="deny"}[5m])) / sum(rate(eduide_authz_decisions_total{namespace="__NAMESPACE__"}[5m])) > 0.2
     for: 10m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: More than 20% of session access checks are denied
       description: Authz denies {{ $value | humanizePercentage }} of its decisions. Check the reasons in eduide_authz_decisions_total and whether authz can list sessions.
   - alert: EduIDEAuthzSlow
     expr: histogram_quantile(0.99, sum by (le) (rate(eduide_authz_check_seconds_bucket{namespace="__NAMESPACE__"}[5m]))) > 0.25
     for: 10m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: Session access checks are slow
       description: The p99 of an ext_authz check is {{ $value | humanizeDuration }}. Every request to a session waits for it.
   - alert: EduIDEAuthzDown
     expr: sum(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-authz-.*"}) == 0 or absent(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-authz-.*"})
     for: 5m
-    labels: {severity: critical, eduide_namespace: __NAMESPACE__}
+    labels: {severity: critical, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: No authz replica is scraped
       description: The SecurityPolicy fails closed, so no session can be opened while authz is down.
   - alert: EduIDELaunchFailures
     expr: sum(increase(eduide_session_startup_seconds_count{namespace="__NAMESPACE__", result="failed"}[15m])) > 3
     for: 5m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: Sessions fail to start
       description: '{{ $value }} sessions failed to start in the last 15 minutes.'
   - alert: EduIDEApiErrors
     expr: sum(rate(eduide_api_requests_total{namespace="__NAMESPACE__", code=~"5.."}[5m])) / sum(rate(eduide_api_requests_total{namespace="__NAMESPACE__"}[5m])) > 0.05
     for: 10m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: More than 5% of API requests fail with 5xx
       description: The service answers {{ $value | humanizePercentage }} of its requests with a server error.
   - alert: EduIDECapacityPressure
     expr: max by (node_pool) (eduide_capacity_pressure{namespace="__NAMESPACE__"}) == 1
     for: 5m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: Node pool {{ $labels.node_pool }} cannot place session pods
       description: The operator evicts idle pods and keeps the pools at 0 idle. Sessions fail with capacity-exhausted after the configured time.
   - alert: EduIDEPoolEmpty
     expr: eduide_pool_target_idle{namespace="__NAMESPACE__"} > 0 and on (pool) eduide_pool_instances{namespace="__NAMESPACE__", state="idle_ready"} == 0
     for: 10m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: Pool {{ $labels.pool }} has no ready idle instance
       description: Launches from this pool start cold while the target is above 0.
   - alert: EduIDEOperatorDown
     expr: sum(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-operator-.*"}) == 0 or absent(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-operator-.*"})
     for: 5m
-    labels: {severity: critical, eduide_namespace: __NAMESPACE__}
+    labels: {severity: critical, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: The operator is not scraped
       description: Running sessions go on, but no session starts, ends or expires while the operator is down.
   - alert: EduIDEServiceDown
     expr: sum(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-service-.*"}) == 0 or absent(up{namespace="__NAMESPACE__", pod=~"__FULLNAME__-service-.*"})
     for: 5m
-    labels: {severity: critical, eduide_namespace: __NAMESPACE__}
+    labels: {severity: critical, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: No service replica is scraped
       description: Nobody can launch a session or see the overview while the service is down.
   - alert: EduIDEAgentRequestErrors
     expr: sum(rate(eduide_agent_requests_total{namespace="__NAMESPACE__", result="error"}[5m])) / sum(rate(eduide_agent_requests_total{namespace="__NAMESPACE__"}[5m])) > 0.1
     for: 10m
-    labels: {severity: warning, eduide_namespace: __NAMESPACE__}
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
     annotations:
       summary: More than 10% of operator calls to agents fail
       description: The operator cannot reach the agents of {{ $value | humanizePercentage }} of its calls. Check session pods, their NetworkPolicies and the agent logs.

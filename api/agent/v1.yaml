@@ -100,6 +100,22 @@ paths:
       description: Sent by the extension on real user input, at most once per minute.
       responses:
         "204": {description: Recorded.}
+  /v1/milestones:
+    post:
+      operationId: reportMilestone
+      tags: [local]
+      description: |
+        Sent by the extension once per milestone of the IDE start (ADR 0013). The agent keeps the first report per name and
+        returns all milestones in `GET /v1/status`, so the operator can turn them into trace spans without the agent
+        needing network egress. Allowed names: `plugin-host-started`, `workspace-ready`, `clone-done`, `first-input`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/Milestone"}
+      responses:
+        "204": {description: Recorded or already known.}
+        "400": {description: "Malformed body, name not in the allowlist, or a timestamp more than a minute in the future."}
 components:
   securitySchemes:
     instanceToken: {type: http, scheme: bearer}
@@ -126,6 +142,19 @@ components:
           format: date-time
           description: Latest extension heartbeat since the claim (proxied requests do not count). Absent without any heartbeat since the claim.
         connections: {type: integer, description: "Open proxied WebSocket connections. 0 after the claim counts as no browser (G7)."}
+        milestones:
+          type: array
+          description: |
+            Moments of the IDE start, at most one per name, at most 8 entries. Set by the agent: `claim-received`, `first-request`
+            (first proxied request after the claim), `first-websocket` (first WebSocket upgrade), `data-delivered` (long-poll answered
+            with launch data). Reported by the extension: see POST /v1/milestones.
+          items: {$ref: "#/components/schemas/Milestone"}
+    Milestone:
+      type: object
+      required: [name, at]
+      properties:
+        name: {type: string}
+        at: {type: string, format: date-time}
     Notice:
       type: object
       required: [kind, message]

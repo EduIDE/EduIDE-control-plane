@@ -16,6 +16,14 @@ spec:
     - path: {type: PathPrefix, value: /api/}
     backendRefs:
     - {name: {{ $full }}-service, port: 8080}
+  # Server-Sent Events streams stay open; Envoy would end them after its default request timeout (15 s).
+  # The service sends a ping comment every 15 s, so no proxy closes them for idleness.
+  - matches:
+    - path: {type: RegularExpression, value: "^/api/v1/.*/events$"}
+    timeouts:
+      request: 0s
+    backendRefs:
+    - {name: {{ $full }}-service, port: 8080}
 ---
 # Catch-all for the instance and webview host. Session routes match longer prefixes and win. Every other path,
 # such as an unknown instance id or the OIDC callback, passes the SecurityPolicy like a session path does (login redirect

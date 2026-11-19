@@ -29,11 +29,11 @@ Chosen option: "`none` and `volume` now, `snapshot` later".
 
 | | without prewarming | with prewarming |
 |---|---|---|
-| `none` | cold start, `emptyDir` | claim an idle pod, `emptyDir` |
+| `none` | cold start, no mount | claim an idle pod, no mount |
 | `volume` | create or reuse the PVC, cold start | cold start; the pool serves only sessions without persistence, `status.startStrategy` is `cold` |
 
 - `IDEWorkspace.spec.persistence.mode` is an enum with only `volume` today. It is immutable. Adding `snapshot` is an additive enum change ([0011](0011-crd-versioning-cel.md)).
-- A session without `workspaceRef` has no persistence (`emptyDir`). A template lists allowed and default modes.
+- A session without `workspaceRef` has no persistence: the pod mounts nothing at the workspace path, so the IDE does not report a saved workspace and writes to its container filesystem (node ephemeral storage). A template lists allowed and default modes.
 - `existingClaimName` imports an existing PVC for the migration. Import sets `status.lastUsed` to the import time ([0017](0017-migration-parallel-run.md)).
 - Launch is idempotent (G14): the key is template plus workspace, and for sessions without persistence template plus a hash of the start data. Stopping always discards the pod; `volume` workspaces stay.
 - Workspace expiry (G19), done by the operator ([0002](0002-go-single-module-four-binaries.md)), replaces the old garbage collector:
@@ -42,7 +42,7 @@ Chosen option: "`none` and `volume` now, `snapshot` later".
   - Two stages: phase `Expired`, then after the grace period (24 h) PVC and CR are deleted. The annotation `eduide.github.io/retain=true` cancels expiry.
   - The overview warns three days before expiry, and starting the workspace extends it ([0010](0010-rest-api-spec-first.md)).
 - The session finalizer records the workspace usage at the end of a session.
-- `snapshot` (phase 9, optional, lowest priority) would let the agent load a tar+zstd archive from an S3-compatible store into an `emptyDir` on claim and save it at the end and periodically. It needs an object store, which no cluster has today. Nothing but the extensible enum and the agent claim protocol is prepared now.
+- `snapshot` (phase 9, optional, lowest priority) would let the agent load a tar+zstd archive from an S3-compatible store into an `emptyDir` (added then) on claim and save it at the end and periodically. It needs an object store, which no cluster has today. Nothing but the extensible enum and the agent claim protocol is prepared now.
 
 ### Consequences
 

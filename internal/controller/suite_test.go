@@ -125,6 +125,10 @@ type fakeAgent struct {
 	down     bool
 	// unclaimed makes /v1/status report claimed=false, as an agent that restarted does.
 	unclaimed bool
+	// conflicts makes the next claim calls answer 409, as an agent claimed out of band does.
+	conflicts int
+	// milestones are what /v1/status reports.
+	milestones []agentapi.Milestone
 }
 
 func (a *fakeAgent) set(f func(*fakeAgent)) {
@@ -141,13 +145,18 @@ func (a *fakeAgent) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/claim":
 		var c agentapi.ClaimRequest
 		_ = json.NewDecoder(r.Body).Decode(&c)
+		if a.conflicts > 0 {
+			a.conflicts--
+			w.WriteHeader(http.StatusConflict)
+			return
+		}
 		a.claims = append(a.claims, c)
 	case "/v1/status":
 		if a.down {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: !a.unclaimed, Ready: !a.unclaimed, LastActivity: a.activity})
+		_ = json.NewEncoder(w).Encode(agentapi.Status{Claimed: !a.unclaimed, Ready: !a.unclaimed, LastActivity: a.activity, Milestones: &a.milestones})
 	case "/v1/notify":
 		var n agentapi.Notice
 		_ = json.NewDecoder(r.Body).Decode(&n)

@@ -19,6 +19,8 @@ export interface EnvState {
 export interface AgentClientOptions {
   baseUrl: string;
   onNotice: (n: Notice) => void;
+  // Remembers shown notices across IDE reloads (a VS Code Memento such as globalState).
+  store?: { get<T>(key: string, fallback: T): T; update(key: string, value: unknown): Thenable<void> | Promise<void> };
   pollTimeoutSec?: number;
   minBackoffMs?: number;
   maxBackoffMs?: number;
@@ -26,12 +28,15 @@ export interface AgentClientOptions {
   now?: () => number;
 }
 
+const STORE_KEY = "eduide.shownNotices";
+const MAX_REMEMBERED = 32;
 const noticeKey = (n: Notice) => `${n.kind}|${n.at ?? ""}|${n.message}`;
 
 export class AgentClient {
   private version = 0;
   private session: LocalSession = { version: 0, claimed: false };
   private seen = new Set<string>();
+  private milestones = new Set<string>();
   private lastHeartbeat = -Infinity;
   private abort = new AbortController();
   private stopped = false;
@@ -67,6 +72,8 @@ export class AgentClient {
       return;
     }
     this.lastHeartbeat = now;
+    // The first heartbeat that goes out marks the first user input.
+    void this.milestone("first-input");
     try {
       const r = await fetch(`${this.o.baseUrl}/v1/heartbeat`, {
         method: "POST",
@@ -80,15 +87,46 @@ export class AgentClient {
     }
   }
 
+  // Reports a milestone once per name. The agent keeps the first report, so errors are ignored after one retry.
+  async milestone(name: string, at: string = new Date().toISOString()): Promise<void> {
+    if (this.milestones.has(name)) {
+      return;
+    }
+    this.milestones.add(name);
+    for (let i = 0; i < 2; i++) {
+      try {
+        await fetch(`${this.o.baseUrl}/v1/milestones`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name, at }),
+          signal: this.abort.signal,
+        });
+        return;
+      } catch {
+        // retry once on network failure
+      }
+    }
+  }
+
   private apply(s: LocalSession) {
     this.session = s;
     this.version = s.version;
     for (const n of s.notices ?? []) {
       const k = noticeKey(n);
-      if (!this.seen.has(k)) {
-        this.seen.add(k);
-        this.o.onNotice(n);
+      if (this.seen.has(k)) {
+        continue;
       }
+      this.seen.add(k);
+      // Notices with an end time are remembered by kind and end time; the end time ends their relevance.
+      const pk = n.at ? `${n.kind}|${n.at}` : undefined;
+      const shown = pk ? this.o.store?.get<string[]>(STORE_KEY, []) ?? [] : [];
+      if (pk && shown.includes(pk)) {
+        continue;
+      }
+      if (pk) {
+        void this.o.store?.update(STORE_KEY, [...shown, pk].slice(-MAX_REMEMBERED));
+      }
+      this.o.onNotice(n);
     }
   }
 

@@ -34,6 +34,7 @@ for v in "$cp"/ci/*-values.yaml; do
   docs() { echo "$out" | yq -o=json -I=0 "select($1)"; }
 
   grep -q 'failOpen: false' <<<"$out" || fail "SecurityPolicy failOpen: false missing ($v)"
+  grep -q 'value: "^/api/v1/.\*/events$"' <<<"$out" || fail "no SSE route rule without request timeout ($v)"
   [ "$(docs '.kind == "SecurityPolicy"' | wc -l)" -eq 1 ] || fail "expected one SecurityPolicy"
   [ "$(docs '.kind == "NetworkPolicy"' | wc -l)" -ge 3 ] || fail "NetworkPolicies missing ($v)"
   ! grep -qE '^kind: Ingress$' <<<"$out" || fail "chart renders an Ingress"
@@ -90,6 +91,12 @@ for v in "$cp"/ci/*-values.yaml; do
   ! echo "$rules" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+([^{a-z_]|$)' || fail "an alert expression lacks the namespace selector"
   grep -q 'label_values(eduide_sessions, namespace)' <<<"$mon" || fail "dashboard lacks the namespace variable"
   ok "alerts and dashboard per namespace ($v)"
+
+  mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
+  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[]')
+  [ "$(echo "$rules" | yq -p=json 'select(.labels.namespace != "eduide-system" or .labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "extraLabels missing on an alert"
+  [ "$(echo "$mon" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-dashboard") | .metadata.namespace')" = "grafana" ] || fail "dashboard namespace not set"
+  ok "alert extraLabels and dashboard namespace ($v)"
 
   # Admin API (U16): the service may read events and quotas, the scaler may write events, the config carries the role and the scaler interval.
   svc=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules')

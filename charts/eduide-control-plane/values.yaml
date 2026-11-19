@@ -184,8 +184,13 @@ monitoring:
   rules:
     enabled: false
     labels: {}
+    # Extra labels on every alert, e.g. {namespace: eduide-system} when the AlertmanagerConfig routes on that
+    # namespace. eduide_namespace stays the real namespace.
+    extraLabels: {}
   # Grafana dashboard ConfigMap, picked up by the sidecar through the label.
   dashboard:
     enabled: false
+    # Namespace of the ConfigMap, for Grafana sidecars that only watch one namespace. Default: release namespace.
+    namespace: ""
     labels:
       grafana_dashboard: "1"

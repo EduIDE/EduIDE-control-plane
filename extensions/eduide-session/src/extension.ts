@@ -19,9 +19,13 @@ function show(client: () => AgentClient | undefined, n: Notice) {
 
 export function activate(context: vscode.ExtensionContext) {
   // Loopback only: launch data never comes from anywhere else.
-  const c = new AgentClient({ baseUrl: "http://127.0.0.1:8082", onNotice: (n) => show(() => client, n) });
+  const c = new AgentClient({ baseUrl: "http://127.0.0.1:8082", onNotice: (n) => show(() => client, n), store: context.globalState });
   client = c;
   c.start();
+  void c.milestone("plugin-host-started");
+  if (vscode.workspace.workspaceFolders?.length) {
+    void c.milestone("workspace-ready");
+  }
 
   const beat = () => void c.heartbeat();
   context.subscriptions.push(
@@ -29,6 +33,11 @@ export function activate(context: vscode.ExtensionContext) {
       Array.isArray(keys) ? c.getEnv(keys.map(String)) : {},
     ),
     vscode.commands.registerCommand("dataBridge.getEnvState", () => c.getEnvState()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      if (vscode.workspace.workspaceFolders?.length) {
+        void c.milestone("workspace-ready");
+      }
+    }),
     vscode.workspace.onDidChangeTextDocument((e) => {
       // Output channels and similar are not user input.
       if (e.document.uri.scheme === "file" || e.document.uri.scheme === "untitled") {

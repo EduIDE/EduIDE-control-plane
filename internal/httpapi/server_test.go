@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/config"
 )
 
 const gitURI = "https://git.example.org/course/ex01-ab12cde.git"
@@ -205,6 +206,21 @@ func TestLaunchPersistence(t *testing.T) {
 	}
 	ownedByWorkspace(decode[Session](t, rec).Name)
 	if p := problemCode(t, e, "POST", "/sessions", "alice", map[string]any{"template": "java", "workspace": *s.Workspace, "persistence": "none"}, 400); p.Code != CodeInvalidInput {
+		t.Fatalf("code %s", p.Code)
+	}
+	// A workspace whose volume is lost refuses new sessions (an existing one with the same launch key is not new).
+	var running v1alpha1.IDESessionList
+	_ = e.k.List(context.Background(), &running)
+	for i := range running.Items {
+		_ = e.k.Delete(context.Background(), &running.Items[i])
+	}
+	var lost v1alpha1.IDEWorkspace
+	_ = e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: *s.Workspace}, &lost)
+	lost.Status.Conditions = []metav1.Condition{{Type: v1alpha1.ConditionReady, Status: metav1.ConditionFalse, Reason: v1alpha1.ReasonVolumeLost, LastTransitionTime: metav1.Now()}}
+	if err := e.k.Update(context.Background(), &lost); err != nil {
+		t.Fatal(err)
+	}
+	if p := problemCode(t, e, "POST", "/sessions", "alice", launchBody(map[string]any{"workspace": *s.Workspace}), 409); p.Code != CodeWorkspaceLost {
 		t.Fatalf("code %s", p.Code)
 	}
 }
@@ -440,7 +456,7 @@ func TestResponsesCarryHSTS(t *testing.T) {
 			return rec
 		}(),
 	} {
-		if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000" {
+		if got := rec.Header().Get("Strict-Transport-Security"); got != "max-age=31536000; includeSubDomains" {
 			t.Errorf("%s: HSTS %q", name, got)
 		}
 		if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
@@ -469,5 +485,12 @@ func TestLaunchIsLoggedWithoutLaunchData(t *testing.T) {
 		if strings.Contains(out, bad) {
 			t.Errorf("log contains %q", bad)
 		}
+	}
+}
+
+func TestHSTSSubdomainsOptOut(t *testing.T) {
+	off := false
+	if got := hstsValue(&config.Config{Security: config.Security{HSTSIncludeSubdomains: &off}}); got != "max-age=31536000" {
+		t.Errorf("opt-out: %q", got)
 	}
 }

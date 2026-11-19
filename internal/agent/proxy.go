@@ -43,6 +43,7 @@ func (a *Agent) ProxyHandler() http.Handler {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
+		a.markOnce(&a.firstRequest, msFirstRequest)
 		if !a.log.Enabled(r.Context(), slog.LevelDebug) {
 			rp.ServeHTTP(&countingWriter{ResponseWriter: w, a: a}, r)
 			return
@@ -110,6 +111,7 @@ func (w *countingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 		return nil, nil, err
 	}
 	w.a.conns.Add(1)
+	w.a.markOnce(&w.a.firstUpgrade, msFirstUpgrade)
 	return &countedConn{Conn: c, a: w.a}, rw, nil
 }
 

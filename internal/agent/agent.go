@@ -31,7 +31,20 @@ const (
 	maxNotices    = 16
 	maxPollSecs   = 60
 	readyCacheTTL = time.Second
+	// maxMilestones is the number of distinct milestone names: four set by the agent, four reported by the extension.
+	maxMilestones = 8
 )
+
+// Milestones the agent sets itself.
+const (
+	msClaimReceived = "claim-received"
+	msFirstRequest  = "first-request"
+	msFirstUpgrade  = "first-websocket"
+	msDataDelivered = "data-delivered"
+)
+
+// reportable are the milestone names the extension may post on the local listener.
+var reportable = map[string]bool{"plugin-host-started": true, "workspace-ready": true, "clone-done": true, "first-input": true}
 
 // Agent holds the in-memory session state. Launch data never leaves memory and is never logged.
 type Agent struct {
@@ -48,6 +61,11 @@ type Agent struct {
 	data         map[string]string
 	notices      []agentapi.Notice
 	lastActivity time.Time
+
+	// milestones are the moments of the IDE start (ADR 0013): first report per name wins, so the list stays below maxMilestones.
+	milestones []agentapi.Milestone
+	// firstRequest, firstUpgrade and dataSent keep the proxy hot path off the mutex once the milestone is set.
+	firstRequest, firstUpgrade, dataSent atomic.Bool
 
 	readyMu   sync.Mutex
 	readyAt   time.Time
@@ -177,6 +195,7 @@ func (a *Agent) claim(w http.ResponseWriter, r *http.Request) {
 	if a.session == "" {
 		// heartbeats before the claim do not count as session activity
 		a.session, a.data, a.lastActivity = req.Session, req.Data, time.Time{}
+		a.addMilestone(msClaimReceived, time.Now())
 		if a.data == nil {
 			a.data = map[string]string{}
 		}
@@ -199,6 +218,10 @@ func (a *Agent) status(w http.ResponseWriter, _ *http.Request) {
 		t := a.lastActivity
 		st.LastActivity = &t
 	}
+	if len(a.milestones) > 0 {
+		m := slices.Clone(a.milestones)
+		st.Milestones = &m
+	}
 	a.mu.Unlock()
 	writeJSON(w, st)
 }
@@ -208,6 +231,12 @@ func (a *Agent) notify(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxClaimBytes)).Decode(&n); err != nil ||
 		!n.Kind.Valid() || utf8.RuneCountInString(n.Message) > 1024 {
 		http.Error(w, "invalid notice", http.StatusBadRequest)
+		return
+	}
+	if n.At != nil && n.At.Before(time.Now()) {
+		// The session has ended by then; showing it would only confuse the user.
+		a.log.Info("expired notice dropped", "kind", string(n.Kind))
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	a.mu.Lock()
@@ -222,10 +251,46 @@ func (a *Agent) notify(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// addMilestone records the first moment of a name. It must be called with a.mu held.
+func (a *Agent) addMilestone(name string, at time.Time) {
+	if len(a.milestones) >= maxMilestones || slices.ContainsFunc(a.milestones, func(m agentapi.Milestone) bool { return m.Name == name }) {
+		return
+	}
+	a.milestones = append(a.milestones, agentapi.Milestone{Name: name, At: at.UTC()})
+}
+
+// markOnce records an agent milestone the first time it happens after the claim. Traffic to an idle pod does not count.
+func (a *Agent) markOnce(done *atomic.Bool, name string) {
+	if done.Load() {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.session == "" {
+		return
+	}
+	done.Store(true)
+	a.addMilestone(name, time.Now())
+}
+
+func (a *Agent) milestone(w http.ResponseWriter, r *http.Request) {
+	var m agentapi.Milestone
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&m); err != nil || !reportable[m.Name] ||
+		m.At.IsZero() || m.At.After(time.Now().Add(time.Minute)) {
+		http.Error(w, "invalid milestone", http.StatusBadRequest)
+		return
+	}
+	a.mu.Lock()
+	a.addMilestone(m.Name, m.At)
+	a.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // LocalHandler serves the loopback endpoints for the eduide-session extension.
 func (a *Agent) LocalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/session", a.getSession)
+	mux.HandleFunc("POST /v1/milestones", a.milestone)
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		a.log.Debug("heartbeat")
 		a.mu.Lock()
@@ -252,8 +317,9 @@ func (a *Agent) snapshot() (agentapi.LocalSession, <-chan struct{}) {
 		}
 		s.Data = &d
 	}
-	if len(a.notices) > 0 {
-		n := append([]agentapi.Notice(nil), a.notices...)
+	// A notice can expire while it waits in the queue.
+	n := slices.DeleteFunc(slices.Clone(a.notices), func(n agentapi.Notice) bool { return n.At != nil && n.At.Before(time.Now()) })
+	if len(n) > 0 {
 		s.Notices = &n
 	}
 	return s, a.changed
@@ -278,17 +344,26 @@ func (a *Agent) getSession(w http.ResponseWriter, r *http.Request) {
 	for {
 		s, changed := a.snapshot()
 		if s.Version > after {
+			a.delivered(s)
 			writeJSON(w, s)
 			return
 		}
 		select {
 		case <-changed:
 		case <-timer.C:
+			a.delivered(s)
 			writeJSON(w, s)
 			return
 		case <-r.Context().Done():
 			return
 		}
+	}
+}
+
+// delivered marks the first answer that carries the launch data.
+func (a *Agent) delivered(s agentapi.LocalSession) {
+	if s.Claimed {
+		a.markOnce(&a.dataSent, msDataDelivered)
 	}
 }
 

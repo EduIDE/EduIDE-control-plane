@@ -129,7 +129,8 @@ func TestColdStartCreatesInstance(t *testing.T) {
 		t.Errorf("route label: %v", route.Labels)
 	}
 	rs := route.Spec
-	if string(rs.ParentRefs[0].Name) != "gw" || string(*rs.ParentRefs[0].Namespace) != "gateway-system" || string(*rs.ParentRefs[0].SectionName) != "https" || rs.ParentRefs[0].Port == nil || *rs.ParentRefs[0].Port != 443 {
+	if string(rs.ParentRefs[0].Name) != "gw" || string(*rs.ParentRefs[0].Namespace) != "gateway-system" || string(*rs.ParentRefs[0].SectionName) != "https" || rs.ParentRefs[0].Port == nil || *rs.ParentRefs[0].Port != 443 ||
+		rs.Rules[0].Timeouts == nil || rs.Rules[0].Timeouts.Request == nil || *rs.Rules[0].Timeouts.Request != "0s" {
 		t.Errorf("parent: %+v", rs.ParentRefs[0])
 	}
 	if len(rs.Hostnames) != 2 || rs.Hostnames[0] != "ide.example.org" || rs.Hostnames[1] != "webview.ide.example.org" {
@@ -386,7 +387,7 @@ func TestWorkspaceSessionAndExpiry(t *testing.T) {
 	eventually(t, "session pod", func() bool { st = sessionStatus("s-ws"); return st.PodName != "" })
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
 	_ = get(pod)
-	if st.StartStrategy != v1.StartCold || pod.Spec.Volumes[0].PersistentVolumeClaim == nil || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "w-test" {
+	if st.StartStrategy != v1.StartCold || len(pod.Spec.Volumes) == 0 || pod.Spec.Volumes[0].PersistentVolumeClaim == nil || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "w-test" {
 		t.Errorf("session with workspace: %+v %+v", st, pod.Spec.Volumes[0])
 	}
 	clk.Step(2 * time.Hour)
@@ -784,6 +785,41 @@ func TestSecondSessionOnABusyWorkspaceFailsAtOnce(t *testing.T) {
 	if p := sessionStatus("s-busy1").Phase; p == v1.SessionFailed {
 		t.Error("the running session was disturbed")
 	}
+	// Further reconciles of the failed session must not count or emit the failure again.
+	time.Sleep(time.Second)
+	if n := testutil.ToFloat64(telemetry.SessionFailures.WithLabelValues("tpl-busy", v1.ErrorWorkspaceInUse)); n != 1 {
+		t.Errorf("failures counted %v times, want once", n)
+	}
+}
+
+func TestAgentConflictReleasesThePod(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-409"))
+	pool := &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-409", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-409", MinIdle: 1, TargetIdle: 1, MaxInstances: 10}}
+	mustCreate(t, pool)
+	sel := client.MatchingLabels{v1.LabelPool: "pool-409"}
+	eventually(t, "idle pod", func() bool { return len(podsWith(sel)) == 1 })
+	idle := podsWith(sel)[0]
+	setReady(t, idle.Name)
+	eventually(t, "idle ready", func() bool { _ = get(pool); return pool.Status.IdleReady == 1 })
+
+	agent.set(func(a *fakeAgent) { a.conflicts = 1 })
+	createSession(t, "s-409", "tpl-409")
+	eventually(t, "claimed pod released", func() bool {
+		p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: idle.Name, Namespace: testNS}}
+		return notFound(p) || p.DeletionTimestamp != nil
+	})
+	var st v1.IDESessionStatus
+	eventually(t, "session continues on another pod", func() bool {
+		st = sessionStatus("s-409")
+		return st.PodName != "" && st.PodName != idle.Name
+	})
+	if st.Phase == v1.SessionFailed {
+		t.Fatalf("session failed: %+v", st)
+	}
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-409").Phase == v1.SessionReady })
 }
 
 func TestMissingDataSecretMessage(t *testing.T) {
@@ -1166,4 +1202,34 @@ func TestPressureMayEvict(t *testing.T) {
 	if p.mayEvict("np", "a") || !p.mayEvict("np", "b") {
 		t.Error("after the window only a different pod may go")
 	}
+}
+
+func TestWorkspaceVolumeLost(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-lost"))
+	ws := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-lost", Namespace: testNS},
+		Spec: v1.IDEWorkspaceSpec{Owner: "carol", TemplateRef: "tpl-lost", Persistence: v1.WorkspacePersistence{Mode: v1.WorkspaceVolume}}}
+	mustCreate(t, ws)
+	eventually(t, "workspace ready", func() bool { _ = get(ws); return ws.Status.Phase == v1.WorkspaceReady })
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "w-lost", Namespace: testNS}}
+	if err := k8s.Delete(context.Background(), pvc); err != nil {
+		t.Fatal(err)
+	}
+	// envtest has no PVC protection controller, so drop its finalizer.
+	_ = get(pvc)
+	pvc.Finalizers = nil
+	_ = k8s.Update(context.Background(), pvc)
+	eventually(t, "volume lost", func() bool { _ = get(ws); return ws.VolumeLost() })
+	if ws.Status.Phase != v1.WorkspaceReady {
+		t.Errorf("phase changed to %s", ws.Status.Phase)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if err := get(pvc); err == nil {
+		t.Fatal("the operator recreated an empty claim")
+	}
+	if !logs.has("workspace volume lost", "workspace", "w-lost") {
+		t.Error("the loss is not logged")
+	}
+	createSession(t, "s-lost", "tpl-lost", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-lost" })
+	eventually(t, "session fails", func() bool { return sessionStatus("s-lost").ErrorCode == v1.ErrorWorkspaceLost })
 }

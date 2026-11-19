@@ -40,7 +40,7 @@ The server serves `/etc/eduide/landing/config.json` as `GET /config.json` (a Con
 
 Required: `legal.imprint` and `legal.privacy`, each exactly one of `{ "url": "https://..." }` (linked directly) or `{ "path": "/legal/imprint.md" }` (Markdown that the server serves from the directory of `config.json`, rendered at `/imprint` and sanitized). The chart sets these from its `legal` values.
 
-Optional keys: `footerLinks` with `attribution.version` (shown as "EduIDE <version>"), `github.url` (default the control plane repository), `bugReport` (`text`, `url`), and `featureRequest` and `about` (not shown unless set). `legacy` is reserved and not used yet.
+Optional keys: `hstsIncludeSubdomains` (default `true`, adds `includeSubDomains` to HSTS; set `false` when the session hosts are not subdomains of the landing host), `footerLinks` with `attribution.version` (shown as "EduIDE <version>"), `github.url` (default the control plane repository), `bugReport` (`text`, `url`), and `featureRequest` and `about` (not shown unless set). `legacy` is reserved and not used yet.
 
 For local development copy that file (with `legal`) to `public/config.json` (git-ignored) and run `npm run dev`. Put Markdown files for the `path` variant in `public/legal/`.
 
