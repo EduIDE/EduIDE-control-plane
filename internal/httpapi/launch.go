@@ -247,7 +247,8 @@ func (s *Server) resolvePersistence(ctx context.Context, owner string, tpl *v1al
 	if name != "" {
 		return name, false, nil
 	}
-	src := data["GIT_URI"]
+	// Without user info: a new Artemis VCS token for the same repository must reattach the same workspace.
+	src := withoutCredentials(data["GIT_URI"])
 	if src == "" {
 		src = display.Source
 	}

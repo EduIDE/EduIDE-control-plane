@@ -215,3 +215,30 @@ func TestLaunchGitURIWithCredentials(t *testing.T) {
 		t.Fatalf("launch log %s", buf.String())
 	}
 }
+
+// A new VCS token for the same Artemis repository must reattach the same workspace volume.
+func TestWorkspaceIdentityIgnoresCredentials(t *testing.T) {
+	tpl := javaTemplate()
+	tpl.Name = "artemis"
+	tpl.Spec.InjectableKeys[0].AllowCredentials = true
+	e := newEnv(t, tpl)
+	name := func(uri string) string {
+		t.Helper()
+		rec := e.do("POST", "/sessions", "alice", map[string]any{"template": "artemis", "persistence": "volume", "data": map[string]string{"GIT_URI": uri}})
+		if rec.Code != 201 && rec.Code != 200 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		s := decode[Session](t, rec)
+		if s.Workspace == nil {
+			t.Fatal("no workspace")
+		}
+		return *s.Workspace
+	}
+	a := name("https://student1:token-one@git.example.org/git/ex/ex-student1.git")
+	if a != workspaceName("alice", "artemis", "https://git.example.org/git/ex/ex-student1.git") {
+		t.Fatalf("workspace %s is not derived from the URL without credentials", a)
+	}
+	if b := name("https://student1:token-two@git.example.org/git/ex/ex-student1.git"); b != a {
+		t.Fatalf("new token, new workspace: %s != %s", b, a)
+	}
+}

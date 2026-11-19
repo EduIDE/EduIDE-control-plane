@@ -22,8 +22,12 @@ export function captureArtemisToken(loc: Location, store: Storage): string | und
     for (const [param, key] of Object.entries(FRAGMENT_KEYS)) {
         const value = fragment.get(param);
         if (value) {
-            store.setItem(key, value);
             found = true;
+            try {
+                store.setItem(key, value);
+            } catch {
+                // Blocked or full storage: the launch goes without this value, but it still leaves the address bar.
+            }
         }
         fragment.delete(param);
     }

@@ -125,3 +125,30 @@ describe('templates after an outage', () => {
         }
     });
 });
+
+describe('launch data from an abandoned link', () => {
+    const renderAt = (search: string): void => {
+        window.history.replaceState({}, '', `/${search}`);
+        const { api } = apiWith(200);
+        render(
+            <I18nProvider initial='en'>
+                <App config={config} api={api} user={{ initials: 'AS', label: 'Alex (ga1)' }} logoutUrl='https://kc.example/logout' />
+            </I18nProvider>
+        );
+    };
+
+    it('is forgotten when the page opens without a launch link', async () => {
+        sessionStorage.setItem('eduide.gitUri', 'https://u:t@h/a.git');
+        sessionStorage.setItem('eduide.artemisToken', 't');
+        renderAt('');
+        await waitFor(() => expect(sessionStorage.length).toBe(0));
+    });
+
+    it('is forgotten when the link names an unknown template', async () => {
+        sessionStorage.setItem('eduide.gitUri', 'https://u:t@h/a.git');
+        renderAt('?appDef=nope');
+        await screen.findByText(/nope/);
+        expect(sessionStorage.getItem('eduide.gitUri')).toBeNull();
+        window.history.replaceState({}, '', '/');
+    });
+});

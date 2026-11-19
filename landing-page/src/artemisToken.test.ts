@@ -68,4 +68,17 @@ describe('artemis token fragment', () => {
         expect(warn).toHaveBeenCalledOnce();
         expect(warn.mock.calls[0][0]).not.toContain('secret');
     });
+
+    it('strips the fragment even when storage refuses the value', () => {
+        const store = {
+            setItem: () => {
+                throw new Error('quota');
+            }
+        } as unknown as Storage;
+        const url = captureArtemisToken(
+            { hash: '#artemisToken=t&gitUri=https%3A%2F%2Fu%3As@h%2Fr.git', search: '?appDef=c', pathname: '/' },
+            store
+        );
+        expect(url).toBe('/?appDef=c');
+    });
 });
