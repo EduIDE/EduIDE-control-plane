@@ -33,7 +33,7 @@ kubectl -n <ns> logs deploy/<operator> --since=15m | grep -i -E 'pool|claim|capa
 |---|---|---|
 | Target too low for the burst | `idleReady` 0, `targetIdle` = `minIdle` | Raise `minIdle` in the chart values before an exam. The pool scaler raises `targetIdle` on its own, check that it runs. |
 | Pool scaler down or in override | `scaler-mode` or `scaler-override` annotation on the `IDEPool`, no pool-scaler pod | Restart the pool scaler, or remove the override annotation. |
-| Capacity pressure | `eduide_capacity_pressure` is 1, pods `Unschedulable` or quota errors | Add nodes or quota. The operator keeps all pools of that node pool at 0 idle while pressure lasts and fails sessions with `capacity-exhausted` after `capacity.exhaustedAfter` (45 s). |
+| Capacity pressure | `eduide_capacity_pressure` is 1, pods `Unschedulable` or quota errors | Add nodes or quota. The operator keeps all pools of that node pool at 0 idle while pressure lasts and fails sessions with `capacity-exhausted` after `capacity.exhaustedAfter` (45 s). A pod that fits no node for another reason (the scheduler message names no `Insufficient` resource, for example a volume node affinity conflict) fails its session with `start-failed` after the same time and causes no pressure. |
 | Idle pods not ready | `idleStarting` high | Image pull slow or failing (`ImagePullBackOff`): check the registry, enable prepull (`placement.prepull.enabled`). Agent readiness failing: `kubectl logs <pod> -c agent`. |
 | `maxInstances` reached | `replicas` equals `maxInstances` | Raise `maxInstances`. |
 | Session has a workspace | `startStrategy: cold` with persistence `volume` | Expected: sessions with a volume always start cold ([ADR 0007](../adr/0007-persistence-modes.md)). |

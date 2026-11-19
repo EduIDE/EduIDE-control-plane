@@ -255,7 +255,7 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 	}
 	if apierrors.IsForbidden(err) && strings.Contains(err.Error(), "exceeded quota") {
 		// Quota is capacity pressure like an unschedulable pod (G8).
-		res, err := r.capacity(ctx, s, tmpl, true)
+		res, err := r.capacity(ctx, s, tmpl, true, true)
 		return nil, res, err
 	}
 	return pod, ctrl.Result{}, err
@@ -362,7 +362,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	case st.Phase == v1.SessionReady:
 		return r.running(ctx, s, tmpl, pod)
 	case claim.Unschedulable(pod):
-		return r.capacity(ctx, s, tmpl, false)
+		return r.capacity(ctx, s, tmpl, false, claim.OutOfCapacity(pod))
 	}
 	if c := meta.FindStatusCondition(st.Conditions, condCapacity); c != nil && c.Status == metav1.ConditionTrue {
 		meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionFalse, Reason: "Placed", LastTransitionTime: metav1.NewTime(now)})
@@ -603,10 +603,15 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 
 // capacity handles a session pod that cannot be placed (G8): evict the oldest idle pod of the node pool and fail after exhaustedAfter.
 // quota is true when the pod create was refused by a resource quota. That is told once per session as an Event and a log line.
-func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, quota bool) (ctrl.Result, error) {
+// room is false when the pod fits no node for a reason that more room does not solve (claim.OutOfCapacity): the
+// session still fails after exhaustedAfter, but the node pool is not put under pressure and no idle pod is evicted,
+// so one such pod does not empty the pools of everybody else.
+func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, quota, room bool) (ctrl.Result, error) {
 	now := r.clock.Now()
 	np := r.nodePool(tmpl)
-	r.pressure.Mark(np)
+	if room {
+		r.pressure.Mark(np)
+	}
 	orig := s.DeepCopy()
 	since := now
 	told := false
@@ -616,6 +621,9 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 	reason, message := "NoCapacity", "the pod cannot be placed in its node pool"
 	if quota {
 		reason, message = reasonQuota, "the pod was refused by the resource quota of the namespace"
+	}
+	if !room {
+		reason, message = "Unschedulable", "the pod fits no node of its node pool (volume or node selector)"
 	}
 	meta.SetStatusCondition(&s.Status.Conditions, metav1.Condition{Type: condCapacity, Status: metav1.ConditionTrue, Reason: reason,
 		Message: message, LastTransitionTime: metav1.NewTime(now)})
@@ -634,7 +642,7 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 		r.events.Eventf(s, nil, corev1.EventTypeWarning, reasonQuota, reasonQuota, "%s", message)
 		slog.InfoContext(ctx, "the pod create was refused by the resource quota", "session", s.Name, "node_pool", gaugeName(np))
 	}
-	if v := claim.OldestIdle(idle.Items, np); v != nil && r.pressure.mayEvict(np, v.Name) {
+	if v := claim.OldestIdle(idle.Items, np); room && v != nil && r.pressure.mayEvict(np, v.Name) {
 		// The precondition keeps a pod that was claimed a moment ago when the cache is stale.
 		err := r.Delete(ctx, v, client.Preconditions{ResourceVersion: &v.ResourceVersion})
 		if err == nil {
@@ -647,6 +655,9 @@ func (r *sessionReconciler) capacity(ctx context.Context, s *v1.IDESession, tmpl
 	}
 
 	left := r.cfg.Capacity.ExhaustedAfter.Duration - now.Sub(since)
+	if left <= 0 && !room {
+		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance fits no node of its node pool")
+	}
 	if left <= 0 {
 		return r.fail(ctx, s, v1.ErrorCapacityExhausted, fmt.Sprintf("there is no capacity to start the session in node pool %s", gaugeName(np)))
 	}

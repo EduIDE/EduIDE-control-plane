@@ -42,6 +42,7 @@ func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchS
 		writeProblem(w, problem(CodeRateLimited, "too many launches, retry shortly"))
 		return
 	}
+	s.limitBodyRead(w)
 	req, perr := decodeLaunchRequest(r.Body)
 	template := "unknown"
 	if perr == nil {

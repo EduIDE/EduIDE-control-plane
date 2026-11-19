@@ -51,6 +51,14 @@ type Server struct {
 	// deleting holds the owners with a DeleteWorkspace in flight: its wait polls the API server.
 	deleting sync.Map
 
+	// streams counts the open event streams per user (guarded by mu); maxStreams bounds them, because each one
+	// costs a goroutine and a snapshot per change. writeWait bounds one write to a client that stopped reading.
+	streams    map[string]int
+	maxStreams int
+	writeWait  time.Duration
+	// bodyWait bounds reading a request body, so a client cannot hold a handler open by sending it slowly.
+	bodyWait time.Duration
+
 	// quotaMu guards the storage quota cache; its refresh calls the API server, which must not block mu.
 	quotaMu sync.Mutex
 	quota   *StorageQuota
@@ -66,7 +74,8 @@ type Server struct {
 
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
-	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now}
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now,
+		streams: map[string]int{}, maxStreams: 16, writeWait: 30 * time.Second, bodyWait: 10 * time.Second}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
 	}
@@ -150,6 +159,28 @@ func (s *Server) lockOwner(owner string) func() {
 	m := &s.ownerLocks[h.Sum32()%uint32(len(s.ownerLocks))]
 	m.Lock()
 	return m.Unlock
+}
+
+// limitBodyRead sets the deadline for reading the request body; the server resets it for the next request.
+func (s *Server) limitBodyRead(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.bodyWait))
+}
+
+// openStream takes one of the user's stream places; false when all are taken. Call the func to give it back.
+func (s *Server) openStream(owner string) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streams[owner] >= s.maxStreams {
+		return nil, false
+	}
+	s.streams[owner]++
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.streams[owner]--; s.streams[owner] <= 0 {
+			delete(s.streams, owner)
+		}
+	}, true
 }
 
 func (s *Server) allowLaunch(owner string) (ok bool) {
@@ -360,6 +391,7 @@ func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req WorkspaceRequest
+	s.limitBodyRead(w)
 	if perr := decodeJSON(r.Body, &req); perr != nil {
 		writeProblem(w, perr)
 		return
