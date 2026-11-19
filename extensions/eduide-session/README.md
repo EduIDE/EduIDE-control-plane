@@ -24,6 +24,17 @@ The extension id changes: Scorpio looks up `tum-aet.data-bridge` and must switch
   Terminal output does not count, a long build must not keep an abandoned session alive.
 - Errors (agent not yet up) back off from 0.5 s to 15 s. A poll that hangs longer than twice its timeout is aborted and retried. `deactivate` aborts the pending poll.
 
+## Milestones
+
+The extension reports startup milestones to the agent with `POST /v1/milestones` (`{"name", "at"}`, `at` is an RFC3339 UTC timestamp with milliseconds).
+The agent keeps the first report per name, so each name is sent at most once, with one retry on a network failure. Errors are ignored.
+
+- `plugin-host-started`: on activation.
+- `workspace-ready`: when a workspace folder is open, at activation or on the first workspace folder change that leaves a non-empty list.
+- `first-input`: together with the first heartbeat that is sent.
+
+`clone-done` is not reported: Scorpio exposes no hook for it.
+
 ## Migration
 
 Remove `data-bridge` and the `monitor-theia` extension from the IDE image and install the `.vsix` instead.

@@ -12,9 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -60,6 +58,8 @@ type sessionReconciler struct {
 	// readyWritten holds sessions whose Ready status this operator wrote but the cache does not show yet.
 	// A reconcile on the stale copy would claim the agent a second time.
 	readyWritten sync.Map
+	// starts and exported hold the tracing state per session (trace.go).
+	starts, exported sync.Map
 }
 
 func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
@@ -93,26 +93,11 @@ func (r *sessionReconciler) setup(mgr ctrl.Manager) error {
 // workspaceWaitLimit is how long a session waits for a workspace that is not in the cache yet.
 const workspaceWaitLimit = 30 * time.Second
 
-// traced runs f in a child span named name, one per phase of the start path.
-func traced[T any](ctx context.Context, name string, f func(context.Context) (T, bool, error)) (T, bool, error) {
-	ctx, span := otel.Tracer("eduide-operator").Start(ctx, name)
-	defer span.End()
-	return f(ctx)
-}
-
-// startSpan continues the trace of the launch from the traceparent annotation.
-func startSpan(ctx context.Context, s *v1.IDESession, name string) (context.Context, trace.Span) {
-	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
-		ctx = propagation.TraceContext{}.Extract(ctx, propagation.MapCarrier{"traceparent": tp})
-	}
-	return otel.Tracer("eduide-operator").Start(ctx, name, trace.WithAttributes(
-		attribute.String("eduide.session", s.Name), attribute.String("eduide.template", s.Spec.TemplateRef)))
-}
-
 func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	s := &v1.IDESession{}
 	if err := r.Get(ctx, req.NamespacedName, s); err != nil {
 		r.readyWritten.Delete(req.NamespacedName)
+		r.forget(req.NamespacedName)
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	if _, ok := r.readyWritten.Load(req.NamespacedName); ok {
@@ -122,8 +107,7 @@ func (r *sessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 		r.readyWritten.Delete(req.NamespacedName)
 	}
-	ctx, span := startSpan(ctx, s, "session.reconcile")
-	defer span.End()
+	ctx = r.traceContext(ctx, s)
 	slog.DebugContext(ctx, "reconcile session", "session", s.Name, "phase", string(s.Status.Phase), "instance", s.Status.Instance, "deleting", s.DeletionTimestamp != nil)
 	if s.DeletionTimestamp != nil {
 		return r.finalize(ctx, s)
@@ -215,13 +199,30 @@ func (r *sessionReconciler) start(ctx context.Context, s *v1.IDESession, tmpl *v
 			return nil, ctrl.Result{}, r.patchStatus(ctx, orig, s)
 		}
 		claimName = ws.Status.ClaimName
-	} else if pod, retry, err := traced(ctx, "claim", func(ctx context.Context) (*corev1.Pod, bool, error) { return r.tryClaim(ctx, s, tmpl, np) }); pod != nil || retry || err != nil {
-		// After a conflict the cache is behind; look again instead of starting cold.
-		return pod, ctrl.Result{Requeue: retry}, err //nolint:staticcheck // rate limited retry, no fixed delay
+	} else {
+		kctx, kspan := tracer().Start(ctx, "claim")
+		pod, retry, err := r.tryClaim(kctx, s, tmpl, np)
+		if err != nil {
+			failSpan(kspan, v1.ErrorStartFailed)
+		}
+		r.tag(kspan, s, tmpl, pod)
+		if pod == nil && !retry && err == nil {
+			kspan.SetAttributes(attribute.String("eduide.strategy", string(v1.StartCold))) // nothing to claim: the instance is created
+		}
+		kspan.End()
+		if pod != nil || retry || err != nil {
+			r.tag(trace.SpanFromContext(ctx), s, tmpl, pod)
+			// After a conflict the cache is behind; look again instead of starting cold.
+			return pod, ctrl.Result{Requeue: retry}, err //nolint:staticcheck // rate limited retry, no fixed delay
+		}
 	}
 
-	cctx, cspan := otel.Tracer("eduide-operator").Start(ctx, "instance.create")
+	cctx, cspan := tracer().Start(ctx, "instance.create")
 	pod, err := r.createInstance(cctx, tmpl, s, r.sessionLabels(s, nil), claimName)
+	if err != nil {
+		failSpan(cspan, v1.ErrorStartFailed)
+	}
+	r.tag(cspan, s, tmpl, pod)
 	cspan.End()
 	if err == nil {
 		r.note(ctx, s, corev1.EventTypeNormal, "Created", "created a new instance (cold start)")
@@ -254,6 +255,9 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 	conflict := false
 	// Under pressure the claim does not wait for pods that are still starting.
 	cands := claim.Candidates(pods.Items, !r.pressure.Active(nodePool))
+	span := trace.SpanFromContext(ctx)
+	span.SetAttributes(attribute.Int("eduide.claim.idle_pods", len(pods.Items)), attribute.Int("eduide.claim.candidates", len(cands)),
+		attribute.Bool("eduide.claim.under_pressure", r.pressure.Active(nodePool)))
 	slog.DebugContext(ctx, "claim candidates", "session", s.Name, "template", tmpl.Name, "idle_pods", len(pods.Items), "candidates", len(cands), "under_pressure", r.pressure.Active(nodePool))
 	for _, c := range cands {
 		pod, before := c.DeepCopy(), c.DeepCopy()
@@ -269,21 +273,27 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 		case apierrors.IsConflict(err):
 			slog.DebugContext(ctx, "claim conflict, trying the next candidate", "session", s.Name, "pod", c.Name)
 			conflict = true
+			span.AddEvent("claim.conflict", trace.WithAttributes(attribute.String("eduide.claim.pod", c.Name)))
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
 		case apierrors.IsNotFound(err):
+			span.AddEvent("claim.gone", trace.WithAttributes(attribute.String("eduide.claim.pod", c.Name)))
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "conflict").Inc()
 		case err != nil:
 			return nil, false, err
 		default:
 			slog.DebugContext(ctx, "claim won", "session", s.Name, "pod", c.Name)
+			span.AddEvent("claim.won", trace.WithAttributes(attribute.String("eduide.claim.pod", c.Name)))
+			span.SetAttributes(attribute.String("eduide.claim.result", "claimed"))
 			telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "claimed").Inc()
 			r.note(ctx, s, corev1.EventTypeNormal, "Claimed", "claimed an idle instance")
 			return pod, false, nil
 		}
 	}
 	if conflict {
+		span.SetAttributes(attribute.String("eduide.claim.result", "conflict"))
 		return nil, true, nil
 	}
+	span.SetAttributes(attribute.String("eduide.claim.result", "empty"))
 	// Templates without a pool never have an idle pod: that is no signal.
 	var pools v1.IDEPoolList
 	if err := r.List(ctx, &pools, client.InNamespace(s.Namespace)); err != nil {
@@ -302,15 +312,9 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	st := &s.Status
 	st.Instance, st.PodName, st.ObservedGeneration = pod.Labels[v1.LabelInstance], pod.Name, s.Generation
 	if st.StartStrategy == "" {
-		switch {
-		case pod.Labels[v1.LabelPool] == "":
-			st.StartStrategy = v1.StartCold
-		case claim.Ready(pod):
-			st.StartStrategy = v1.StartWarmReady
-		default:
-			st.StartStrategy = v1.StartWarmStarting
-		}
+		st.StartStrategy = strategyOf(pod)
 	}
+	r.tag(trace.SpanFromContext(ctx), s, tmpl, pod)
 	if st.Timestamps.Claimed == nil {
 		t := metav1.NewTime(now)
 		if st.StartStrategy == v1.StartCold {
@@ -383,7 +387,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	if err != nil {
 		return wait("the agent is not reachable")
 	}
-	err = r.pushClaim(ctx, s, tmpl, base, token, data)
+	err = r.pushClaim(ctx, s, tmpl, pod, base, token, data)
 	switch {
 	case errors.Is(err, agentclient.ErrConflict):
 		return r.fail(ctx, s, v1.ErrorStartFailed, "the instance belongs to another session")
@@ -396,12 +400,18 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	st.Timestamps.AgentReady, st.Timestamps.Ready = &t, &t
 	st.Phase, st.URL, st.ErrorCode, st.Message = v1.SessionReady, r.cfg.InstanceURL(st.Instance), "", ""
 	meta.SetStatusCondition(&st.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Ready", ObservedGeneration: s.Generation, LastTransitionTime: t})
-	sctx, sspan := otel.Tracer("eduide-operator").Start(ctx, "status.ready")
+	sctx, sspan := tracer().Start(ctx, "status.ready")
 	err = r.patchStatus(sctx, orig, s)
+	if err != nil {
+		failSpan(sspan, v1.ErrorStartFailed)
+	}
+	r.tag(sspan, s, tmpl, pod)
 	sspan.End()
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	r.emit(ctx, s, tmpl, pod, podPhases(pod), s.CreationTimestamp.Time)
+	r.endStart(s, "ready", "")
 	r.readyWritten.Store(client.ObjectKeyFromObject(s), struct{}{})
 	strategy := string(st.StartStrategy)
 	r.note(ctx, s, corev1.EventTypeNormal, "Ready", fmt.Sprintf("ready after %.1fs (%s)", now.Sub(s.CreationTimestamp.Time).Seconds(), strategy),
@@ -415,7 +425,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
 		}
 	}
-	return ctrl.Result{RequeueAfter: r.jitter(), Priority: lowPriority}, nil
+	return ctrl.Result{RequeueAfter: min(r.jitter(), milestoneChecks[0]), Priority: lowPriority}, nil
 }
 
 func readyTime(p *corev1.Pod) metav1.Time {
@@ -482,7 +492,10 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 		polled = err == nil
 		if polled && !as.Claimed {
 			// The agent container restarted and lost the launch data: push it again.
-			r.reclaim(ctx, s, tmpl, url, token)
+			r.reclaim(ctx, s, tmpl, pod, url, token)
+		}
+		if polled && as.Milestones != nil {
+			r.exportMilestones(ctx, s, tmpl, pod, *as.Milestones)
 		}
 		if err == nil && as.LastActivity != nil {
 			if as.LastActivity.Sub(last) > activityStep || st.LastActivity == nil {
@@ -535,6 +548,11 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 		return ctrl.Result{}, err
 	}
 	wait := min(r.jitter(), d.next.Sub(now))
+	if st.Timestamps.Ready != nil {
+		if next := nextMilestoneCheck(now, st.Timestamps.Ready.Time); next > 0 {
+			wait = min(wait, next)
+		}
+	}
 	if d.act != actNone {
 		wait = min(wait, 5*time.Second)
 	}
@@ -610,10 +628,8 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 	if err := r.patchStatus(ctx, orig, s); err != nil {
 		return ctrl.Result{}, err
 	}
-	strategy := string(s.Status.StartStrategy)
-	if strategy == "" {
-		strategy = "none"
-	}
+	strategy := strategyName(s.Status.StartStrategy)
+	r.endStart(s, "failed", code)
 	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionFailures.WithLabelValues(s.Spec.TemplateRef, code).Inc()
 	r.note(ctx, s, corev1.EventTypeWarning, "Failed", code+": "+msg, "result", "failed", "code", code, "message", msg, "strategy", strategy)
@@ -646,6 +662,7 @@ func (r *sessionReconciler) expire(ctx context.Context, s *v1.IDESession) (ctrl.
 
 // finalize records the workspace use. The pod goes through garbage collection.
 func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctrl.Result, error) {
+	r.forget(sessionKey(s))
 	if !controllerutil.ContainsFinalizer(s, v1.SessionFinalizer) {
 		return ctrl.Result{}, nil
 	}
@@ -711,29 +728,33 @@ func (r *sessionReconciler) workspaceHolder(ctx context.Context, s *v1.IDESessio
 }
 
 // pushClaim sends the launch data to the agent. Keys the template does not allow are dropped and long values are cut (ADR 0012).
-func (r *sessionReconciler) pushClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, base, token string, data map[string]string) error {
+func (r *sessionReconciler) pushClaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod, base, token string, data map[string]string) error {
 	cctx, cancel := context.WithTimeout(ctx, agentCallBudget)
 	defer cancel()
 	req := agentapi.ClaimRequest{Session: s.Name, Data: r.allowedData(ctx, s, tmpl, data)}
 	if tp := s.Annotations[v1.AnnotationTraceparent]; tp != "" {
 		req.Traceparent = &tp
 	}
-	actx, aspan := otel.Tracer("eduide-operator").Start(cctx, "agent.claim")
+	actx, aspan := tracer().Start(cctx, "agent.claim")
 	defer aspan.End()
 	start := time.Now()
 	err := r.agent.Claim(actx, base, token, req)
+	if err != nil {
+		failSpan(aspan, v1.ErrorStartFailed)
+	}
+	r.tag(aspan, s, tmpl, pod)
 	slog.DebugContext(ctx, "agent claim call", "session", s.Name, "keys", len(req.Data), "duration_ms", time.Since(start).Milliseconds(), "ok", err == nil)
 	return err
 }
 
 // reclaim pushes the claim again to an agent that reports claimed=false for a Ready session.
-func (r *sessionReconciler) reclaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, base, token string) {
+func (r *sessionReconciler) reclaim(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod, base, token string) {
 	data, ok, err := r.launchData(ctx, s)
 	if err != nil || !ok {
 		slog.WarnContext(ctx, "cannot re-claim: launch data unavailable", "session", s.Name)
 		return
 	}
-	if err := r.pushClaim(ctx, s, tmpl, base, token, data); err != nil {
+	if err := r.pushClaim(ctx, s, tmpl, pod, base, token, data); err != nil {
 		slog.WarnContext(ctx, "re-claim after agent restart failed", "session", s.Name, "error", err.Error())
 		return
 	}

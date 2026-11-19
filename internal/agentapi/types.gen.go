@@ -48,6 +48,12 @@ type LocalSession struct {
 	Version int `json:"version"`
 }
 
+// Milestone defines model for Milestone.
+type Milestone struct {
+	At   time.Time `json:"at"`
+	Name string    `json:"name"`
+}
+
 // Notice defines model for Notice.
 type Notice struct {
 	// At When the session will end.
@@ -69,6 +75,11 @@ type Status struct {
 	// LastActivity Latest extension heartbeat since the claim (proxied requests do not count). Absent without any heartbeat since the claim.
 	LastActivity *time.Time `json:"lastActivity,omitempty"`
 
+	// Milestones Moments of the IDE start, at most one per name, at most 8 entries. Set by the agent: `claim-received`, `first-request`
+	// (first proxied request after the claim), `first-websocket` (first WebSocket upgrade), `data-delivered` (long-poll answered
+	// with launch data). Reported by the extension: see POST /v1/milestones.
+	Milestones *[]Milestone `json:"milestones,omitempty"`
+
 	// Ready Claimed and launch data stored.
 	Ready   bool    `json:"ready"`
 	Session *string `json:"session,omitempty"`
@@ -82,6 +93,9 @@ type GetSessionParams struct {
 
 // ClaimJSONRequestBody defines body for Claim for application/json ContentType.
 type ClaimJSONRequestBody = ClaimRequest
+
+// ReportMilestoneJSONRequestBody defines body for ReportMilestone for application/json ContentType.
+type ReportMilestoneJSONRequestBody = Milestone
 
 // NotifyJSONRequestBody defines body for Notify for application/json ContentType.
 type NotifyJSONRequestBody = Notice

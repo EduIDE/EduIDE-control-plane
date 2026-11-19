@@ -424,3 +424,92 @@ func TestHeartbeatDropsIdleWarnings(t *testing.T) {
 		t.Errorf("notices after: %+v", after.Notices)
 	}
 }
+
+func milestonesOf(t *testing.T, a *Agent) map[string]time.Time {
+	t.Helper()
+	var st agentapi.Status
+	_ = json.Unmarshal(do(t, a.ControlHandler(), "GET", "/v1/status", "", bearer).Body.Bytes(), &st)
+	out := map[string]time.Time{}
+	if st.Milestones != nil {
+		for _, m := range *st.Milestones {
+			out[m.Name] = m.At
+		}
+	}
+	return out
+}
+
+func TestMilestonesAgentSide(t *testing.T) {
+	ide := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) }))
+	defer ide.Close()
+	a := newAgent(t, portOf(t, ide.URL))
+	hdr := map[string]string{TokenHeader: tok}
+	do(t, a.ProxyHandler(), "GET", "/", "", hdr)
+	if m := milestonesOf(t, a); len(m) != 0 {
+		t.Fatalf("idle pod traffic is a milestone: %v", m)
+	}
+	do(t, a.ControlHandler(), "POST", "/v1/claim", `{"session":"s-1","data":{"A":"b"}}`, bearer)
+	do(t, a.ProxyHandler(), "GET", "/", "", hdr)
+	do(t, a.ProxyHandler(), "GET", "/again", "", hdr)
+	do(t, a.LocalHandler(), "GET", "/v1/session?timeout=0", "", nil)
+	m := milestonesOf(t, a)
+	for _, n := range []string{"claim-received", "first-request", "data-delivered"} {
+		if m[n].IsZero() {
+			t.Errorf("missing %s in %v", n, m)
+		}
+	}
+	if !m["claim-received"].Before(m["first-request"]) && !m["claim-received"].Equal(m["first-request"]) {
+		t.Errorf("order: %v", m)
+	}
+	a.mu.Lock()
+	n := len(a.milestones)
+	a.mu.Unlock()
+	if n != 3 {
+		t.Errorf("repeated requests added milestones: %d", n)
+	}
+}
+
+func TestMilestoneReport(t *testing.T) {
+	a := newAgent(t, "1")
+	h := a.LocalHandler()
+	at := time.Now().Add(-time.Second).UTC().Truncate(time.Millisecond)
+	post := func(name string, at time.Time) int {
+		b, _ := json.Marshal(agentapi.Milestone{Name: name, At: at})
+		return do(t, h, "POST", "/v1/milestones", string(b), nil).Code
+	}
+	if c := post("plugin-host-started", at); c != 204 {
+		t.Fatalf("code %d", c)
+	}
+	post("plugin-host-started", at.Add(time.Second)) // the first report wins
+	if got := milestonesOf(t, a)["plugin-host-started"]; !got.Equal(at) {
+		t.Errorf("got %v, want %v", got, at)
+	}
+	for name, c := range map[string]int{"claim-received": 400, "data-delivered": 400, "nonsense": 400, "": 400} {
+		if got := post(name, at); got != c {
+			t.Errorf("%q: %d, want %d", name, got, c)
+		}
+	}
+	if c := post("workspace-ready", time.Now().Add(time.Hour)); c != 400 {
+		t.Errorf("future timestamp: %d", c)
+	}
+	if c := post("workspace-ready", time.Time{}); c != 400 {
+		t.Errorf("zero timestamp: %d", c)
+	}
+	if c := do(t, h, "POST", "/v1/milestones", `{bad`, nil).Code; c != 400 {
+		t.Errorf("bad json: %d", c)
+	}
+}
+
+func TestMilestonesBounded(t *testing.T) {
+	a := newAgent(t, "1")
+	for i := 0; i < 50; i++ {
+		a.mu.Lock()
+		a.addMilestone("n"+strconv.Itoa(i), time.Now())
+		a.mu.Unlock()
+	}
+	if len(a.milestones) != maxMilestones {
+		t.Errorf("len %d, want %d", len(a.milestones), maxMilestones)
+	}
+	if len(reportable)+4 > maxMilestones {
+		t.Errorf("allowlist (%d) plus agent milestones exceed the bound", len(reportable))
+	}
+}

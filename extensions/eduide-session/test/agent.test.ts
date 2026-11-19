@@ -9,8 +9,18 @@ function fakeAgent() {
   let hangNext = 0;
   const pending: Array<() => void> = [];
   const heartbeats: number[] = [];
+  const milestones: unknown[] = [];
   const queries: string[] = [];
   const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/v1/milestones") {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        milestones.push(JSON.parse(body));
+        res.writeHead(204).end();
+      });
+      return;
+    }
     if (req.method === "POST" && req.url === "/v1/heartbeat") {
       heartbeats.push(Date.now());
       res.writeHead(204).end();
@@ -39,6 +49,7 @@ function fakeAgent() {
   return {
     server,
     heartbeats,
+    milestones,
     queries,
     fail: (n: number) => (failNext = n),
     hang: (n: number) => (hangNext = n),
@@ -144,5 +155,36 @@ test("heartbeat is throttled, force bypasses", async () => {
 test("stop ends the loop while a poll is pending", async () => {
   const { done } = await setup();
   await new Promise((r) => setTimeout(r, 50));
+  await done();
+});
+
+test("milestone is sent once per name with name and RFC3339 timestamp", async () => {
+  const { agent, c, done } = await setup();
+  await c.milestone("plugin-host-started", "2026-01-02T03:04:05.678Z");
+  await c.milestone("plugin-host-started");
+  await c.milestone("workspace-ready");
+  assert.equal(agent.milestones.length, 2);
+  assert.deepEqual(agent.milestones[0], { name: "plugin-host-started", at: "2026-01-02T03:04:05.678Z" });
+  const m = agent.milestones[1] as { name: string; at: string };
+  assert.equal(m.name, "workspace-ready");
+  assert.match(m.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  await done();
+});
+
+test("milestone swallows network errors", async () => {
+  const c = new AgentClient({ baseUrl: "http://127.0.0.1:1", onNotice: () => {} });
+  await c.milestone("plugin-host-started");
+});
+
+test("first-input is sent with the first heartbeat only", async () => {
+  let t = 1_000_000;
+  const { agent, c, done } = await setup({ now: () => t });
+  await c.heartbeat();
+  t += 61_000;
+  await c.heartbeat();
+  await until(() => agent.milestones.length === 1);
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(agent.milestones.length, 1);
+  assert.equal((agent.milestones[0] as { name: string }).name, "first-input");
   await done();
 });

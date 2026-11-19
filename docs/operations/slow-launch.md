@@ -12,7 +12,7 @@ kubectl -n <ns> get idesession <name> -o yaml | grep -A12 -E 'startStrategy|time
 ```
 
    Compare `claimed`, `podReady`, `agentReady`, `ready` with the creation time. The largest gap is the slow phase ([start-path.md](../architecture/start-path.md)).
-3. Trace: find the launch by session name in Jaeger. **Planned:** Jaeger comes with the observability work package. The skill `debug-session-launch` in [.claude/skills](../../.claude/skills) lists the steps.
+3. Trace: find the launch by session name in Jaeger and read the span durations ([tracing.md](tracing.md)). The skill `debug-session-launch` in [.claude/skills](../../.claude/skills) lists the steps.
 
 ## Causes and fixes by phase
 
