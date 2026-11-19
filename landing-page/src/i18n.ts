@@ -202,7 +202,8 @@ export function makeText<K extends string>(
     enText: Record<K, string>,
     deText: Record<K, string>
 ): (lang: Lang, key: K, params?: Params) => string {
-    return (lang, key, params) => fill((lang === 'de' ? deText : enText)[key], params);
+    // A key from a newer server (a new phase or reason) has no text yet: show its last part instead of crashing.
+    return (lang, key, params) => fill((lang === 'de' ? deText : enText)[key] ?? key.split('.').pop() ?? key, params);
 }
 
 export function hasMessage(key: string): key is MessageKey {

@@ -1,6 +1,6 @@
 import type { Api } from './api';
 import type { Overview, Session, Template } from './api-client';
-import { safeUrl } from './launch';
+import { httpHref } from './url';
 
 type Item = Overview['items'][number];
 
@@ -68,7 +68,7 @@ export function toRow(item: Item, now: number): Row {
             life,
             sessionName: session?.name,
             workspaceName,
-            openUrl: item.running ? safeUrl(session?.url) : undefined
+            openUrl: item.running ? httpHref(session?.url) : undefined
         },
         now
     );

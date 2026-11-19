@@ -1,11 +1,17 @@
 import { useEffect, useState } from 'react';
 
 /** Follows an event stream: it starts with the current state, and reconnects with a growing pause when it drops. */
-export function useWatch<T>(watch: (on: (data: T) => void, signal: AbortSignal) => Promise<void>): { data?: T; lost: boolean } {
+export function useWatch<T>(
+    watch: (on: (data: T) => void, signal: AbortSignal) => Promise<void>,
+    enabled = true
+): { data?: T; lost: boolean } {
     const [data, setData] = useState<T>();
     const [lost, setLost] = useState(false);
 
     useEffect(() => {
+        if (!enabled) {
+            return;
+        }
         const controller = new AbortController();
         let wait = 1000;
         const follow = async (): Promise<void> => {
@@ -30,7 +36,7 @@ export function useWatch<T>(watch: (on: (data: T) => void, signal: AbortSignal) 
         return () => controller.abort();
         // The watch function belongs to the api object, which lives as long as the page.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
+    }, [enabled]);
 
     return { data, lost };
 }

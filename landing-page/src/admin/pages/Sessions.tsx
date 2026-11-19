@@ -2,14 +2,14 @@
 /* eslint-disable react/jsx-key */
 import { useEffect, useState } from 'react';
 
-import type { AdminSessionList } from '../../apiTypes';
+import type { AdminSession, AdminSessionList } from '../../apiTypes';
 import { usePolling } from '../../components/usePolling';
 import { useWatch } from '../../components/useWatch';
 import { formatClock } from '../../format';
 import { useAdmin } from '../context';
-import { ok } from '../query';
+import { HttpError, ok } from '../query';
 import { SessionsTable } from '../SessionsTable';
-import { Empty, Kv, LoadError, Mono, PageHead, Panel, PhasePill, TplCell, TraceLink, WsCell } from '../ui';
+import { Empty, Kv, LoadError, Mono, PageHead, Panel, PhasePill, TplCell, TraceLink, UpdateFailed, WsCell } from '../ui';
 
 const PAGE = 100;
 
@@ -28,11 +28,13 @@ export const SessionsPage = (): React.JSX.Element => {
     const [template, setTemplate] = useState('');
     const [kind, setKind] = useState<'' | 'none' | 'volume'>('');
     const [phase, setPhase] = useState<'' | 'Pending' | 'Starting' | 'Ready' | 'Failed'>('');
-    const [limit, setLimit] = useState(PAGE);
     const [selected, setSelected] = useState<string>();
+    const [tail, setTail] = useState<{ items: AdminSession[]; next?: string }>();
     const q = useDebounced(search.trim(), 300);
+    const unfiltered = !q && !template && !kind && !phase;
 
-    const list = usePolling(
+    // One channel at a time: the stream carries the unfiltered first page, a filtered view is polled.
+    const polled = usePolling(
         () =>
             ok(
                 api.client.GET('/admin/sessions', {
@@ -42,18 +44,44 @@ export const SessionsPage = (): React.JSX.Element => {
                             template: template || undefined,
                             persistence: kind || undefined,
                             phase: phase || undefined,
-                            limit
+                            limit: PAGE
                         }
                     }
                 })
             ),
         30_000,
-        [q, template, kind, phase, limit]
+        [q, template, kind, phase],
+        !unfiltered
     );
-    // The stream carries the unfiltered first page, so it keeps the unfiltered view live between the 30 s reloads.
-    const live = useWatch<AdminSessionList>(api.watchAdminSessions).data;
-    const unfiltered = !q && !template && !kind && !phase && limit === PAGE;
-    const shown = unfiltered ? (live ?? list.data) : list.data;
+    const live = useWatch<AdminSessionList>(api.watchAdminSessions, unfiltered);
+    const first = unfiltered ? live.data : polled.data;
+    const failed = unfiltered ? live.lost : polled.failed;
+    // Pages after the first one follow the API cursor. A new filter starts again from the first page.
+    useEffect(() => setTail(undefined), [q, template, kind, phase]);
+    const loadMore = (): void => {
+        const cursor = tail ? tail.next : first?.next;
+        if (!cursor) {
+            return;
+        }
+        ok(
+            api.client.GET('/admin/sessions', {
+                params: {
+                    query: {
+                        q: q || undefined,
+                        template: template || undefined,
+                        persistence: kind || undefined,
+                        phase: phase || undefined,
+                        limit: PAGE,
+                        cursor
+                    }
+                }
+            })
+        )
+            .then(page => setTail(prev => ({ items: [...(prev?.items ?? []), ...page.items], next: page.next })))
+            .catch(console.error);
+    };
+    const items = first ? [...first.items, ...(tail?.items ?? [])] : undefined;
+    const more = tail ? tail.next : first?.next;
 
     const detail = usePolling(
         () =>
@@ -110,15 +138,16 @@ export const SessionsPage = (): React.JSX.Element => {
                             ))}
                         </select>
                     </div>
-                    {list.failed && !shown ? (
+                    {failed && !first ? (
                         <LoadError />
-                    ) : shown ? (
+                    ) : first && items ? (
                         <>
-                            <SessionsTable items={shown.items} selected={selected} onSelect={setSelected} />
+                            <UpdateFailed show={failed} />
+                            <SessionsTable items={items} selected={selected} onSelect={setSelected} />
                             <div className='a-pad a-foot'>
-                                <span className='small'>{ta('sessions.total', { shown: shown.items.length, total: shown.total })}</span>
-                                {shown.next && limit < 500 && (
-                                    <button className='a-btn' onClick={() => setLimit(l => Math.min(l + PAGE, 500))}>
+                                <span className='small'>{ta('sessions.total', { shown: items.length, total: first.total })}</span>
+                                {more && (
+                                    <button className='a-btn' onClick={loadMore}>
                                         {ta('sessions.more')}
                                     </button>
                                 )}
@@ -131,8 +160,18 @@ export const SessionsPage = (): React.JSX.Element => {
                     )}
                 </section>
                 <Panel title={d ? <Mono>{d.name}</Mono> : ta('sessions.title')}>
-                    {!d ? (
+                    {!selected ? (
                         <Empty>{ta('sessions.select')}</Empty>
+                    ) : detail.failed && !d ? (
+                        detail.error instanceof HttpError && detail.error.status === 404 ? (
+                            <Empty>{ta('sessions.notFound')}</Empty>
+                        ) : (
+                            <LoadError />
+                        )
+                    ) : !d ? (
+                        <p className='a-pad' role='status'>
+                            {ta('loading')}
+                        </p>
                     ) : (
                         <>
                             <Kv

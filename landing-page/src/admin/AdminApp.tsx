@@ -25,6 +25,7 @@ import { usePolling } from '../components/usePolling';
 import { useWatch } from '../components/useWatch';
 import type { AppConfig } from '../config';
 import { type Lang, LANGS, useI18n } from '../i18n';
+import { httpHref } from '../url';
 import type { UserInfo } from '../user';
 import { AdminContext, type AdminContextValue } from './context';
 import { adminText } from './messages';
@@ -161,7 +162,8 @@ const Panelled = ({ config, api, user, logoutUrl, lang, setLang, ta }: PanelledP
         counts.templates = { n: templates.length };
     }
     const Page = PAGES[page];
-    const links = cfg?.admin.links;
+    const grafana = httpHref(cfg?.admin.links?.grafana);
+    const jaeger = httpHref(cfg?.admin.links?.jaeger);
 
     return (
         <AdminContext.Provider value={value}>
@@ -185,17 +187,17 @@ const Panelled = ({ config, api, user, logoutUrl, lang, setLang, ta }: PanelledP
                     {(['templates', 'limits'] as const).map(p => (
                         <NavItem key={p} page={p} active={page} count={counts[p]} go={go} ta={ta} />
                     ))}
-                    {(links?.grafana || links?.jaeger) && (
+                    {(grafana || jaeger) && (
                         <>
                             <div className='sep'>{ta('nav.elsewhere')}</div>
-                            {links.grafana && (
-                                <a href={links.grafana} target='_blank' rel='noreferrer'>
+                            {grafana && (
+                                <a href={grafana} target='_blank' rel='noreferrer'>
                                     <ExternalLink aria-hidden />
                                     {ta('nav.grafana')}
                                 </a>
                             )}
-                            {links.jaeger && (
-                                <a href={links.jaeger} target='_blank' rel='noreferrer'>
+                            {jaeger && (
+                                <a href={jaeger} target='_blank' rel='noreferrer'>
                                     <ExternalLink aria-hidden />
                                     {ta('nav.jaeger')}
                                 </a>

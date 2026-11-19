@@ -33,7 +33,9 @@ const status = (over: Partial<AdminStatus> = {}): AdminStatus => ({
     idleReady: 13,
     idleTarget: 29,
     capacityPressure: false,
-    warnings: [{ code: 'pool-empty', pool: 'java-17', message: 'Pool java-17 has no idle instance for 4 min.' }],
+    warnings: [
+        { code: 'pool-empty', pool: 'java-17', since: iso(-4 * MIN - 5000), message: 'Pool java-17 has no idle instance for 4 min.' }
+    ],
     stats: {
         startsLastHour: 212,
         failuresLastHour: 3,
@@ -187,6 +189,8 @@ const data: Record<string, unknown> = {
 interface MockApi {
     api: Api;
     get: ReturnType<typeof vi.fn>;
+    /** The abort signals of every stream the page opened. */
+    signals: { status: AbortSignal[]; sessions: AbortSignal[] };
 }
 const mockApi = (over: Record<string, unknown> = {}, statusCode: Record<string, number> = {}): MockApi => {
     const all = { ...data, ...over };
@@ -198,18 +202,21 @@ const mockApi = (over: Record<string, unknown> = {}, statusCode: Record<string, 
         return { data: all[path], response: { status: 200 } };
     });
     const hang = (): Promise<void> => new Promise<void>(() => undefined);
+    const signals: MockApi['signals'] = { status: [], sessions: [] };
     const api = {
         client: { GET: get },
-        watchAdminStatus: async (on: (s: unknown) => void) => {
+        watchAdminStatus: async (on: (s: unknown) => void, signal: AbortSignal) => {
+            signals.status.push(signal);
             on(all['/admin/status']);
             await hang();
         },
-        watchAdminSessions: async (on: (s: unknown) => void) => {
+        watchAdminSessions: async (on: (s: unknown) => void, signal: AbortSignal) => {
+            signals.sessions.push(signal);
             on(all['/admin/sessions']);
             await hang();
         }
     } as unknown as Api;
-    return { api, get };
+    return { api, get, signals };
 };
 
 const open = async (path: string, mock = mockApi(), logoutUrl?: string): Promise<MockApi> => {
@@ -246,7 +253,7 @@ describe('layout', () => {
         within(nav).getByRole('link', { name: /Status/ });
         expect(within(nav).getByRole('link', { name: /Sessions/ }).textContent).toContain('145');
         await waitFor(() => expect(within(nav).getByRole('link', { name: /Templates/ }).textContent).toContain('2'));
-        expect(within(nav).getByRole('link', { name: 'Grafana' }).getAttribute('href')).toBe('https://grafana.example.org');
+        expect(within(nav).getByRole('link', { name: 'Grafana' }).getAttribute('href')).toBe('https://grafana.example.org/');
         screen.getByText('Live');
         screen.getByText('Read only');
         screen.getByRole('link', { name: 'GitHub' });
@@ -288,7 +295,7 @@ describe('layout', () => {
 describe('status page', () => {
     it('shows warnings, KPIs, pools with bars, charts, problems, workspaces and sessions', async () => {
         await open('/admin');
-        await screen.findByText('Pool java-17 has no idle instance for 4 min.');
+        await screen.findByText('Pool java-17 has had no idle instance for 4 min.');
         expect(screen.getByRole('alert').textContent).toContain('no idle instance');
         const kpis = (await screen.findByText('Running sessions')).closest('.a-kpis') as HTMLElement;
         within(kpis).getByText('142');
@@ -313,7 +320,7 @@ describe('status page', () => {
     it('hides charts and figures that need Prometheus and says so neutrally, with the Grafana link', async () => {
         await open('/admin', mockApi({ '/admin/status': status({ stats: undefined, warnings: [] }) }));
         await screen.findByText(/need Prometheus are hidden/);
-        expect(screen.getByRole('link', { name: 'Open Grafana' }).getAttribute('href')).toBe('https://grafana.example.org');
+        expect(screen.getByRole('link', { name: 'Open Grafana' }).getAttribute('href')).toBe('https://grafana.example.org/');
         expect(screen.queryByText('Launch time p95 per template')).toBeNull();
         expect(screen.queryByRole('img', { name: 'Launches, last 12 h' })).toBeNull();
         expect(screen.queryByText('Failed launches, 1 h')).toBeNull();
@@ -321,15 +328,34 @@ describe('status page', () => {
         screen.getByText('Running sessions');
     });
 
-    it('shows only the warnings the API sends', async () => {
+    it('shows only the warnings the API sends, by code, and keeps the service message for unknown codes', async () => {
         await open(
             '/admin',
             mockApi({
-                '/admin/status': status({ warnings: [{ code: 'scaler-silent', message: 'The scaler has not reported for 3 min.' }] })
+                '/admin/status': status({
+                    warnings: [
+                        { code: 'scaler-silent', since: iso(-3 * MIN - 5000), message: 'english text from the service' },
+                        { code: 'something-new' as 'pool-empty', message: 'A warning of a newer service.' }
+                    ]
+                })
             })
         );
-        await screen.findByText('The scaler has not reported for 3 min.');
+        await screen.findByText('The pool scaler has not reported for 3 min.');
+        screen.getByText('A warning of a newer service.');
         expect(screen.queryByText(/no idle instance/)).toBeNull();
+        expect(screen.queryByText('english text from the service')).toBeNull();
+    });
+
+    it('shows warnings in German from the code, not from the service text', async () => {
+        localStorage.setItem('lang', 'de');
+        window.history.pushState({}, '', '/admin');
+        render(
+            <I18nProvider initial='de'>
+                <AdminApp config={appConfig} api={mockApi().api} user={user} />
+            </I18nProvider>
+        );
+        await screen.findByText('Pool java-17 hat seit 4 min keine freie Instanz.');
+        localStorage.clear();
     });
 });
 
@@ -348,7 +374,7 @@ describe('pools page', () => {
 describe('sessions page', () => {
     it('sends the filters to the API and shows the detail with launch data keys only and the trace link', async () => {
         const mock = await open('/admin/sessions');
-        const row = (await screen.findByText('s-8kq2m')).closest('tr') as HTMLElement;
+        await screen.findByText('s-8kq2m');
         fireEvent.change(screen.getByRole('combobox', { name: 'Phase' }), { target: { value: 'Failed' } });
         await waitFor(() =>
             expect(mock.get).toHaveBeenCalledWith('/admin/sessions', {
@@ -356,7 +382,8 @@ describe('sessions page', () => {
             })
         );
         fireEvent.change(screen.getByRole('combobox', { name: 'Phase' }), { target: { value: '' } });
-        fireEvent.click(row);
+        // The table is rebuilt from the other channel, so look the row up again.
+        fireEvent.click((await screen.findByText('s-8kq2m')).closest('tr') as HTMLElement);
         await screen.findByText('GIT_URI, ARTEMIS_TOKEN', { exact: false });
         screen.getByText('(values hidden)', { exact: false });
         expect(screen.getByRole('link', { name: /Launch trace/ }).getAttribute('href')).toBe('https://jaeger.example.org/trace/xyz');
@@ -485,6 +512,130 @@ describe('unmount', () => {
             unmount();
             await vi.advanceTimersByTimeAsync(90_000);
             expect(poolCalls()).toBe(before + 1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+});
+
+describe('sessions page channels', () => {
+    it('uses the stream for the unfiltered view and polling only once a filter is set', async () => {
+        const mock = await open('/admin/sessions');
+        await screen.findByText('s-8kq2m');
+        expect(mock.get.mock.calls.filter(c => c[0] === '/admin/sessions')).toHaveLength(0);
+        expect(mock.signals.sessions).toHaveLength(1);
+        fireEvent.change(screen.getByRole('combobox', { name: 'Phase' }), { target: { value: 'Ready' } });
+        await waitFor(() => expect(mock.get.mock.calls.filter(c => c[0] === '/admin/sessions')).toHaveLength(1));
+        expect(mock.signals.sessions[0].aborted).toBe(true);
+        fireEvent.change(screen.getByRole('combobox', { name: 'Phase' }), { target: { value: '' } });
+        await waitFor(() => expect(mock.signals.sessions).toHaveLength(2));
+        const calls = mock.get.mock.calls.filter(c => c[0] === '/admin/sessions').length;
+        await new Promise(resolve => setTimeout(resolve, 20));
+        expect(mock.get.mock.calls.filter(c => c[0] === '/admin/sessions')).toHaveLength(calls);
+    });
+
+    it('loads more pages with the API cursor', async () => {
+        const first = { items: [adminSession('s-a')], total: 2, next: 'cur-1' };
+        const mock = await open('/admin/sessions', mockApi({ '/admin/sessions': first }));
+        await screen.findByText('s-a');
+        mock.get.mockImplementationOnce(async () => ({ data: { items: [adminSession('s-b')], total: 2 }, response: { status: 200 } }));
+        fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+        await screen.findByText('s-b');
+        screen.getByText('s-a');
+        expect(mock.get).toHaveBeenCalledWith('/admin/sessions', { params: { query: expect.objectContaining({ cursor: 'cur-1' }) } });
+        expect(screen.queryByRole('button', { name: 'Show more' })).toBeNull();
+    });
+
+    it('shows not found for a missing session and never the previous session', async () => {
+        const mock = await open('/admin/sessions');
+        fireEvent.click((await screen.findByText('s-8kq2m')).closest('tr') as HTMLElement);
+        await screen.findByText('Timeline');
+        mock.get.mockImplementation(async (path: string) =>
+            path === '/admin/sessions/{name}' ? { response: { status: 404 } } : { data: data[path], response: { status: 200 } }
+        );
+        fireEvent.click(screen.getByText('s-z0r3e').closest('tr') as HTMLElement);
+        await screen.findByText('This session does not exist (anymore).');
+        expect(screen.queryByText('Timeline')).toBeNull();
+        expect(screen.queryByText('GIT_URI, ARTEMIS_TOKEN', { exact: false })).toBeNull();
+    });
+});
+
+describe('streams end with the page', () => {
+    it('aborts the sessions stream when the status page is left, and both streams when the panel closes', async () => {
+        const mock = mockApi();
+        window.history.pushState({}, '', '/admin');
+        const { unmount } = render(
+            <I18nProvider initial='en'>
+                <AdminApp config={appConfig} api={mock.api} user={user} />
+            </I18nProvider>
+        );
+        const nav = await screen.findByRole('navigation', { name: 'Admin' });
+        await waitFor(() => expect(mock.signals.sessions).toHaveLength(1));
+        expect(mock.signals.status).toHaveLength(1);
+        fireEvent.click(within(nav).getByRole('link', { name: /Pools/ }));
+        await screen.findByRole('heading', { level: 1, name: 'Pools' });
+        expect(mock.signals.sessions[0].aborted).toBe(true);
+        expect(mock.signals.status[0].aborted).toBe(false);
+        unmount();
+        expect(mock.signals.status[0].aborted).toBe(true);
+    });
+});
+
+describe('unsafe and unknown values', () => {
+    it('renders no link for an API or config address that is not http(s)', async () => {
+        const events = [{ time: iso(-MIN), reason: 'Failed', message: 'x', traceUrl: 'javascript:alert(1)' }];
+        const config = {
+            ...(data['/admin/config'] as AdminConfig),
+            admin: { prometheusConfigured: true, links: { grafana: 'javascript:alert(1)', jaeger: 'data:text/html,x' } }
+        };
+        await open('/admin/problems', mockApi({ '/admin/problems': { since: '24h', events }, '/admin/config': config }));
+        await screen.findByText('x');
+        await waitFor(() => expect(screen.queryByRole('link', { name: 'Grafana' })).toBeNull());
+        expect(screen.queryByRole('link', { name: /Trace/ })).toBeNull();
+        expect(screen.queryByRole('link', { name: 'Jaeger' })).toBeNull();
+        expect(document.querySelector('a[href^="javascript"]')).toBeNull();
+        expect(document.querySelector('a[href^="data"]')).toBeNull();
+    });
+
+    it('shows a phase, state and reason from a newer service neutrally', async () => {
+        await open('/admin/sessions', mockApi({ '/admin/sessions': { items: [adminSession('s-new', { phase: 'Paused' })], total: 1 } }));
+        const row = (await screen.findByText('s-new')).closest('tr') as HTMLElement;
+        within(row).getByText('Paused');
+    });
+
+    it('shows a workspace state from a newer service neutrally', async () => {
+        const list = data['/admin/workspaces'] as AdminWorkspaceList;
+        await open(
+            '/admin/workspaces',
+            mockApi({ '/admin/workspaces': { ...list, items: [{ ...list.items[0], name: 'ws-new', state: 'archived' }] } })
+        );
+        const row = (await screen.findByText('ws-new')).closest('tr') as HTMLElement;
+        within(row).getByText('archived');
+    });
+});
+
+describe('failed updates', () => {
+    it('keeps the data and shows one hint when a later poll fails', async () => {
+        vi.useFakeTimers();
+        try {
+            const mock = mockApi();
+            window.history.pushState({}, '', '/admin/pools');
+            render(
+                <I18nProvider initial='en'>
+                    <AdminApp config={appConfig} api={mock.api} user={user} />
+                </I18nProvider>
+            );
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(0);
+            });
+            screen.getByText('predictive');
+            expect(screen.queryByText('Update failed, showing older data')).toBeNull();
+            mock.get.mockImplementation(async () => ({ response: { status: 500 } }));
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(30_000);
+            });
+            screen.getByText('Update failed, showing older data');
+            screen.getByText('predictive');
         } finally {
             vi.useRealTimers();
         }

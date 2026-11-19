@@ -8,7 +8,7 @@ import { Shell } from '../components/Shell';
 import { useNow } from '../components/useNow';
 import { usePolling } from '../components/usePolling';
 import type { AppConfig } from '../config';
-import { formatAgo } from '../format';
+import { formatAgo, formatTime } from '../format';
 import { useI18n } from '../i18n';
 import { hero, levelTone, wait } from './level';
 import { type StatusKey, statusText } from './messages';
@@ -113,10 +113,10 @@ export const StatusPage = ({ config }: { config: AppConfig }): React.JSX.Element
     const { lang } = useI18n();
     const st = useSt();
     const now = useNow();
-    const { data, failed, loading } = usePolling(() => loadStatus(config.apiBaseUrl));
+    const { data, failed } = usePolling(() => loadStatus(config.apiBaseUrl));
 
     let body: React.JSX.Element;
-    if (failed || (!data && !loading)) {
+    if (!data && failed) {
         body = (
             <div className='hero danger' role='status'>
                 <CircleX aria-hidden />
@@ -152,6 +152,11 @@ export const StatusPage = ({ config }: { config: AppConfig }): React.JSX.Element
                         </div>
                         <p className='note'>{st('waits.note')}</p>
                     </section>
+                )}
+                {failed && (
+                    <p className='note' role='status'>
+                        {st('stale', { time: formatTime(data.updatedAt, lang) })}
+                    </p>
                 )}
                 <p className='note' style={{ marginTop: 24 }}>
                     {st('updated', { time: formatAgo(data.updatedAt, now, lang) })}

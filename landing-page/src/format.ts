@@ -31,3 +31,8 @@ export function formatAgo(iso: string, now: number, lang: Lang): string {
     }
     return rtf.format(-Math.floor(seconds / size), unit);
 }
+
+/** The wall clock time to the minute, for "showing the state from 14:02". */
+export function formatTime(iso: string, lang: Lang): string {
+    return new Intl.DateTimeFormat(lang, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+}

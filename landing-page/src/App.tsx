@@ -1,6 +1,6 @@
 import './App.css';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Api } from './api';
 import type { LaunchRequest, Template } from './api-client';
@@ -45,16 +45,18 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [api]);
 
-    // The menu entry is a convenience: the service checks the role again on every admin request.
-    useEffect(() => {
-        let cancelled = false;
+    // The menu entry is a convenience: the service checks the role again on every admin request. The check runs the
+    // first time the menu opens, so students do not cause a 403 on every page load.
+    const adminChecked = useRef(false);
+    const checkAdmin = useCallback((): void => {
+        if (adminChecked.current) {
+            return;
+        }
+        adminChecked.current = true;
         api.client
             .GET('/admin/status')
-            .then(({ response }) => !cancelled && setAdmin(response.status === 200))
+            .then(({ response }) => setAdmin(response.status === 200))
             .catch(() => undefined);
-        return () => {
-            cancelled = true;
-        };
     }, [api]);
 
     const begin = (request: LaunchRequest, known?: Parameters<typeof buildLaunchInfo>[2]): void =>
@@ -105,7 +107,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     };
 
     return (
-        <Shell config={config} user={user} logoutUrl={logoutUrl} admin={admin}>
+        <Shell config={config} user={user} logoutUrl={logoutUrl} admin={admin} onMenuOpen={checkAdmin}>
             {launch ? (
                 <Launch
                     api={api}

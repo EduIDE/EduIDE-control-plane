@@ -1,6 +1,7 @@
 import { CircleCheck, CircleX, ExternalLink, Loader, Save, SaveOff, TriangleAlert } from 'lucide-react';
 
 import { Logo } from '../components/Icons';
+import { httpHref } from '../url';
 import { useAdmin } from './context';
 import { codeKey } from './messages';
 import { type AdminPageName, adminPath } from './routes';
@@ -128,8 +129,10 @@ export const PhasePill = ({ phase }: { phase: 'Pending' | 'Starting' | 'Ready' |
         Pending: { tone: 'n', icon: <Loader aria-hidden /> },
         Failed: { tone: 'bad', icon: <CircleX aria-hidden /> }
     } as const;
+    // A phase a newer server adds is shown neutrally instead of crashing the table.
+    const fallback = (look as Record<string, { tone: Tone; icon: React.JSX.Element }>)[phase] ?? look.Pending;
     return (
-        <Pill tone={look[phase].tone} icon={look[phase].icon}>
+        <Pill tone={fallback.tone} icon={fallback.icon}>
             {ta(`phase.${phase}`)}
         </Pill>
     );
@@ -149,8 +152,9 @@ export const CodePill = ({ code }: { code: string }): React.JSX.Element => {
 
 export const TraceLink = ({ url, label }: { url?: string; label?: string }): React.JSX.Element | undefined => {
     const { ta } = useAdmin();
-    return url ? (
-        <a className='a-trace' href={url} target='_blank' rel='noreferrer'>
+    const href = httpHref(url);
+    return href ? (
+        <a className='a-trace' href={href} target='_blank' rel='noreferrer'>
             {label ?? ta('trace')}
             <ExternalLink aria-hidden />
         </a>
@@ -173,7 +177,7 @@ export const Mono = ({ children }: { children: React.ReactNode }): React.JSX.Ele
 /** Shown instead of charts and figures that need Prometheus. Neutral, nothing is broken. */
 export const NoPrometheus = (): React.JSX.Element => {
     const { ta, config } = useAdmin();
-    const grafana = config?.admin.links?.grafana;
+    const grafana = httpHref(config?.admin.links?.grafana);
     return (
         <p className='a-note'>
             {ta('noProm.text')}{' '}
@@ -197,3 +201,14 @@ export const LoadError = (): React.JSX.Element => {
 };
 
 export const Empty = ({ children }: { children: React.ReactNode }): React.JSX.Element => <div className='a-empty'>{children}</div>;
+
+/** One hint for every page: a poll failed, the data on screen is older. */
+export const UpdateFailed = ({ show }: { show: boolean }): React.JSX.Element | undefined => {
+    const { ta } = useAdmin();
+    return show ? (
+        <p className='a-stale' role='status'>
+            <TriangleAlert aria-hidden />
+            {ta('updateFailed')}
+        </p>
+    ) : undefined;
+};

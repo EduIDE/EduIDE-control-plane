@@ -12,11 +12,13 @@ interface HeaderProps {
     admin?: boolean;
     /** A link back to the landing page, for pages that are reachable without being on it. */
     back?: boolean;
+    /** Called each time the menu opens, so a page can look up the admin entry lazily. */
+    onMenuOpen?: () => void;
 }
 
 const LANG_NAMES = { en: 'English', de: 'Deutsch' };
 
-export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back }: HeaderProps): React.JSX.Element => {
+export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back, onMenuOpen }: HeaderProps): React.JSX.Element => {
     const { t, lang, setLang } = useI18n();
     const [open, setOpen] = useState(false);
     const box = useRef<HTMLDivElement | undefined>(undefined);
@@ -73,7 +75,12 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back }: Heade
                             aria-expanded={open}
                             aria-label={user ? t('account', { label: user.label }) : t('language')}
                             title={user?.label}
-                            onClick={() => setOpen(o => !o)}
+                            onClick={() => {
+                                if (!open) {
+                                    onMenuOpen?.();
+                                }
+                                setOpen(o => !o);
+                            }}
                         >
                             {user ? user.initials : <Languages aria-hidden />}
                         </button>

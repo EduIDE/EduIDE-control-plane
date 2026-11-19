@@ -1,29 +1,39 @@
 import { useEffect, useRef, useState } from 'react';
 
-/** Loads on mount and then every `ms`. A failed load keeps the last data and sets `failed`. */
-export function usePolling<T>(load: () => Promise<T>, ms = 30_000, deps: unknown[] = []): { data?: T; failed: boolean; loading: boolean } {
-    const [data, setData] = useState<T>();
-    const [failed, setFailed] = useState(false);
-    const [loading, setLoading] = useState(true);
+interface Polling<T> {
+    data?: T;
+    /** The last load failed. Data from an earlier load stays. */
+    failed: boolean;
+    /** What the last failed load threw, so a page can tell "not found" from "unreachable". */
+    error?: unknown;
+    loading: boolean;
+}
+
+/**
+ * Loads when it starts and then every `ms`. A failed load keeps the last data and sets `failed`.
+ * `deps` name the request (filters, selected item): when one changes, data and failure are cleared first,
+ * so a view never shows the answer to the previous request. With `enabled` false nothing loads or ticks.
+ */
+export function usePolling<T>(load: () => Promise<T>, ms = 30_000, deps: unknown[] = [], enabled = true): Polling<T> {
+    const [state, setState] = useState<Polling<T>>({ failed: false, loading: true });
     const loadRef = useRef(load);
     loadRef.current = load;
 
     useEffect(() => {
+        if (!enabled) {
+            return;
+        }
         let cancelled = false;
+        setState({ failed: false, loading: true });
         const run = async (): Promise<void> => {
             try {
                 const next = await loadRef.current();
                 if (!cancelled) {
-                    setData(next);
-                    setFailed(false);
+                    setState({ data: next, failed: false, loading: false });
                 }
-            } catch {
+            } catch (error) {
                 if (!cancelled) {
-                    setFailed(true);
-                }
-            } finally {
-                if (!cancelled) {
-                    setLoading(false);
+                    setState(s => ({ ...s, failed: true, error, loading: false }));
                 }
             }
         };
@@ -35,7 +45,7 @@ export function usePolling<T>(load: () => Promise<T>, ms = 30_000, deps: unknown
         };
         // The caller lists what restarts the polling (filters), the load function itself is read through the ref.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [ms, ...deps]);
+    }, [ms, enabled, ...deps]);
 
-    return { data, failed, loading };
+    return state;
 }

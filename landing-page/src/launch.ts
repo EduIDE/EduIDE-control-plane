@@ -1,4 +1,5 @@
 import type { LaunchRequest, Problem, Session, Template } from './api-client';
+import { httpHref } from './url';
 
 export interface LaunchParams {
     appDef: string;
@@ -86,20 +87,10 @@ export function failureFromProblem(problem: Partial<Problem> | undefined): Launc
     };
 }
 
-// Only http(s) targets: the URL comes from the API, but a redirect to javascript: must never be possible.
-export function safeUrl(url: string | undefined): string | undefined {
-    try {
-        const u = new URL(url ?? '');
-        return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : undefined;
-    } catch {
-        return undefined;
-    }
-}
-
 /** The state machine step: every session event maps to the next state. Ready and Failed are final. */
 export function applySession(session: Session): LaunchState {
     if (session.phase === 'Ready') {
-        const url = safeUrl(session.url);
+        const url = httpHref(session.url);
         return url ? { kind: 'ready', url } : { kind: 'failed', code: 'no-address' };
     }
     if (session.phase === 'Failed') {

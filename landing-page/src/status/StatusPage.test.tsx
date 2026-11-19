@@ -129,3 +129,35 @@ describe('StatusPage', () => {
         expect(fetch).toHaveBeenCalledTimes(2);
     });
 });
+
+describe('StatusPage refresh failures and unknown values', () => {
+    it('keeps the last state and says when it could not update', async () => {
+        vi.useFakeTimers();
+        const fetchMock = vi.fn(async () => new Response(JSON.stringify(status({ updatedAt: '2026-11-19T14:02:00Z' }))));
+        vi.stubGlobal('fetch', fetchMock);
+        render(
+            <I18nProvider initial='en'>
+                <StatusPage config={config} />
+            </I18nProvider>
+        );
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(0);
+        });
+        screen.getByRole('heading', { name: 'Everything is working' });
+        expect(screen.queryByText(/Could not update/)).toBeNull();
+        fetchMock.mockImplementation(async () => new Response('', { status: 503 }));
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(30_000);
+        });
+        screen.getByRole('heading', { name: 'Everything is working' });
+        screen.getByText(/Could not update, showing the state from \d\d:\d\d/);
+        expect(screen.queryByRole('heading', { name: 'Status is not available right now' })).toBeNull();
+    });
+
+    it('does not crash on a level from a newer service', async () => {
+        answer(status({ overall: 'degraded' as 'ok', parts: { signIn: 'ok', starting: 'maintenance' as 'ok', workspaces: 'ok' } }));
+        await renderPage();
+        screen.getByRole('heading', { name: 'Status is partly unclear' });
+        screen.getByText('maintenance');
+    });
+});

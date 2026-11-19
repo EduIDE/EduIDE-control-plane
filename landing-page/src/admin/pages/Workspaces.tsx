@@ -7,7 +7,7 @@ import { formatAgo, formatDate } from '../../format';
 import { useAdmin } from '../context';
 import { formatBytes, WORKSPACE_SOON_MS } from '../format';
 import { ok } from '../query';
-import { Empty, Kpi, LoadError, Mono, PageHead, Pill, Scroll, type Tone, TplCell } from '../ui';
+import { Empty, Kpi, LoadError, Mono, PageHead, Pill, Scroll, type Tone, TplCell, UpdateFailed } from '../ui';
 import { useDuration } from '../useDuration';
 
 const STATES = ['active', 'inUse', 'expiring', 'expired'] as const;
@@ -17,6 +17,9 @@ const STATE_LOOK: Record<AdminWorkspace['state'], { tone: Tone; icon: React.JSX.
     expiring: { tone: 'warn', icon: <TriangleAlert aria-hidden /> },
     expired: { tone: 'warn', icon: <Clock aria-hidden /> }
 };
+
+// A state a newer server adds is shown neutrally instead of crashing the table.
+const NEUTRAL: { tone: Tone; icon?: React.JSX.Element } = { tone: 'n' };
 
 export const WorkspacesPage = (): React.JSX.Element => {
     const { api, ta, lang, now, templates, config } = useAdmin();
@@ -45,6 +48,7 @@ export const WorkspacesPage = (): React.JSX.Element => {
         <>
             <PageHead title={ta('workspaces.title')} sub={ta('workspaces.sub')} />
             {failed && !data && <LoadError />}
+            <UpdateFailed show={failed && data !== undefined} />
             {s && (
                 <div className='a-kpis'>
                     <Kpi label={ta('workspaces.total')} value={s.total} detail={ta('workspaces.inUse', { n: s.inUse })} />
@@ -126,7 +130,10 @@ export const WorkspacesPage = (): React.JSX.Element => {
                                                 <Mono>{w.ownerHash}</Mono>
                                             </td>
                                             <td>
-                                                <Pill tone={STATE_LOOK[w.state].tone} icon={STATE_LOOK[w.state].icon}>
+                                                <Pill
+                                                    tone={(STATE_LOOK[w.state] ?? NEUTRAL).tone}
+                                                    icon={(STATE_LOOK[w.state] ?? NEUTRAL).icon}
+                                                >
                                                     {ta(`workspaces.state.${w.state}`)}
                                                 </Pill>
                                             </td>

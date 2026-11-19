@@ -4,7 +4,7 @@ import { usePolling } from '../../components/usePolling';
 import { formatAgo, formatClock } from '../../format';
 import { useAdmin } from '../context';
 import { ok } from '../query';
-import { Empty, Kv, LoadError, PageHead, Panel, Pill, TplCell } from '../ui';
+import { Empty, Kv, LoadError, PageHead, Panel, Pill, TplCell, UpdateFailed } from '../ui';
 
 export const PoolsPage = (): React.JSX.Element => {
     const { api, ta, lang, now, status } = useAdmin();
@@ -14,6 +14,7 @@ export const PoolsPage = (): React.JSX.Element => {
         <>
             <PageHead title={ta('pools.title')} sub={ta('pools.sub')} />
             {failed && !data && <LoadError />}
+            <UpdateFailed show={failed && data !== undefined} />
             {data && data.pools.length === 0 && <Empty>{ta('none')}</Empty>}
             <div className='a-grid2'>
                 {data?.pools.map(p => {

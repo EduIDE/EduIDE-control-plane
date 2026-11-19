@@ -4,12 +4,29 @@ import type { AdminSessionList } from '../../apiTypes';
 import { usePolling } from '../../components/usePolling';
 import { useWatch } from '../../components/useWatch';
 import { formatAgo, formatClock } from '../../format';
+import { httpHref } from '../../url';
 import { useAdmin } from '../context';
 import { formatBytes as bytesText } from '../format';
 import { ok } from '../query';
 import { SessionsTable } from '../SessionsTable';
-import { CodePill, Empty, Kpi, LoadError, Mono, NoPrometheus, PageHead, PageLink, Panel, Pill, Scroll, TplCell, TraceLink } from '../ui';
+import {
+    CodePill,
+    Empty,
+    Kpi,
+    LoadError,
+    Mono,
+    NoPrometheus,
+    PageHead,
+    PageLink,
+    Panel,
+    Pill,
+    Scroll,
+    TplCell,
+    TraceLink,
+    UpdateFailed
+} from '../ui';
 import { useDuration } from '../useDuration';
+import { warningText } from '../warnings';
 
 export const StatusPage = (): React.JSX.Element => {
     const { api, ta, lang, now, status, config, templates } = useAdmin();
@@ -19,7 +36,7 @@ export const StatusPage = (): React.JSX.Element => {
     const workspaces = usePolling(() => ok(api.client.GET('/admin/workspaces', { params: { query: { limit: 1 } } })));
     const sessions = useWatch<AdminSessionList>(api.watchAdminSessions).data;
     const stats = status?.stats;
-    const grafana = config?.admin.links?.grafana;
+    const grafana = httpHref(config?.admin.links?.grafana);
     const slowest = [...(stats?.startP95 ?? [])].sort((a, b) => b.seconds - a.seconds)[0];
     const slowestName = slowest ? (templates?.find(t => t.name === slowest.template)?.displayName ?? slowest.template) : '';
 
@@ -36,10 +53,11 @@ export const StatusPage = (): React.JSX.Element => {
     return (
         <>
             <PageHead title={ta('status.title')} />
+            <UpdateFailed show={[pools, problems, workspaces].some(p => p.failed && p.data !== undefined)} />
             {status?.warnings.map(w => (
                 <div key={`${w.code}-${w.pool ?? ''}`} className='a-alert warn' role='alert'>
                     <TriangleAlert aria-hidden />
-                    <div>{w.message}</div>
+                    <div>{warningText(ta, w, now)}</div>
                 </div>
             ))}
             {!status ? (

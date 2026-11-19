@@ -32,6 +32,9 @@ const en = {
     'waits.note':
         'Temporary workspaces start from a ready environment when one is free. Saved workspaces always need a moment to attach your files.',
     updated: 'Updated {time}, refreshes on its own',
+    'hero.unknown': 'Status is partly unclear',
+    'hero.unknownText': 'The list below shows what we know.',
+    stale: 'Could not update, showing the state from {time}',
     unavailable: 'Status is not available right now',
     unavailableText: 'Try again in a moment.',
     loading: 'Loading the status...'
@@ -68,6 +71,9 @@ const de: Record<keyof typeof en, string> = {
     'waits.note':
         'Temporäre Workspaces starten aus einer bereiten Umgebung, wenn eine frei ist. Gespeicherte Workspaces brauchen immer einen Moment, um deine Dateien einzubinden.',
     updated: 'Aktualisiert {time}, lädt von selbst neu',
+    'hero.unknown': 'Der Status ist teilweise unklar',
+    'hero.unknownText': 'Die Liste unten zeigt, was wir wissen.',
+    stale: 'Aktualisierung fehlgeschlagen, Stand von {time}',
     unavailable: 'Status gerade nicht abrufbar',
     unavailableText: 'Versuche es gleich noch einmal.',
     loading: 'Der Status wird geladen...'

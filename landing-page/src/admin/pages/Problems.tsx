@@ -2,7 +2,7 @@ import { usePolling } from '../../components/usePolling';
 import { formatClock } from '../../format';
 import { useAdmin } from '../context';
 import { ok } from '../query';
-import { CodePill, Empty, LoadError, Mono, NoPrometheus, PageHead, Panel, Pill, Scroll, TplCell, TraceLink } from '../ui';
+import { CodePill, Empty, LoadError, Mono, NoPrometheus, PageHead, Panel, Pill, Scroll, TplCell, TraceLink, UpdateFailed } from '../ui';
 
 export const ProblemsPage = (): React.JSX.Element => {
     const { api, ta, lang } = useAdmin();
@@ -13,6 +13,7 @@ export const ProblemsPage = (): React.JSX.Element => {
         <>
             <PageHead title={ta('problems.title')} sub={ta('problems.sub')} />
             {failed && !data && <LoadError />}
+            <UpdateFailed show={failed && data !== undefined} />
             {data &&
                 (data.codes ? (
                     <Panel title={ta('problems.byCode')}>
