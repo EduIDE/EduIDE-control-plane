@@ -90,121 +90,124 @@ def object_model():
 def components():
     """Logical view, no technologies."""
     d = Diagram("components")
-    student = actor(d, 45, -93, "Student")
-    artemis = component(d, 1500, -100, 200, 70, "Artemis", stereotype="subsystem", external=True)
+    # student lane across the top
+    student = actor(d, 180, -140, "Student")
+    artemis = component(d, 1100, -147, 200, 70, "Artemis", stereotype="subsystem", external=True)
 
-    kc = component(d, 300, 40, 260, 90, "Identity Provider", "logins, tokens",
+    gw_box = (40, 40, 260, 100)
+    gw = component(d, *gw_box, "Envoy Gateway", "login at the edge, routing",
                    stereotype="subsystem", external=True)
-    gw = component(d, 300, 300, 260, 100, "Envoy Gateway", "login at the edge, routing",
+    kc = component(d, 400, 30, 240, 80, "Identity Provider", "logins, tokens",
                    stereotype="subsystem", external=True)
 
-    session = subsystem(d, 40, 540, 540, 300, "EduIDE Session")
-    ide = component(d, 60, 630, 220, 80, "Student IDE", "editor, terminal, build")
-    agent = component(d, 340, 630, 220, 80, "Session Agent", "token check, data, activity")
-    ext = component(d, 60, 750, 220, 70, "Session Extension", "data and warnings in the IDE")
+    landing = subsystem(d, 780, -20, 520, 200, "EduIDE\nLanding Page")
+    launcher = component(d, 800, 80, 230, 80, "Launcher", "launch from Artemis link")
+    overview = component(d, 1050, 80, 230, 80, "Session Overview", "my sessions and workspaces")
 
-    landing = subsystem(d, 900, 20, 540, 190, "EduIDE\nLanding Page")
-    launcher = component(d, 920, 110, 240, 80, "Launcher", "launch from Artemis link")
-    overview = component(d, 1180, 110, 240, 80, "Session Overview", "my sessions and workspaces")
+    # control side around the cluster state hub
+    service_box = (780, 260, 520, 190)
+    service = subsystem(d, *service_box, "EduIDE\nService")
+    launch_mgmt = component(d, 800, 350, 230, 80, "Launch Management", "validate, idempotent launch")
+    feed = component(d, 1050, 350, 230, 80, "Overview Feed", "joined list, live updates")
 
-    service = subsystem(d, 900, 300, 540, 200, "EduIDE\nService")
-    launch_mgmt = component(d, 920, 400, 240, 80, "Launch Management", "validate, idempotent launch")
-    feed = component(d, 1180, 400, 240, 80, "Overview Feed", "joined list, live updates")
-
-    authz = subsystem(d, 600, 560, 220, 100, "EduIDE\nSession Access", size=16)
-    k8s = component(d, 1080, 580, 220, 80, "Kubernetes API", "custom resources, watch",
+    authz_box = (600, 520, 200, 100)
+    authz = subsystem(d, *authz_box, "EduIDE\nSession Access", size=16)
+    k8s = component(d, 980, 530, 220, 80, "Kubernetes API", "custom resources, watch",
                     stereotype="subsystem", external=True)
-    scaler = subsystem(d, 1340, 540, 220, 100, "EduIDE\nPool Scaler", size=16)
+    scaler = subsystem(d, 1240, 520, 180, 100, "EduIDE\nPool Scaler", size=16)
 
-    operator = subsystem(d, 960, 740, 700, 270, "EduIDE\nOperator")
-    lifecycle = component(d, 980, 850, 200, 80, "Session Lifecycle", "start, timeouts, routes")
-    pool_mgr = component(d, 1240, 850, 190, 80, "Pool Manager", "prewarm, claim, pressure")
-    ws_mgr = component(d, 1470, 850, 170, 80, "Workspace Manager", "volumes, retention")
+    # session lane at the bottom, next to the operator
+    session = subsystem(d, 40, 700, 480, 360, "EduIDE Session")
+    agent = component(d, 100, 800, 220, 80, "Session Agent", "token check, data, activity")
+    ide = component(d, 50, 960, 200, 80, "Student IDE", "editor, terminal, build")
+    ext = component(d, 280, 960, 220, 80, "Session Extension", "data and warnings in the IDE")
 
-    # Launch Entry Service above the landing page: the student and Artemis' redirect use it
-    entry = ball(d, 1130, -65, "")
-    d.text(1150, -105, 180, 30, "<b>Launch Entry Service</b>", size=13)
-    d.edge(launcher, entry, LINE, exit=(fx(920, 240, 1130), 0), entry=(0.5, 1))
+    operator = subsystem(d, 660, 710, 680, 260, "EduIDE\nOperator")
+    lifecycle = component(d, 680, 800, 200, 80, "Session Lifecycle", "start, timeouts, routes")
+    pool_mgr = component(d, 940, 800, 190, 80, "Pool Manager", "prewarm, claim, pressure")
+    ws_mgr = component(d, 1150, 800, 170, 80, "Workspace Manager", "volumes, retention")
+
+    # Launch Entry Service: the student and Artemis' redirect use it
+    entry = ball(d, 980, -112, "")
+    d.text(785, -150, 180, 30, "<b>Launch Entry Service</b>", align="right", size=13)
+    d.edge(launcher, entry, LINE, exit=(fx(800, 230, 980), 0), entry=(0.5, 1))
     d.edge(student, entry, SOCKET, exit=(1, 0.5), entry=(0, 0.5))
     d.edge(artemis, entry, SOCKET, exit=(0, 0.5), entry=(1, 0.5))
 
-    # IDE Access Service on the gateway's left, the student reaches it from above
-    ide_access = ball(d, 250, 350, "")
-    d.text(90, 352, 150, 40, "<b>IDE Access<br/>Service</b>", align="right", size=13)
-    d.edge(gw, ide_access, LINE, exit=(0, 0.5), entry=(1, 0.5))
-    d.edge(student, ide_access, SOCKET, exit=(0, 0.5), entry=(0.5, 0), points=[(22, -65), (22, 280), (250, 280)])
+    # IDE Access Service above the gateway
+    ide_access = ball(d, 100, -20, "")
+    d.text(118, -40, 120, 40, "<b>IDE Access<br/>Service</b>", size=13)
+    d.edge(gw, ide_access, LINE, exit=(fx(40, 260, 100), 0), entry=(0.5, 1))
+    d.edge(student, ide_access, SOCKET, exit=(0, 0.5), entry=(0.5, 0), points=[(100, -112)])
 
-    # Authentication Service right of the identity provider; all three users share one socket line
-    auth = ball(d, 640, 85, "")
-    d.text(586, 102, 120, 40, "<b>Authentication<br/>Service</b>", align="center", size=13)
-    d.edge(kc, auth, LINE, exit=(1, frac((300, 40, 260, 90), 85)), entry=(0, 0.5))
-    d.edge(landing, auth, SOCKET, exit=(0, frac((900, 20, 540, 190), 85)), entry=(1, 0.5))
-    d.edge(service, auth, SOCKET, exit=(0, frac((900, 300, 540, 200), 340)), entry=(1, 0.5),
-           points=[(720, 340), (720, 85)])
-    d.edge(gw, auth, SOCKET, exit=(1, frac((300, 300, 260, 100), 320)), entry=(1, 0.5),
-           points=[(720, 320), (720, 85)])
+    # Authentication Service between identity provider and landing page; one socket line, T junctions
+    auth = ball(d, 700, 70, "")
+    d.text(640, 18, 120, 40, "<b>Authentication<br/>Service</b>", align="center", size=13)
+    d.edge(kc, auth, LINE, exit=(1, 0.5), entry=(0, 0.5))
+    d.edge(landing, auth, SOCKET, exit=(0, frac((780, -20, 520, 200), 70)), entry=(1, 0.5))
+    d.edge(gw, auth, SOCKET, exit=(1, frac(gw_box, 125)), entry=(1, 0.5), points=[(740, 125), (740, 70)])
+    d.edge(service, auth, SOCKET, exit=(0, frac(service_box, 300)), entry=(1, 0.5),
+           points=[(760, 300), (760, 70)])
 
-    # Launch and Overview Service between landing page and service, clear of the titles
-    launch = ball(d, 1110, 255, "Launch Service", label_w=120)
-    d.edge(launch_mgmt, launch, LINE, exit=(fx(920, 240, 1110), 0), entry=(0.5, 1))
-    d.edge(launcher, launch, SOCKET, exit=(fx(920, 240, 1110), 1), entry=(0.5, 0))
-    ov = ball(d, 1300, 255, "Overview Service", label_w=130)
-    d.edge(feed, ov, LINE, exit=(fx(1180, 240, 1300), 0), entry=(0.5, 1))
-    d.edge(overview, ov, SOCKET, exit=(fx(1180, 240, 1300), 1), entry=(0.5, 0))
+    # Launch and Overview Service between landing page and service
+    launch = ball(d, 980, 220, "Launch Service", label_w=120)
+    d.edge(launch_mgmt, launch, LINE, exit=(fx(800, 230, 980), 0), entry=(0.5, 1))
+    d.edge(launcher, launch, SOCKET, exit=(fx(800, 230, 980), 1), entry=(0.5, 0))
+    ov = ball(d, 1165, 220, "Overview Service", label_w=130)
+    d.edge(feed, ov, LINE, exit=(0.5, 0), entry=(0.5, 1))
+    d.edge(overview, ov, SOCKET, exit=(0.5, 1), entry=(0.5, 0))
 
     # Session Access Service: the gateway asks it for every session request
-    access = ball(d, 760, 480, "")
-    d.text(776, 486, 120, 40, "<b>Session Access<br/>Service</b>", size=13)
-    d.edge(authz, access, LINE, exit=(fx(600, 220, 760), 0), entry=(0.5, 1))
-    d.edge(gw, access, SOCKET, exit=(1, frac((300, 300, 260, 100), 370)), entry=(0.5, 0), points=[(760, 370)])
+    access = ball(d, 560, 570, "")
+    d.text(440, 520, 120, 40, "<b>Session Access<br/>Service</b>", align="right", size=13)
+    d.edge(authz, access, LINE, exit=(0, 0.5), entry=(1, 0.5))
+    d.edge(gw, access, SOCKET, exit=(fx(40, 260, 280), 1), entry=(0, 0.5), points=[(280, 570)])
 
     # Proxied IDE Service: the agent is the only door into the pod
-    proxied = ball(d, 450, 470, "")
-    d.text(472, 446, 120, 40, "<b>Proxied IDE<br/>Service</b>", size=13)
-    d.edge(agent, proxied, LINE, exit=(fx(340, 220, 450), 0), entry=(0.5, 1))
-    d.edge(gw, proxied, SOCKET, exit=(fx(300, 260, 450), 1), entry=(0.5, 0))
+    proxied = ball(d, 210, 650, "")
+    d.text(60, 630, 130, 40, "<b>Proxied IDE<br/>Service</b>", align="right", size=13)
+    d.edge(agent, proxied, LINE, exit=(fx(100, 220, 210), 0), entry=(0.5, 1))
+    d.edge(gw, proxied, SOCKET, exit=(fx(40, 260, 210), 1), entry=(0.5, 0))
 
     # inside the pod
-    ide_svc = ball(d, 310, 670, "")
-    d.text(260, 600, 100, 30, "<b>IDE Service</b>", align="center", size=12)
-    d.edge(ide, ide_svc, LINE, exit=(1, 0.5), entry=(0, 0.5))
-    d.edge(agent, ide_svc, SOCKET, exit=(0, 0.5), entry=(1, 0.5))
-    data_svc = ball(d, 450, 785, "")
-    d.text(470, 790, 110, 40, "<b>Session Data<br/>Service</b>", size=12)
-    d.edge(agent, data_svc, LINE, exit=(fx(340, 220, 450), 1), entry=(0.5, 0))
-    d.edge(ext, data_svc, SOCKET, exit=(1, frac((60, 750, 220, 70), 785)), entry=(0, 0.5))
+    ide_svc = ball(d, 150, 920, "")
+    d.text(50, 908, 85, 24, "<b>IDE Service</b>", align="right", size=12)
+    d.edge(ide, ide_svc, LINE, exit=(fx(50, 200, 150), 0), entry=(0.5, 1))
+    d.edge(agent, ide_svc, SOCKET, exit=(fx(100, 220, 150), 1), entry=(0.5, 0))
+    data_svc = ball(d, 300, 920, "")
+    d.text(316, 900, 110, 40, "<b>Session Data<br/>Service</b>", size=12)
+    d.edge(agent, data_svc, LINE, exit=(fx(100, 220, 300), 1), entry=(0.5, 0))
+    d.edge(ext, data_svc, SOCKET, exit=(fx(280, 220, 300), 0), entry=(0.5, 1))
 
     # Agent Control Service: the operator hands over the claim
-    control = ball(d, 640, 690, "")
-    d.text(656, 700, 130, 40, "<b>Agent Control<br/>Service</b>", size=13)
-    d.edge(agent, control, LINE, exit=(1, frac((340, 630, 220, 80), 690)), entry=(0, 0.5))
-    d.edge(lifecycle, control, SOCKET, exit=(fx(980, 200, 1040), 1), entry=(0.5, 1),
-           points=[(1040, 1040), (640, 1040)])
+    control = ball(d, 590, 840, "")
+    d.text(535, 790, 110, 40, "<b>Agent Control<br/>Service</b>", align="center", size=13)
+    d.edge(agent, control, LINE, exit=(1, 0.5), entry=(0, 0.5))
+    d.edge(lifecycle, control, SOCKET, exit=(0, 0.5), entry=(1, 0.5))
 
-    # Cluster State Service: one socket line from the left, the other users join with T junctions
-    cluster = ball(d, 1010, 620, "")
-    d.text(958, 562, 120, 40, "<b>Cluster State<br/>Service</b>", size=13)
+    # Cluster State Service: the hub; authz straight, the others join with T junctions
+    cluster = ball(d, 930, 570, "")
+    d.text(905, 618, 120, 40, "<b>Cluster State<br/>Service</b>", size=13)
     d.edge(k8s, cluster, LINE, exit=(0, 0.5), entry=(1, 0.5))
-    d.edge(authz, cluster, SOCKET, exit=(1, frac((600, 560, 220, 100), 620)), entry=(0, 0.5))
-    d.edge(service, cluster, SOCKET, exit=(fx(900, 540, 950), 1), entry=(0, 0.5), points=[(950, 620)])
-    d.edge(scaler, cluster, SOCKET, exit=(fx(1340, 220, 1450), 0), entry=(0, 0.5),
-           points=[(1450, 525), (950, 525), (950, 620)])
-    d.edge(operator, cluster, SOCKET, exit=(0, frac((960, 740, 700, 270), 790)), entry=(0, 0.5),
-           points=[(900, 790), (900, 620)])
+    d.edge(authz, cluster, SOCKET, exit=(1, 0.5), entry=(0, 0.5))
+    d.edge(service, cluster, SOCKET, exit=(fx(780, 520, 860), 1), entry=(0, 0.5), points=[(860, 570)])
+    d.edge(scaler, cluster, SOCKET, exit=(fx(1240, 180, 1270), 0), entry=(0, 0.5),
+           points=[(1270, 490), (860, 490), (860, 570)])
+    d.edge(operator, cluster, SOCKET, exit=(fx(660, 680, 890), 0), entry=(0, 0.5), points=[(890, 570)])
 
     # operator internals
-    claim = ball(d, 1210, 890, "")
-    d.text(1150, 806, 120, 40, "<b>Instance Claim<br/>Service</b>", align="center", size=12)
+    claim = ball(d, 910, 840, "")
+    d.text(850, 756, 120, 40, "<b>Instance Claim<br/>Service</b>", align="center", size=12)
     d.edge(pool_mgr, claim, LINE, exit=(0, 0.5), entry=(1, 0.5))
     d.edge(lifecycle, claim, SOCKET, exit=(1, 0.5), entry=(0, 0.5))
-    volume = ball(d, 1555, 975, "")
-    d.text(1316, 944, 210, 24, "<b>Volume Service</b>", align="right", size=12)
+    volume = ball(d, 1235, 935, "")
+    d.text(1000, 900, 190, 24, "<b>Volume Service</b>", align="right", size=12)
     d.edge(ws_mgr, volume, LINE, exit=(0.5, 1), entry=(0.5, 0))
-    d.edge(lifecycle, volume, SOCKET, exit=(fx(980, 200, 1140), 1), entry=(0, 0.5), points=[(1140, 975)])
+    d.edge(lifecycle, volume, SOCKET, exit=(fx(680, 200, 800), 1), entry=(0, 0.5), points=[(800, 935)])
 
-    legend(d, 40, 880, 300, [("subsystem", "Own subsystem"), ("component", "Component"),
-                             ("external", "External system"), ("interface", "Required / provided service"),
-                             ("responsibility", "Responsibility")])
+    legend(d, 340, 220, 300, [("subsystem", "Own subsystem"), ("component", "Component"),
+                              ("external", "External system"), ("interface", "Required / provided service"),
+                              ("responsibility", "Responsibility")])
     d.save()
 
 
