@@ -30,6 +30,7 @@ Fixes from the audit of 2026-11-19.
 - A workspace no longer reports its volume as lost while the claim cache is behind
 - A template that sets only `timeouts.idle` still gets its idle warning; a zero `idle` or `max` is the default
 - An imported claim that another workspace controls is not shared
+- A user at the workspace limit gets an existing workspace back also from a replica whose cache has not seen it yet, instead of `workspace-limit-reached`
 - The admin template list survives a template deleted between two reads
 
 ### Security
