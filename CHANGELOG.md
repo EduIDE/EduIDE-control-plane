@@ -4,6 +4,10 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Fixed
+
+- A saved workspace launched without a repository is per starter template: picking "Web" no longer reopens the "Node.js" workspace with its files and ignores the choice
+
 ## [0.2.0] - 2026-11-20
 
 The control plane of EduIDE 3.0.0: fixes from the audit of 2026-11-19, listed templates, and the repository is no longer marked experimental.
