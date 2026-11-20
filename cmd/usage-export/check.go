@@ -55,10 +55,16 @@ func checkDir(dir string) ([]string, error) {
 }
 
 // noCountMetrics are not per-session figures; their rows have no count and need none.
-var noCountMetrics = map[string]bool{"pool_slot_hours": true, "pool_empty_hours": true, "restarts": true, "oom_kills": true}
+var noCountMetrics = map[string]bool{"restarts": true, "oom_kills": true}
+
+// exempt tells whether a row is not a per-session figure. Hours of idle pool slots do not depend on sessions;
+// hours of claimed slots and of empty pools do, so they need a count like any other row.
+func exempt(metric, dimension string) bool {
+	return noCountMetrics[metric] || (metric == "pool_slot_hours" && dimension != "claimed")
+}
 
 // distColumns must be empty in a small cell.
-var distColumns = []string{"value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s"}
+var distColumns = []string{"value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s", "gap_steps"}
 
 // checkCells verifies the small-cell rule of a weekly.csv: below 10 sessions only the count may be filled and suppressed must be true.
 func checkCells(path string) []string {
@@ -81,7 +87,7 @@ func checkCells(path string) []string {
 		fail := func(why string) { out = append(out, fmt.Sprintf("%s:%d: small-cell rule: %s", path, n+2, why)) }
 		count := get("count")
 		if count == "" {
-			if !noCountMetrics[get("metric")] && get("suppressed") != "true" {
+			if !exempt(get("metric"), get("dimension")) && get("suppressed") != "true" {
 				fail("row without a count is not suppressed")
 			}
 			continue

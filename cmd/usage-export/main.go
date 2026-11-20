@@ -123,7 +123,7 @@ func export(ctx context.Context, p *prom, ns, install, release, chart string, fr
 	if partial {
 		cf.Period.Note = "Weeks are ISO weeks (Monday 00:00 UTC); with partial weeks the last week may be incomplete, see days in weekly.csv."
 	}
-	cf.Period.DroppedWeeks = dropped
+	cf.Period.DroppedWeeks = append([]string{}, dropped...)
 	if c.lastErr != nil {
 		return c.lastErr
 	}

@@ -30,6 +30,8 @@ It starts a little after the service received the request and ends before the br
 All series start with `eduide:usage:` and carry the labels `namespace` and `template` (or `namespace` alone), never a pod, instance, session or owner label.
 Counts are exact counter deltas, not `increase()`: `increase()` extrapolates to the window edges and drops the first increment of every new series (a counter appears at 1 on its first `Inc`).
 A delta is the last value in the window minus the value before the window; a series that starts inside the window, or restarts at zero, counts from zero.
+A delta loses the increments before a counter reset inside the window, and a scrape gap longer than its look-back (15 minutes, 1 hour for windows of an hour or more) puts the whole count of a series into one window. The rules accept that; the export does not (see below).
+Joins with `kube_pod_labels` fold the series of several kube-state-metrics replicas with `max` first.
 A rule with a 5 minute delta runs in a 5 minute group, so consecutive windows tile without overlap.
 Gauges that both operator pods report during a rollout are folded with `max` over the pods, never summed.
 
@@ -41,7 +43,7 @@ Gauges that both operator pods report during a rollout are folded with `max` ove
 | M4 | `phase_count_5m`, `phase_bucket_5m` for `data_delivered`, `clone`, `ide_usable`; `agent_claim_requests_5m`, `agent_claim_errors_5m` |
 | M5 | `ide_memory_bytes:{p50,p95,max}`, `ide_cpu_cores:{p50,p95}`, `ide_pods` by `template` and `state`; the same with the suffix `_all` per namespace |
 | M6 | `session_lifetime_count_5m`, `session_lifetime_bucket_5m` by `reason` |
-| M7 | `ide_restarts_5m`, `ide_oom_kills_5m` per namespace; `ide_restarts_by_template_5m`, `ide_oom_kills_by_template_5m` per template |
+| M7 | No recording rule: the export computes restarts and OOM kills from the raw kube-state-metrics counters |
 
 The 20 s window needs two scrapes inside it, so the scrape interval of the control plane must be 10 s or less. The chart default of `monitoring.podMonitor.interval` is therefore 10s; a PodMonitor overrides the global scrape interval of Prometheus, so a global 10 s does not help when the PodMonitor sets 30 s.
 A pool carries the name of its template in the chart, so the pool rules label the pool as `template`.
@@ -106,12 +108,16 @@ Rules the command enforces:
 
 - A fixed list of queries in `cmd/usage-export`; no PromQL comes from flags or files.
 - The command reads the raw series, not the recorded ones (only M5 and M7 read recorded series, because pod series are not exported). It must therefore run within the retention of Prometheus. The recording rules serve Grafana and keep the pod-level view out of the export.
-- Counts are exact counter deltas (see above); the maxima of the histograms come from the integer bucket deltas, so a bucket counts only when its count grows.
+- Counts are exact. The export asks Prometheus for the increase of each counter series and reads the few series with `resets()` above zero in the window as raw samples, where it adds every positive step and the new value after a decrease; a series that starts inside the window counts from zero. The maxima of the histograms come from the integer bucket deltas, so a bucket counts only when its count grows.
+- Launch counts and peaks are computed in Go from the raw samples of `eduide_launch_total` (in day chunks). A step across a scrape gap longer than the window is left out of the peak of that window (minute, 20 s, 60 s; the hour for gaps over one hour) and counted in `gap_steps`; the weekly total still includes it.
+- Restarts and OOM kills (M7) come from the raw kube-state-metrics counters. The series are folded by namespace, pod and container with `max` before they are differenced, because kube-state-metrics adds its own `instance` label: after a kube-state-metrics restart or with two replicas every series would count again. The pod names stay in memory. An OOM kill counts when the container's last termination was an OOM kill at some time in the week. Pods without a `kube_pod_labels` entry in the week get the template `unknown`.
+- `data_gaps` covers the control plane targets and kube-state-metrics, starting with the hour before the period (the look-back of the delta queries reaches into it).
+- Pool slot-hours sample the gauge every minute and fold the operator pods with `max`. During an operator handover the old pod's series can end before the new one's starts; each handover can lose up to one minute, so the hours are slightly too low.
 - `peak_hour` and `peak_minute` are clock-aligned buckets. `max_20s` and `max_60s` slide with the scrape interval and are cut at scrape samples, so a window spans between its length and its length plus one scrape interval. A window needs two scrapes, otherwise its column stays empty.
 - A series that is first seen with a value above zero counts from zero. That holds for pods, which start their counters at zero. A scrape gap longer than 15 minutes can put the whole count of a series into one window; `data_gaps` lists such gaps.
 - Running sessions are the per-minute maximum of the gauge, with the operator pods folded by `max`; their `count` is the launch count of the template in the week.
 - The scrape interval comes from the control plane targets (operator, service, authz) over the whole period; `context.json` holds the median, minimum and maximum. `data_gaps` looks at the same targets.
-- A cell with fewer than 10 sessions carries its count and `suppressed=true`, no distribution. A row without a count is suppressed as well, except pool hours and restarts, which are not per-session figures. For `startup` the quantiles come from ready sessions, so they are also suppressed when fewer than 10 ready sessions stand behind them, even when the count including failed sessions is larger.
+- A cell with fewer than 10 sessions carries its count and `suppressed=true`, no distribution. A row without a count is suppressed as well, except restarts, OOM kills and the hours of idle pool slots, which are not per-session figures. Hours of claimed slots and hours without an unclaimed slot take the launch count of the template as their count, because they would otherwise show the load of a template with few sessions. For `startup` the quantiles come from ready sessions, so they are also suppressed when fewer than 10 ready sessions stand behind them, even when the count including failed sessions is larger.
 - A week without a series gets a row with count 0 when the series exists, and `missing_series_by_week` lists the ids that returned nothing that week.
 - `--check` also verifies the small-cell rule in `weekly.csv`.
 - Template names are exported as they are. If an installation has one template per course, the names reveal the course; rename or merge them before sharing.

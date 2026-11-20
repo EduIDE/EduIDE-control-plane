@@ -38,8 +38,14 @@ func newProm(base string) (*prom, error) {
 	return &prom{base: strings.TrimRight(base, "/"), client: &http.Client{Timeout: 2 * time.Minute}, found: map[string]int{}, missingWeeks: map[string]map[string]bool{}}, nil
 }
 
-// query evaluates expr at time at. The id names the allowlist entry in context.json.
-func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]sample, error) {
+type rawItem struct {
+	Metric map[string]string `json:"metric"`
+	Value  [2]any            `json:"value"`
+	Values [][2]any          `json:"values"`
+}
+
+// do evaluates expr at time at. The id names the allowlist entry in context.json.
+func (p *prom) do(ctx context.Context, id, expr string, at time.Time) ([]rawItem, error) {
 	q := url.Values{"query": {expr}, "time": {strconv.FormatInt(at.Unix(), 10)}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.base+"/api/v1/query?"+q.Encode(), nil)
 	if err != nil {
@@ -54,10 +60,7 @@ func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]samp
 		Status string `json:"status"`
 		Error  string `json:"error"`
 		Data   struct {
-			Result []struct {
-				Metric map[string]string `json:"metric"`
-				Value  [2]any            `json:"value"`
-			} `json:"result"`
+			Result []rawItem `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -66,8 +69,27 @@ func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]samp
 	if body.Status != "success" {
 		return nil, fmt.Errorf("query %s: %s", id, body.Error)
 	}
+	if strings.HasSuffix(id, "_resets") {
+		return body.Data.Result, nil // no series with a reset is the normal case, not a missing metric
+	}
+	if _, ok := p.found[id]; !ok {
+		p.order = append(p.order, id)
+	}
+	p.found[id] += len(body.Data.Result)
+	if len(body.Data.Result) == 0 && p.week != "" {
+		if p.missingWeeks[p.week] == nil {
+			p.missingWeeks[p.week] = map[string]bool{}
+		}
+		p.missingWeeks[p.week][id] = true
+	}
+	return body.Data.Result, nil
+}
+
+// query returns an instant vector.
+func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]sample, error) {
+	items, err := p.do(ctx, id, expr, at)
 	var out []sample
-	for _, r := range body.Data.Result {
+	for _, r := range items {
 		s, _ := r.Value[1].(string)
 		v, err := strconv.ParseFloat(s, 64)
 		if err != nil {
@@ -75,17 +97,36 @@ func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]samp
 		}
 		out = append(out, sample{r.Metric, v})
 	}
-	if _, ok := p.found[id]; !ok {
-		p.order = append(p.order, id)
-	}
-	p.found[id] += len(out)
-	if len(out) == 0 && p.week != "" {
-		if p.missingWeeks[p.week] == nil {
-			p.missingWeeks[p.week] = map[string]bool{}
+	return out, err
+}
+
+// point is one raw sample.
+type point struct{ t, v float64 }
+
+// rawSeries is one series of a range vector with its raw samples.
+type rawSeries struct {
+	labels map[string]string
+	pts    []point
+}
+
+// queryRange evaluates a range selector such as m[1h] and returns the raw samples without any extrapolation.
+func (p *prom) queryRange(ctx context.Context, id, expr string, at time.Time) ([]rawSeries, error) {
+	items, err := p.do(ctx, id, expr, at)
+	var out []rawSeries
+	for _, r := range items {
+		rs := rawSeries{labels: r.Metric}
+		for _, v := range r.Values {
+			t, _ := v[0].(float64)
+			sv, _ := v[1].(string)
+			f, err := strconv.ParseFloat(sv, 64)
+			if err != nil {
+				continue
+			}
+			rs.pts = append(rs.pts, point{t, f})
 		}
-		p.missingWeeks[p.week][id] = true
+		out = append(out, rs)
 	}
-	return out, nil
+	return out, err
 }
 
 // missing lists the query ids that never returned a series.

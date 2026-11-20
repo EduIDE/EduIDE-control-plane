@@ -36,6 +36,7 @@ An empty cell means: not applicable for this metric, not measurable at this reso
 | `failure_share` | Share of failed sessions (`startup`) or failed agent claims (`agent_claim`) |
 | `peak_hour` | Largest number of launches in one clock hour of the week |
 | `peak_minute` | Largest number of launches in one clock minute |
+| `gap_steps` | Number of scrape gaps longer than a minute in the week; the step across such a gap is left out of the peak figures (it still counts in `count`) |
 | `max_20s`, `max_60s` | Largest number of launches in any window of 20 s or 60 s, cut at scrape samples (a window spans its length up to its length plus one scrape interval); empty when the scrape interval cannot resolve the window |
 
 ## Metrics
@@ -50,10 +51,10 @@ An empty cell means: not applicable for this metric, not measurable at this reso
 | `phase` | `data_delivered`, `clone`, `ide_usable` | Late binding and IDE phases after the claim, in seconds |
 | `agent_claim` | `error` | Claim requests from the operator to the agents; `failure_share` is the error share |
 | `lifetime` | end reason (`timeout`, `error`, `user`) | Session lifetime in seconds |
-| `pool_slot_hours` | pool state (`idle_ready`, `idle_starting`, `claimed`) | Instance-hours per state, in `value`; the template is the pool name |
-| `pool_empty_hours` | `no_unclaimed` | Hours without any unclaimed instance (ready or starting), in `value` |
+| `pool_slot_hours` | pool state (`idle_ready`, `idle_starting`, `claimed`) | Instance-hours per state, in `value`; the template is the pool name. `claimed` rows carry the launch count of the template as `count` and are suppressed below 10 |
+| `pool_empty_hours` | `no_unclaimed` | Hours without any unclaimed instance (ready or starting), in `value`; `count` is the launch count of the template, suppressed below 10 |
 | `memory`, `cpu` | pod state (`idle`, `claimed`) or `all` | Working set memory in bytes, CPU in cores. `p50` is the median over the week of the per-minute median over pods, `p95` the 95th percentile over the week of the per-minute p95, `max` the largest value of any pod; weekly only |
-| `restarts`, `oom_kills` | `ide_pods` | Container restarts and OOM kills of IDE pods, in `value` |
+| `restarts`, `oom_kills` | `ide_pods` | Container restarts and OOM kills of IDE pods, in `value`; template `unknown` for pods without labels, `all` when no pod labels exist at all |
 
 Quantiles come from histogram buckets and are as coarse as the bucket widths.
 Memory and CPU rows with a template and state split need the kube-state-metrics pod labels; without them the rows have the template `all` and the dimension `all`.
@@ -71,7 +72,7 @@ Memory and CPU rows with a template and state split need the kube-state-metrics 
 | `pool_sizes` | `min_idle` and `max_instances` per template |
 | `template_resources` | CPU and memory requests and limits per template |
 | `nodes` | Count and allocatable CPU and memory of the nodes (`scope` says which nodes) |
-| `data_gaps` | Days with five or more minutes without data or with a target down |
+| `data_gaps` | Days with five or more minutes without data or with a target down, per `source` (`control-plane` or `kube-state-metrics`), plus the hour before the period (`before-period`) |
 | `missing_series` | Query ids that returned no series, for example metrics that are not deployed yet |
 | `missing_series_by_week` | The same per ISO week |
 | `not_collected` | Context that Prometheus does not hold; add it by hand (currently the peak-hour aggregates of memory and CPU, which are not exported) |
@@ -79,6 +80,6 @@ Memory and CPU rows with a template and state split need the kube-state-metrics 
 ## Small cells
 
 A cell with fewer than 10 sessions carries its count and `suppressed=true`, nothing else.
-A row without a count is suppressed too; pool hours and restarts are not per-session figures and carry no count.
+A row without a count is suppressed too; restarts, OOM kills and the hours of idle pool slots are not per-session figures and carry no count.
 The rule applies in the tool, not by hand, and `--check` verifies it.
 Template names are exported as they are; per-course template names would reveal the course.

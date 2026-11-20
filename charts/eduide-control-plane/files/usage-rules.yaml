@@ -3,6 +3,9 @@
 # Counts are exact counter deltas, not increase(): increase() extrapolates and drops the first increment of every new series.
 # A delta is the last value in the window minus the value before it; a series that starts inside the window, or restarts at zero, counts from zero.
 # Rules with a 5 minute delta live in a group that evaluates every 5m, so consecutive windows tile without overlap.
+# M7 (restarts, OOM kills) has no recording rule: the export computes it from the raw kube-state-metrics counters.
+# A delta loses the increments before a counter reset inside its window; the export reads such series as raw samples, the rules do not.
+# Joins with kube_pod_labels fold the series of several kube-state-metrics replicas with max first.
 # Gauges that the operator pods both report during a rollout are folded with max, never summed over pods.
 # Recording rules get no extraLabels: an extra "namespace" label would overwrite the one the rules aggregate by.
 # This file is appended to the groups of alerts.yaml.
@@ -33,41 +36,41 @@
     expr: quantile by (namespace, template, state) (0.5,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_memory_bytes:p95
     expr: quantile by (namespace, template, state) (0.95,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_memory_bytes:max
     expr: quantile by (namespace, template, state) (1,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_cpu_cores:p50
     expr: quantile by (namespace, template, state) (0.5,
       label_replace(label_replace(
         sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"}[5m]))
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_cpu_cores:p95
     expr: quantile by (namespace, template, state) (0.95,
       label_replace(label_replace(
         sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"}[5m]))
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_pods
     expr: count by (namespace, template, state) (label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   # M5 fallback: all ide-* pods of the namespace, without the template and state split
@@ -108,21 +111,3 @@
     expr: sum by (namespace, template, reason) (((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   - record: eduide:usage:session_lifetime_bucket_5m
     expr: sum by (namespace, template, reason, le) (((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 1))
-  # M7: container restarts and OOM kills of IDE pods (kube-state-metrics)
-  - record: eduide:usage:ide_restarts_5m
-    expr: sum by (namespace) (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1))
-  - record: eduide:usage:ide_oom_kills_5m
-    expr: sum by (namespace) ((((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1))
-      * on (namespace, pod, container) group_left () (kube_pod_container_status_last_terminated_reason{namespace="__NAMESPACE__", pod=~"ide-.*", reason="OOMKilled"} == 1))
-  # needs kube_pod_labels
-  - record: eduide:usage:ide_restarts_by_template_5m
-    expr: sum by (namespace, template) (label_replace(
-        (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1))
-        * on (namespace, pod) group_left (label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
-        "template", "$1", "label_eduide_github_io_template", "(.+)"))
-  - record: eduide:usage:ide_oom_kills_by_template_5m
-    expr: sum by (namespace, template) (label_replace(
-        ((((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1))
-      * on (namespace, pod, container) group_left () (kube_pod_container_status_last_terminated_reason{namespace="__NAMESPACE__", pod=~"ide-.*", reason="OOMKilled"} == 1))
-        * on (namespace, pod) group_left (label_eduide_github_io_template) kube_pod_labels{namespace="__NAMESPACE__"},
-        "template", "$1", "label_eduide_github_io_template", "(.+)"))

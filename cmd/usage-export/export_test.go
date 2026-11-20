@@ -23,12 +23,24 @@ func s(v string, labels string) string {
 	return fmt.Sprintf(`{"metric":{%s},"value":[1,%q]}`, labels, v)
 }
 
-// fakeProm answers a query with the first canned response whose key is a substring of the expression;
-// everything else is an empty vector. It records the paths it was asked for.
 // queries holds every expression the fake saw; tests reset it.
 var queries []string
 
+// fakeProm answers a query with the first canned response whose key is a substring of the expression;
+// everything else is an empty vector. It records the paths it was asked for.
 func fakeProm(t *testing.T, canned map[string]string) (*httptest.Server, *[]string) {
+	return fakePromFn(t, func(q string) string {
+		for k, v := range canned {
+			if strings.Contains(q, k) {
+				return v
+			}
+		}
+		return ""
+	})
+}
+
+// fakePromFn answers with whatever fn returns for the expression; "" is an empty vector.
+func fakePromFn(t *testing.T, fn func(q string) string) (*httptest.Server, *[]string) {
 	t.Helper()
 	queries = nil
 	var paths []string
@@ -36,16 +48,30 @@ func fakeProm(t *testing.T, canned map[string]string) (*httptest.Server, *[]stri
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		q := r.URL.Query().Get("query")
 		queries = append(queries, q)
-		for k, v := range canned {
-			if strings.Contains(q, k) {
-				_, _ = w.Write([]byte(v))
-				return
-			}
+		if v := fn(q); v != "" {
+			_, _ = w.Write([]byte(v))
+			return
 		}
 		_, _ = w.Write([]byte(vec()))
 	}))
 	t.Cleanup(srv.Close)
 	return srv, &paths
+}
+
+// weekStartUnix is Monday 2026-11-09 00:00 UTC, the first day of the test week.
+var weekStartUnix = float64(time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC).Unix())
+
+// matrix is a range vector answer with one series; points are (seconds after the week start, value).
+func matrix(labels string, pts ...[2]float64) string {
+	var vs []string
+	for _, p := range pts {
+		vs = append(vs, fmt.Sprintf(`[%f,"%v"]`, weekStartUnix+p[0], p[1]))
+	}
+	return fmt.Sprintf(`{"metric":{%s},"values":[%s]}`, labels, strings.Join(vs, ","))
+}
+
+func matrixResult(series ...string) string {
+	return `{"status":"success","data":{"resultType":"matrix","result":[` + strings.Join(series, ",") + `]}}`
 }
 
 func bucket(tpl, mode, le, v string) string {
@@ -169,7 +195,7 @@ func TestExportEndToEnd(t *testing.T) {
 func TestSlowScrapeLeavesShortWindowsEmpty(t *testing.T) {
 	dir, _ := runExport(t, map[string]string{
 		"600 / max":           vec(s("30", "")),
-		"eduide_launch_total": vec(s("50", `"template":"java"`)),
+		"eduide_launch_total": matrixResult(matrix(`"template":"java","pod":"svc-a"`, [2]float64{-30, 0}, [2]float64{30, 5}, [2]float64{60, 12}, [2]float64{90, 50})),
 	})
 	r := find(readRows(t, dir), "launches", "java", "created")
 	if r == nil || r["max_20s"] != "" || r["max_60s"] == "" {
@@ -241,8 +267,8 @@ func TestWriteCSV(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
 	want := []string{
 		strings.Join(csvHeader, ","),
-		"2026-W46,2026-11-09,7,startup,a,eager,seconds,3,true,,,,,,,,,",
-		"2026-W46,2026-11-09,7,startup,b,lazy,seconds,12,false,,1.5,,,,,,,",
+		"2026-W46,2026-11-09,7,startup,a,eager,seconds,3,true,,,,,,,,,,",
+		"2026-W46,2026-11-09,7,startup,b,lazy,seconds,12,false,,1.5,,,,,,,,",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
@@ -331,7 +357,7 @@ func TestNoIncreaseAndOperatorPodsAreFolded(t *testing.T) {
 				t.Errorf("running sessions query does not dedupe or take the minute maximum: %s", q)
 			}
 		case strings.Contains(q, "up{"):
-			if !strings.Contains(q, `container=~"operator|service|authz"`) {
+			if !strings.Contains(q, `container=~"operator|service|authz"`) && !strings.Contains(q, `job="kube-state-metrics"`) {
 				t.Errorf("up query is not limited to the control plane: %s", q)
 			}
 			scrape = scrape || strings.Contains(q, "600 /")
@@ -345,7 +371,7 @@ func TestNoIncreaseAndOperatorPodsAreFolded(t *testing.T) {
 
 func TestZeroLaunchesWriteARowAndRunningCarriesTheLaunchCount(t *testing.T) {
 	dir, _ := runExport(t, map[string]string{
-		"eduide_launch_total": vec(s("0", `"template":"java"`)),
+		"eduide_launch_total": matrixResult(matrix(`"template":"java","pod":"svc-a"`, [2]float64{-30, 5}, [2]float64{100, 5})),
 		"eduide_sessions":     vec(s("4", `"template":"java"`)),
 	})
 	rows := readRows(t, dir)

@@ -30,6 +30,7 @@ type timeout struct {
 }
 
 type dataGap struct {
+	Source             string `json:"source"`
 	Date               string `json:"date"`
 	MinutesWithoutData int    `json:"minutes_without_data"`
 	MinutesTargetDown  int    `json:"minutes_target_down"`
@@ -110,7 +111,7 @@ func (c *collector) context(ctx context.Context, install, release, chart string,
 	cf.ScrapeIntervalSeconds, cf.ScrapeIntervalMin, cf.ScrapeIntervalMax = c.scrapeInterval(ctx, from, at)
 	cf.LaunchWindows.StepSeconds = c.scrape.Seconds()
 	cf.LaunchWindows.Window20Resolved, cf.LaunchWindows.Window60Resolved = c.resolves(20*time.Second), c.resolves(60*time.Second)
-	cf.LaunchWindows.Method = "max_over_time of increase(eduide_launch_total{result=created}[window]) evaluated every scrape interval; a window needs at least two scrapes, otherwise the column stays empty"
+	cf.LaunchWindows.Method = "sums of exact increments between raw samples of eduide_launch_total{result=created} (counter resets handled, no extrapolation); windows slide over the scrape samples; a step across a scrape gap longer than the window is left out of the peak and counted in gap_steps; a window needs at least two scrapes, otherwise the column stays empty"
 
 	pools := map[string]*poolSize{}
 	for _, m := range []struct{ id, name string }{{"ctx_pool_min_idle", "eduide_pool_min_idle"}, {"ctx_pool_max_instances", "eduide_pool_max_instances"}} {
@@ -157,26 +158,43 @@ func (c *collector) context(ctx context.Context, install, release, chart string,
 	return cf
 }
 
-// gaps reports the days with five or more minutes without any scraped control plane target, or with a target that is down.
+// gaps reports the days with five or more minutes without any scraped target, or with a target that is down,
+// for the control plane targets (M1 to M4, M6) and for kube-state-metrics (M5, M7). The first bin is the hour
+// before the period: the look-back of the delta queries reaches into it.
 func (c *collector) gaps(ctx context.Context, from, end time.Time) []dataGap {
 	out := []dataGap{}
+	sources := []struct{ name, sel string }{
+		{"control-plane", c.controlPlane()},
+		{"kube-state-metrics", `{job="kube-state-metrics"}`},
+	}
+	type bin struct {
+		label      string
+		start, end time.Time
+	}
+	bins := []bin{{"before-period", from.Add(-time.Hour), from}}
 	for day := from; day.Before(end); day = day.AddDate(0, 0, 1) {
 		next := day.AddDate(0, 0, 1)
 		if next.After(end) {
 			next = end
 		}
-		mins := int(next.Sub(day).Minutes())
-		up := first(c.q(ctx, "ctx_up_samples", fmt.Sprintf(`count_over_time(min(up%s)[%ds:1m])`, c.controlPlane(), int(next.Sub(day).Seconds())), next))
-		down := first(c.q(ctx, "ctx_up_down", fmt.Sprintf(`count_over_time((min(up%s) == 0)[%ds:1m])`, c.controlPlane(), int(next.Sub(day).Seconds())), next))
-		g := dataGap{Date: day.Format("2006-01-02"), MinutesWithoutData: mins}
-		if up != nil {
-			g.MinutesWithoutData = int(math.Max(0, float64(mins)-*up))
-		}
-		if down != nil {
-			g.MinutesTargetDown = int(*down)
-		}
-		if g.MinutesWithoutData >= 5 || g.MinutesTargetDown >= 5 {
-			out = append(out, g)
+		bins = append(bins, bin{day.Format("2006-01-02"), day, next})
+	}
+	for _, src := range sources {
+		for _, b := range bins {
+			span := int(b.end.Sub(b.start).Seconds())
+			mins := span / 60
+			up := first(c.q(ctx, "ctx_up_samples", fmt.Sprintf(`count_over_time(min(up%s)[%ds:1m])`, src.sel, span), b.end))
+			down := first(c.q(ctx, "ctx_up_down", fmt.Sprintf(`count_over_time((min(up%s) == 0)[%ds:1m])`, src.sel, span), b.end))
+			g := dataGap{Source: src.name, Date: b.label, MinutesWithoutData: mins}
+			if up != nil {
+				g.MinutesWithoutData = int(math.Max(0, float64(mins)-*up))
+			}
+			if down != nil {
+				g.MinutesTargetDown = int(*down)
+			}
+			if g.MinutesWithoutData >= 5 || g.MinutesTargetDown >= 5 {
+				out = append(out, g)
+			}
 		}
 	}
 	return out
