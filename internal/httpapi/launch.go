@@ -289,6 +289,11 @@ func (s *Server) resolvePersistence(ctx context.Context, owner string, tpl *v1al
 	if src == "" {
 		src = display.Source
 	}
+	// Without a repository the starter template is what tells two saved workspaces of one template apart:
+	// picking "Web" must not reopen the "Node.js" workspace with its files.
+	if src == "" && data["TEMPLATE"] != "" {
+		src = "template:" + data["TEMPLATE"]
+	}
 	return workspaceName(owner, tpl.Name, src), true, nil
 }
 

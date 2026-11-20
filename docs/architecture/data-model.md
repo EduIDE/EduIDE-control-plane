@@ -71,7 +71,7 @@ Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer
 | Instance token Secret | `ide-<instance>-token`, key `token`, 32 random bytes hex |
 | Session | `s-<10 random [a-z0-9]>`, created by the service |
 | Launch data Secret | `<session>-data`, key set by the allowlist |
-| Workspace | `w-<first 16 hex of sha256(owner \x00 template \x00 source)>`; `source` is `GIT_URI` or `display.source`. Get-or-create, so the same input gives the same workspace. |
+| Workspace | `w-<first 16 hex of sha256(owner \x00 template \x00 source)>`; `source` is `GIT_URI` or `display.source`, and without both `template:<TEMPLATE>` (the starter template), so each starter template gets its own saved workspace. Get-or-create, so the same input gives the same workspace. |
 | Workspace PVC | same name as the workspace, also in `status.claimName` |
 
 ## Ownership

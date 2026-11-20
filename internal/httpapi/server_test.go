@@ -529,3 +529,32 @@ func TestHSTSSubdomainsOptOut(t *testing.T) {
 		t.Errorf("opt-out: %q", got)
 	}
 }
+
+func TestSavedWorkspacePerStarterTemplate(t *testing.T) {
+	e := newEnv(t)
+	var cur v1alpha1.IDETemplate
+	_ = e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: "java"}, &cur)
+	cur.Spec.InjectableKeys = []v1alpha1.InjectableKey{{Name: "TEMPLATE", Format: v1alpha1.FormatEnum, Values: []string{"node", "web"}}}
+	if err := e.k.Update(context.Background(), &cur); err != nil {
+		t.Fatal(err)
+	}
+	launch := func(starter string) Session {
+		t.Helper()
+		data := map[string]string{}
+		if starter != "" {
+			data["TEMPLATE"] = starter
+		}
+		rec := e.do("POST", "/sessions", "alice", map[string]any{"template": "java", "persistence": "volume", "data": data})
+		if rec.Code != 201 && rec.Code != 200 {
+			t.Fatalf("launch %q: %d %s", starter, rec.Code, rec.Body)
+		}
+		return decode[Session](t, rec)
+	}
+	node, web, empty := launch("node"), launch("web"), launch("")
+	if *node.Workspace == *web.Workspace || *node.Workspace == *empty.Workspace || *web.Workspace == *empty.Workspace {
+		t.Fatalf("starter templates share a workspace: node %s, web %s, empty %s", *node.Workspace, *web.Workspace, *empty.Workspace)
+	}
+	if again := launch("node"); again.Name != node.Name || *again.Workspace != *node.Workspace {
+		t.Fatalf("node again: session %s workspace %s, want %s %s", again.Name, *again.Workspace, node.Name, *node.Workspace)
+	}
+}
