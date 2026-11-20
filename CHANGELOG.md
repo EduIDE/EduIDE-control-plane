@@ -4,6 +4,11 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Added
+
+- `usage-export`: command that writes aggregated, anonymous usage data (weekly CSV, context, README) from Prometheus, with a small-cell rule and an identifier check (`docs/operations/usage-export.md`)
+- Recording rules `eduide:usage:*` in the control plane chart, rendered with `monitoring.rules.enabled`
+
 ## [0.2.1] - 2026-11-20
 
 ### Fixed

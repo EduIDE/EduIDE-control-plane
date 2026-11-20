@@ -88,7 +88,7 @@ for v in "$cp"/ci/*-values.yaml; do
 
   # Alerts and dashboard are scoped to the namespace of the release.
   mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.dashboard.enabled=true)
-  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[]')
+  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert != null)')
   [ "$(echo "$rules" | grep -c .)" -ge 10 ] || fail "alerts missing"
   [ "$(echo "$rules" | yq -p=json 'select(.labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "an alert lacks eduide_namespace"
   for a in EduIDEOperatorDown EduIDEServiceDown EduIDEAuthzDown EduIDEAgentRequestErrors; do
@@ -106,10 +106,20 @@ for v in "$cp"/ci/*-values.yaml; do
   ok "alerts and dashboard per namespace ($v)"
 
   mon=$(helm template r "$cp" -f "$v" -n ns --set monitoring.rules.enabled=true --set monitoring.rules.extraLabels.namespace=eduide-system --set monitoring.dashboard.enabled=true --set monitoring.dashboard.namespace=grafana)
-  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[]')
+  rules=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert != null)')
   [ "$(echo "$rules" | yq -p=json 'select(.labels.namespace != "eduide-system" or .labels.eduide_namespace != "ns")' | wc -l)" -eq 0 ] || fail "extraLabels missing on an alert"
   [ "$(echo "$mon" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-dashboard") | .metadata.namespace')" = "grafana" ] || fail "dashboard namespace not set"
   ok "alert extraLabels and dashboard namespace ($v)"
+
+  # Usage recording rules: prefix, namespace scope, no extra labels, nothing aggregated per pod, instance, session or owner.
+  rec=$(echo "$mon" | yq -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.record != null)')
+  [ "$(echo "$rec" | grep -c .)" -ge 20 ] || fail "usage recording rules missing ($v)"
+  [ "$(echo "$rec" | yq -p=json 'select((.record | test("^eduide:usage:")) | not)' | wc -l)" -eq 0 ] || fail "a recording rule lacks the eduide:usage: prefix"
+  [ "$(echo "$rec" | yq -p=json 'select(.labels != null)' | wc -l)" -eq 0 ] || fail "a recording rule carries extra labels"
+  # Only the outermost aggregation counts: M5 sums per pod inside before it takes quantiles across pods.
+  ! echo "$rec" | yq -p=json '.expr' | awk 'match($0, /by \([^)]*\)/) {print substr($0, RSTART, RLENGTH)}' | grep -E '(pod|instance|session|owner|uid)[,)]' || fail "a recording rule aggregates by pod, instance, session or owner"
+  ! echo "$rec" | yq -p=json '.expr' | grep -E 'eduide_[a-z_]+\{' | grep -v 'namespace="ns"' || fail "a usage rule lacks the namespace selector"
+  ok "usage recording rules ($v)"
 
   # Admin API (U16): the service may read events and quotas, the scaler may write events, the config carries the role and the scaler interval.
   svc=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules')
