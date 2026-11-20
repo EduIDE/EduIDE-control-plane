@@ -132,6 +132,8 @@ type Workspaces struct {
 	Retention *metav1.Duration `json:"retention,omitempty"`
 	// Grace between Expired and deletion. Default 24h.
 	Grace *metav1.Duration `json:"grace,omitempty"`
+	// PerUser limits the workspaces of one user; each one is a volume. Default 20.
+	PerUser int `json:"perUser,omitempty"`
 }
 
 // Placement is the deployment profile for session pods (U7).
@@ -223,6 +225,9 @@ func (c *Config) defaults() {
 	if c.Workspaces.Retention == nil {
 		c.Workspaces.Retention = &metav1.Duration{Duration: 14 * 24 * time.Hour}
 	}
+	if c.Workspaces.PerUser == 0 {
+		c.Workspaces.PerUser = 20
+	}
 	if c.Workspaces.Grace == nil {
 		c.Workspaces.Grace = &metav1.Duration{Duration: 24 * time.Hour}
 	}
@@ -274,6 +279,9 @@ func (c *Config) validate() error {
 	}
 	if c.SessionsPerUser < 1 {
 		errs = append(errs, errors.New("config: sessionsPerUser must be at least 1"))
+	}
+	if c.Workspaces.PerUser < 1 {
+		errs = append(errs, errors.New("config: workspaces.perUser must be at least 1"))
 	}
 	if _, err := regexp.Compile(c.Overview.TitleStripPattern); err != nil {
 		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))

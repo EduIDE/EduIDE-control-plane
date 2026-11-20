@@ -175,6 +175,11 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 			}
 			return "", "", err
 		}
+		// A claim that another workspace (or any other controller) owns is not shared: two workspaces on one
+		// volume would see each other's files, and the retention of the owner would delete the data of both.
+		if c := metav1.GetControllerOf(pvc); c != nil && c.UID != ws.UID {
+			return "", fmt.Sprintf("claim %s belongs to %s %s", name, c.Kind, c.Name), nil
+		}
 		// Adopt the claim, so the retention deletes it like one the operator created.
 		if err := r.adopt(ctx, ws, pvc); err != nil {
 			return "", "", err
@@ -188,6 +193,13 @@ func (r *workspaceReconciler) ensureVolume(ctx context.Context, ws *v1.IDEWorksp
 		return "", "", err
 	}
 	if ws.Status.ClaimName != "" {
+		// The cache can be behind the claim this operator created a moment ago. Ask the API server before the
+		// workspace is reported as lost: a session that starts on that report fails for good.
+		if err := r.reader.Get(ctx, key, &corev1.PersistentVolumeClaim{}); err == nil {
+			return ws.Name, "", nil
+		} else if !apierrors.IsNotFound(err) {
+			return "", "", err
+		}
 		return "", fmt.Sprintf("claim %s is gone", ws.Status.ClaimName), nil
 	}
 	size := r.cfg.Workspaces.DefaultSize

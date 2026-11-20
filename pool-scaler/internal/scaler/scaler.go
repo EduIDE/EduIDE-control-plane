@@ -75,6 +75,8 @@ type Scaler struct {
 	lastActive string
 	// lastHeld is the message of the last Held event per pool, so a steady hold is reported once.
 	lastHeld map[string]string
+	// lastQuota and lastNodes are the budget of the last round that could read it.
+	lastQuota, lastNodes *budget.Resources
 	// templates maps pool to spec.templateRef: Prometheus knows templates only.
 	templates map[string]string
 }
@@ -242,6 +244,7 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 
 	grants := budget.Allocate(free, demands)
 	s.Metrics.TargetIdle.Reset()
+	written := true
 	for _, d := range demands {
 		g := grants[d.App]
 		a := apps[d.App]
@@ -256,9 +259,12 @@ func (s *Scaler) Tick(ctx context.Context, now time.Time) error {
 		s.Metrics.TargetIdle.WithLabelValues(d.App, active).Set(float64(g.Value))
 		s.Log.Info("decision", "pool", d.App, "targetIdle", g.Value, "mode", modes[d.App], "active_strategy", active,
 			"idle_ready", a.IdleReady, "idle_starting", a.IdleStarting, "claimed", a.Claimed, "why", why)
-		s.patch(ctx, a, g.Value, modes[d.App], decision{source: sources[d.App], why: why, planned: planned[d.App], notes: guarded[d.App]})
+		written = s.patch(ctx, a, g.Value, modes[d.App], decision{source: sources[d.App], why: why, planned: planned[d.App], notes: guarded[d.App]}) && written
 	}
-	s.Metrics.LastDecision.Set(float64(now.Unix()))
+	// The heartbeat of the alert "scaler silent": a round whose writes failed did not decide anything.
+	if written {
+		s.Metrics.LastDecision.Set(float64(now.Unix()))
+	}
 	return nil
 }
 
@@ -270,9 +276,10 @@ type decision struct {
 	notes   []string
 }
 
-func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mode, d decision) {
+// patch returns false only when the write to the pool failed.
+func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mode, d decision) bool {
 	if mode != config.ModeActive {
-		return
+		return true
 	}
 	cur := a.Idle()
 	if a.TargetIdle != nil {
@@ -289,12 +296,12 @@ func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mod
 		} else {
 			delete(s.lastHeld, a.Name)
 		}
-		return
+		return true
 	}
 	if err := s.Kube.PatchTargetIdle(ctx, a.Name, v); err != nil {
 		s.Metrics.Patches.WithLabelValues(a.Name, "error").Inc()
 		s.Log.Error("patch failed", "pool", a.Name, "err", err)
-		return
+		return false
 	}
 	s.Metrics.Patches.WithLabelValues(a.Name, "success").Inc()
 	delete(s.lastHeld, a.Name)
@@ -303,6 +310,7 @@ func (s *Scaler) patch(ctx context.Context, a *model.App, v int, mode config.Mod
 		reason = ReasonScaledDown
 	}
 	s.event(ctx, a, reason, fmt.Sprintf("strategy %s: targetIdle %d to %d: %s", d.source, cur, v, d.why))
+	return true
 }
 
 func (s *Scaler) event(ctx context.Context, a *model.App, reason, msg string) {
@@ -322,9 +330,14 @@ func (s *Scaler) fillPrometheus(ctx context.Context, now time.Time, apps map[str
 		return
 	}
 	rates, err := s.Prom.ClaimRates(ctx, s.Cfg.Reactive.Window.Duration, now)
-	if err == nil {
+	// An answer without any series is not "no demand": the operator is not scraped (the PodMonitor is off by
+	// default) or the namespace label is missing. The rates stay unknown, so no pool is scaled down on it.
+	if err == nil && len(rates) == 0 {
+		s.Log.Warn("prometheus has no eduide_claim_total series for the namespace: the claim rates are unknown")
+	}
+	if err == nil && len(rates) > 0 {
 		for _, a := range apps {
-			a.ClaimRate = rates[a.Template] // no series means no claims yet
+			a.ClaimRate = rates[a.Template] // other templates have series: this one had no claims
 		}
 		var ready map[string]float64
 		if ready, err = s.Prom.ReadySeconds(ctx, now); err == nil {
@@ -440,7 +453,11 @@ func (s *Scaler) budget(ctx context.Context, now time.Time, apps map[string]*mod
 	quota, nodes, err := s.Kube.Budget(ctx)
 	s.Metrics.Provider("kubernetes", err)
 	if err != nil {
-		s.Log.Warn("budget", "err", err)
+		// No budget would mean no limit: keep the last known one instead.
+		s.Log.Warn("budget unknown, keeping the last known one", "err", err)
+		quota, nodes = s.lastQuota, s.lastNodes
+	} else {
+		s.lastQuota, s.lastNodes = quota, nodes
 	}
 	src.Quota, src.Nodes = quota, nodes
 	if s.Prom != nil && s.Cfg.Budget.UsageQuery != "" {

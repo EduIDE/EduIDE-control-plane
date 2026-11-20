@@ -7,6 +7,9 @@ The section of a version becomes the notes of its GitHub Release.
 
 ### Changes
 
+- The deprecated `?artemisToken=` and a `?gitUri=` with credentials leave the address bar before the login, like the fragment forms; they no longer travel to Keycloak inside the redirect URI
+- A repository URL with a query or a fragment no longer makes the launch fail: the display source drops both
+- New message for `workspace-limit-reached`: the service limits the saved workspaces per user (`workspaces.perUser`)
 - The landing page runs on the control plane REST API (`@eduide/control-plane-client`) instead of Theia Cloud; sessions are followed through server-sent events
 - New home page: your environments on top (also at `/me/overview`), new environments as tiles below, with start time, saved or temporary workspace, what an image includes and project templates; English and German; no Artemis wording; colors follow the system setting (the theme switch is gone)
 - The Artemis token is read from the URL fragment (`#artemisToken=`); `?artemisToken` is deprecated

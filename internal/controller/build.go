@@ -109,6 +109,8 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			{Name: "AGENT_PATH_PREFIX", Value: "/" + instance + "/"},
 			{Name: "AGENT_TOKEN_FILE", Value: tokenMountPath + "/" + v1.InstanceTokenKey},
 			{Name: "AGENT_LOG_LEVEL", Value: d.cfg.Agent.LogLevel},
+			// The agent keeps the login cookies of the gateway away from the IDE; this one has a configurable name.
+			{Name: "AGENT_ID_TOKEN_COOKIE", Value: d.cfg.OIDC.IDTokenCookie},
 		},
 		VolumeMounts: []corev1.VolumeMount{{Name: "token", MountPath: tokenMountPath, ReadOnly: true}},
 		ReadinessProbe: &corev1.Probe{PeriodSeconds: 1, FailureThreshold: 3, ProbeHandler: corev1.ProbeHandler{

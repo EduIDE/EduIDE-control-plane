@@ -12,6 +12,8 @@ Read the endpoint reference in the OpenAPI file or render it with any OpenAPI vi
 **Planned:** a rendered HTML reference built from the spec in CI.
 The data model behind the endpoints: [data-model.md](../architecture/data-model.md).
 
+A user holds at most 16 event streams at a time (`rate-limited` beyond it), and a stream ends when its client stops reading for 30 s.
+
 REST endpoints (operation ids): `listTemplates`, `watchTemplates` (SSE), `listSessions`, `launchSession`, `getSession`, `deleteSession`, `watchSession` (SSE), `listWorkspaces`, `createWorkspace`, `deleteWorkspace`, `getOverview`, `watchOverview` (SSE).
 Since [0020](../adr/0020-landing-page-data-in-the-api.md): `Session.stopsAt` and `stopReason`, `Workspace.deletesAt`, the same on `OverviewItem`, `Template.startEstimate`, `variants`, `includes` and `imageVersion`.
 `DELETE /workspaces/{name}` stops a running session on the workspace first and answers 204. The error code `workspace-in-use` is unused and stays in the enum for compatibility.
@@ -23,7 +25,7 @@ Admin changes go through Helm values and the CRDs; there is no write endpoint.
 
 ## Errors
 
-Errors are RFC 9457 Problem Details with stable codes, for example `capacity-exhausted` and `session-limit-reached`. A client matches on the code, never on the text.
+Errors are RFC 9457 Problem Details with stable codes, for example `capacity-exhausted`, `session-limit-reached` and `workspace-limit-reached` (the user holds `workspaces.perUser` workspaces and must delete one first). A client matches on the code, never on the text.
 
 ## Versioning rules
 
@@ -32,7 +34,7 @@ REST ([ADR 0010](../adr/0010-rest-api-spec-first.md)):
 - Inside v1 only additive changes: new endpoints, new optional fields, new enum values the client can ignore.
 - A breaking change needs `/api/v2` running next to v1, and an ADR.
 - Deprecations are announced with the `Deprecation` and `Sunset` headers.
-- The spec version is semantic. CI runs `oasdiff` and fails on a breaking change.
+- The spec version is semantic. CI runs `oasdiff` and fails on a breaking change. A new value in a response enum, such as a new error code, only warns (`.github/oasdiff-levels.txt`): clients must tolerate unknown values.
 - The TypeScript client has the release version (see [release.md](../development/release.md)).
 
 CRDs ([ADR 0011](../adr/0011-crd-versioning-cel.md)):

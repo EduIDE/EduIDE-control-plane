@@ -93,6 +93,17 @@ spec:
       affinity:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if gt (int $c.v.replicas) 1 }}
+      # Replicas go to different nodes where possible: with all authz replicas on one node, the loss of that
+      # node denies every session request (ext_authz fails closed).
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            {{- include "ecp.selector" (dict "ctx" $ "component" $c.name) | nindent 12 }}
+      {{- end }}
 {{- end }}
 ---
 apiVersion: policy/v1

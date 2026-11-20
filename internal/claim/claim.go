@@ -103,6 +103,18 @@ func Unschedulable(p *corev1.Pod) bool {
 	return false
 }
 
+// OutOfCapacity reports whether an unschedulable pod waits for room in its node pool: the scheduler names a
+// missing resource, or gives no message at all. A pod that fits no node for another reason (the node affinity
+// of its volume, a selector no node has) is not capacity pressure: freeing idle pods would not help it.
+func OutOfCapacity(p *corev1.Pod) bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse && c.Reason == corev1.PodReasonUnschedulable {
+			return c.Message == "" || strings.Contains(c.Message, "Insufficient") || strings.Contains(c.Message, "Too many pods")
+		}
+	}
+	return false
+}
+
 func older(a, b *corev1.Pod) bool {
 	if !a.CreationTimestamp.Equal(&b.CreationTimestamp) {
 		return a.CreationTimestamp.Before(&b.CreationTimestamp)

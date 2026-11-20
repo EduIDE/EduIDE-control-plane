@@ -28,7 +28,7 @@ Notes:
 `Pending`, `Starting`, `Ready`, `Failed`.
 Error codes in `status.errorCode`: `capacity-exhausted`, `template-not-found`, `workspace-not-found`, `workspace-lost`, `workspace-in-use` (unused since U14), `start-failed`.
 A session that has an instance keeps running when its template is deleted; it ends by the default timeouts. Only a session without an instance fails with `template-not-found`.
-Duration fields (`timeouts.*`, `retention`) accept Go durations such as `90m` or `48h`; the CRD rejects `2d`. `timeouts.max` must not be shorter than `timeouts.idle`.
+Duration fields (`timeouts.*`, `retention`) accept Go durations such as `90m` or `48h`; the CRD rejects `2d`. `timeouts.max` must not be shorter than `timeouts.idle`. The operator and the service apply the resolved values (`ResolvedTimeouts` in `api/v1alpha1/helpers.go`): a missing or zero `idle` or `max` is the default, and a `warning` that does not come before the idle end is moved to five sixths of `idle`.
 Timestamps in `status.timestamps`: `claimed`, `podReady`, `agentReady`, `ready` (see [start-path.md](start-path.md)).
 Start strategies: `warm-ready`, `warm-starting`, `cold`.
 
@@ -87,7 +87,7 @@ Kubernetes garbage collection removes dependents. No manual cleanup.
 
 ## Session pod
 
-Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`, `AGENT_PATH_PREFIX=/<instance>/`). The agent moves explicit cookie paths of IDE responses below `AGENT_PATH_PREFIX` (like nginx `proxy_cookie_path`), drops their `Domain` attribute and drops cookies named like the gateway login cookies, because all instances share one host and the IDE sees itself at `/`: Theia's `theia-connection-token` with `Path=/` would otherwise be overwritten by every other IDE of the student, whose requests then fail with 403.
+Containers: `ide` (template image, env, resources, no launch data) and `agent` (ports 8080 `proxy`, 8081 `control`; readiness `/readyz` and liveness `/healthz` on 8081; env `AGENT_IDE_PORT`, `AGENT_TOKEN_FILE=/var/run/eduide/token`, `AGENT_PATH_PREFIX=/<instance>/`, `AGENT_ID_TOKEN_COOKIE=<oidc.idTokenCookie>`). The agent moves explicit cookie paths of IDE responses below `AGENT_PATH_PREFIX` (like nginx `proxy_cookie_path`), drops their `Domain` attribute and drops cookies named like the gateway login cookies, because all instances share one host and the IDE sees itself at `/`: Theia's `theia-connection-token` with `Path=/` would otherwise be overwritten by every other IDE of the student, whose requests then fail with 403.
 The workspace mounts at `persistence.mountPath` (default `/home/project`), otherwise nothing is mounted (sessions with persistence `none` write to the container filesystem).
 Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egress-bandwidth` come from the template.
 
@@ -95,7 +95,7 @@ Bandwidth annotations `kubernetes.io/ingress-bandwidth` and `kubernetes.io/egres
 
 `/etc/eduide/config.yaml` from a ConfigMap, read with `--config`. Typed in [internal/config/config.go](../../internal/config/config.go).
 Required: `deployment`, `namespace` (or `POD_NAMESPACE`), `hosts.service`, `hosts.instance`, `gateway.name`, `oidc.issuerURL`, `oidc.gatewayClientID`, `oidc.clientIDs`, `agent.image`.
-Defaults: `sessionsPerUser` 3, `oidc.userClaim` `preferred_username`, `oidc.idTokenCookie` `eduide-id`, `workspaces.retention` 14 days, `workspaces.grace` 24 h, `capacity.exhaustedAfter` 45 s, `rateLimit.launchesPerMinute` 10.
+Defaults: `sessionsPerUser` 3, `workspaces.perUser` 20, `oidc.userClaim` `preferred_username`, `oidc.idTokenCookie` `eduide-id`, `workspaces.retention` 14 days, `workspaces.grace` 24 h, `capacity.exhaustedAfter` 45 s, `rateLimit.launchesPerMinute` 10.
 Optional admin API (U16, [0021](../adr/0021-admin-api-and-public-status.md)): `oidc.admin` (`rolePath` `realm_access.roles` or `resource_access.<client>.roles`, and `role`; no default, absent means the admin API is off), `admin.prometheusURL`, `admin.links` (`grafana`, `jaeger`, `traceUrlTemplate`), `admin.rateLimitPerMinute` (default 60) and `admin.scalerInterval` (set by the chart when the pool scaler runs).
 The admin API reads the objects above through the cache and shows owners only as the owner hash label value, launch data only as the key names of the data Secret.
 The pool scaler writes Events on `IDEPool` (reporting controller `pool-scaler`, reasons `ScaledUp`, `ScaledDown`, `Held`); the service reads them.

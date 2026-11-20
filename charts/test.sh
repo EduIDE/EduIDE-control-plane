@@ -56,6 +56,12 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$badrules" -eq 0 ] || fail "a Role grants pods/exec, attach, portforward or a wildcard ($v)"
   ok "no exec or wildcard rules"
 
+  # Components with more than one replica spread over nodes (authz fails closed: one node must not hold all of it).
+  nospread=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .spec.replicas > 1 and (.spec.template.spec.topologySpreadConstraints[0].topologyKey != "kubernetes.io/hostname")) | .metadata.name' | wc -l)
+  [ "$nospread" -eq 0 ] || fail "$nospread Deployments with several replicas do not spread over nodes ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "Deployment" and .metadata.name == "r-eduide-control-plane-authz") | .spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels."app.kubernetes.io/component"')" = "authz" ] || fail "authz does not spread over nodes ($v)"
+  ok "replicas spread over nodes"
+
   # Session egress: DNS plus the internet without private ranges, by default.
   egress=$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-session-egress")')
   [ -n "$egress" ] || fail "session egress policy missing by default ($v)"
@@ -111,6 +117,8 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$(echo "$svc" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | sort | join(",")')" = "list,watch" ] || fail "service may do more than list and watch events"
   scl=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-pool-scaler") | .rules')
   [ "$(echo "$scl" | yq -p=json '[.[] | select(.apiGroups[0] == "events.k8s.io") | .verbs[]] | join(",")')" = "create" ] || fail "pool-scaler Role must only create events"
+  # The scaler writes pools only through the scale subresource: it must not be able to change minIdle or maxInstances.
+  [ "$(echo "$scl" | yq -p=json '[.[] | select(.resources[0] == "idepools") | .verbs[]] | sort | join(",")')" = "get,list,watch" ] || fail "pool-scaler Role may write idepools itself"
   cfg=$(echo "$out" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]')
   grep -q 'rolePath: realm_access.roles' <<<"$cfg" || fail "oidc.admin is not rendered ($v)"
   grep -q 'scalerInterval: 30s' <<<"$cfg" || fail "scalerInterval is not rendered with the pool scaler ($v)"

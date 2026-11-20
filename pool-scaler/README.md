@@ -188,7 +188,7 @@ From the control plane:
   `status.idleReady`, `idleStarting`, `claimed`, the `CapacityPressure`
   condition and the annotations (`eduide.github.io/v1alpha1`).
 - `IDETemplate` `spec.resources.requests` (pod size for the budget).
-- `eduide_claim_total` (claim rate, training history) and
+- `eduide_claim_total` with result `claimed` or `empty` (claim rate, training history; `conflict` is a lost attempt of a retried claim and no demand) and
   `eduide_session_startup_seconds` with `strategy="cold"` (p95 ready time),
   both by `template`; the `namespace` label is the scrape target's, added by
   Prometheus. The names are the contract in

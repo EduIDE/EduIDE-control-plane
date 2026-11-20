@@ -263,6 +263,9 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// testIDTokenCookie is not the default name, so the tests see that the agent gets the configured one.
+const testIDTokenCookie = "uni-id"
+
 func runSuite(c *rest.Config, m *testing.M) int {
 	restCfg = c
 	cfg, err := config.Parse([]byte(`
@@ -270,7 +273,7 @@ deployment: test
 namespace: ` + testNS + `
 hosts: {service: eduide.example.org, instance: ide.example.org}
 gateway: {name: gw, namespace: gateway-system, sectionName: https, port: 443}
-oidc: {issuerURL: "https://sso.example.org", clientIDs: [landing], gatewayClientID: gateway}
+oidc: {issuerURL: "https://sso.example.org", clientIDs: [landing], gatewayClientID: gateway, idTokenCookie: ` + testIDTokenCookie + `}
 agent: {image: "example.org/agent:1"}
 workspaces: {storageClassName: fast, grace: 2s}
 placement: {nodePoolLabel: ` + nodePoolKey + `, prepull: {enabled: true}}
@@ -403,13 +406,16 @@ func setReady(t *testing.T, name string) {
 	}
 }
 
-func setUnschedulable(t *testing.T, name string) {
+func setUnschedulable(t *testing.T, name string) { setUnschedulableBecause(t, name, "") }
+
+// setUnschedulableBecause sets the scheduler message, too: it tells a full node pool from a pod that fits no node.
+func setUnschedulableBecause(t *testing.T, name, message string) {
 	t.Helper()
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
 	if err := get(p); err != nil {
 		t.Fatal(err)
 	}
-	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, LastTransitionTime: metav1.Now()}}
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: corev1.PodReasonUnschedulable, Message: message, LastTransitionTime: metav1.Now()}}
 	if err := k8s.Status().Update(context.Background(), p); err != nil {
 		t.Fatal(err)
 	}

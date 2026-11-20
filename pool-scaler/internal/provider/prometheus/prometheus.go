@@ -58,10 +58,14 @@ func byTemplate(vec model.Vector) map[string]float64 {
 	return out
 }
 
+// demand selects the claims that are one session each: it took an idle instance (claimed) or found none
+// (empty). The result "conflict" counts every lost attempt of a claim that is retried, so under a burst it
+// would count the same session several times.
+const demand = `eduide_claim_total{namespace=%q,result=~"claimed|empty"}`
+
 // ClaimRates returns claims per second over window, per template.
-// Every claim counts, whatever its result: all of them are demand.
 func (p *Provider) ClaimRates(ctx context.Context, window time.Duration, at time.Time) (map[string]float64, error) {
-	vec, err := p.query(ctx, fmt.Sprintf(`sum by (template) (rate(eduide_claim_total{namespace=%q}[%s]))`,
+	vec, err := p.query(ctx, fmt.Sprintf(`sum by (template) (rate(`+demand+`[%s]))`,
 		p.Namespace, model.Duration(window)), at)
 	return byTemplate(vec), err
 }
@@ -94,7 +98,7 @@ func (p *Provider) ClaimHistory(ctx context.Context, from, to time.Time) (map[st
 
 // History returns claims per step per template in [from, to].
 func (p *Provider) History(ctx context.Context, from, to time.Time, step time.Duration) (map[string][]strategy.Sample, error) {
-	q := fmt.Sprintf(`sum by (template) (increase(eduide_claim_total{namespace=%q}[%s]))`, p.Namespace, model.Duration(step))
+	q := fmt.Sprintf(`sum by (template) (increase(`+demand+`[%s]))`, p.Namespace, model.Duration(step))
 	out := map[string][]strategy.Sample{}
 	chunk := 10000 * step
 	for start := from.Truncate(step); start.Before(to); start = start.Add(chunk) {

@@ -4,6 +4,7 @@ package httpapi
 
 import (
 	"context"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -21,6 +22,7 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
 type Server struct {
@@ -44,6 +46,22 @@ type Server struct {
 	adminLimiters map[string]*rate.Limiter
 	ipLimiters    map[string]*rate.Limiter // public status (U17), per client IP
 
+	// ownerLocks serialize the creating requests of one user, so the per-user limits are not a check-then-create
+	// race inside this replica. Striped by a hash of the owner: no entry per user, and two users rarely share one.
+	ownerLocks [64]sync.Mutex
+	// deleting holds the owners with a DeleteWorkspace in flight: its wait polls the API server.
+	deleting sync.Map
+
+	// streams counts the open event streams per user (guarded by mu); maxStreams bounds them, because each one
+	// costs a goroutine and a snapshot per change. writeWait bounds one write to a client that stopped reading.
+	streams    map[string]int
+	maxStreams int
+	writeWait  time.Duration
+	// unauthorizedLog caps the access log lines of requests without a valid token.
+	unauthorizedLog *logx.Limiter
+	// bodyWait bounds reading a request body, so a client cannot hold a handler open by sending it slowly.
+	bodyWait time.Duration
+
 	// quotaMu guards the storage quota cache; its refresh calls the API server, which must not block mu.
 	quotaMu sync.Mutex
 	quota   *StorageQuota
@@ -59,7 +77,8 @@ type Server struct {
 
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
-	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now}
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now,
+		unauthorizedLog: logx.NewLimiter(20), streams: map[string]int{}, maxStreams: 16, writeWait: 30 * time.Second, bodyWait: 10 * time.Second}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
 	}
@@ -134,6 +153,37 @@ func (f *fallbackWriter) Unwrap() http.ResponseWriter { return f.ResponseWriter 
 func user(r *http.Request) auth.User {
 	u, _ := auth.FromContext(r.Context())
 	return u
+}
+
+// lockOwner blocks until no other creating request of this user runs in this replica; call the result to unlock.
+func (s *Server) lockOwner(owner string) func() {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(owner))
+	m := &s.ownerLocks[h.Sum32()%uint32(len(s.ownerLocks))]
+	m.Lock()
+	return m.Unlock
+}
+
+// limitBodyRead sets the deadline for reading the request body; the server resets it for the next request.
+func (s *Server) limitBodyRead(w http.ResponseWriter) {
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(s.bodyWait))
+}
+
+// openStream takes one of the user's stream places; false when all are taken. Call the func to give it back.
+func (s *Server) openStream(owner string) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.streams[owner] >= s.maxStreams {
+		return nil, false
+	}
+	s.streams[owner]++
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.streams[owner]--; s.streams[owner] <= 0 {
+			delete(s.streams, owner)
+		}
+	}, true
 }
 
 func (s *Server) allowLaunch(owner string) (ok bool) {
@@ -344,6 +394,7 @@ func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req WorkspaceRequest
+	s.limitBodyRead(w)
 	if perr := decodeJSON(r.Body, &req); perr != nil {
 		writeProblem(w, perr)
 		return
@@ -369,7 +420,9 @@ func (s *Server) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if req.Display != nil {
 		d = v1alpha1.Display{Title: deref(req.Display.Title), Source: deref(req.Display.Source)}
 	}
+	unlock := s.lockOwner(u.Owner)
 	ws, perr := s.ensureWorkspace(r.Context(), workspaceName(u.Owner, tpl.Name, d.Source), u.Owner, tpl.Name, d)
+	unlock()
 	if perr != nil {
 		writeProblem(w, perr)
 		return
@@ -391,6 +444,16 @@ func (s *Server) DeleteWorkspace(w http.ResponseWriter, r *http.Request, name Na
 		writeProblem(w, perr)
 		return
 	}
+	// The wait below lists sessions on the API server every stopPoll: one delete at a time per user, and it
+	// shares the launch budget, so a client cannot turn it into load on the API server.
+	if _, busy := s.deleting.LoadOrStore(owner, struct{}{}); busy || !s.allowLaunch(owner) {
+		if !busy {
+			s.deleting.Delete(owner)
+		}
+		writeProblem(w, problem(CodeRateLimited, "too many requests, retry shortly"))
+		return
+	}
+	defer s.deleting.Delete(owner)
 	// U14: stop the sessions on the workspace first; a session that is being deleted still holds the volume.
 	if perr := s.stopSessionsOn(r.Context(), owner, name); perr != nil {
 		writeProblem(w, perr)

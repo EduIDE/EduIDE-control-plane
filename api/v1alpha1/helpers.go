@@ -13,6 +13,30 @@ const (
 	DefaultMaxTimeout     = 24 * time.Hour
 )
 
+// ResolvedTimeouts are the session timeouts every component applies to a template: the operator ends sessions
+// by them, the service shows them. The CRD rules compare only the fields a template sets, so one field can
+// contradict the default of another; this is the one place that makes them consistent.
+//   - A missing, zero or negative idle or max timeout is the default (zero would end a session when it is ready).
+//   - The warning comes before the idle end; otherwise it keeps the ratio of the defaults.
+func (t *IDETemplate) ResolvedTimeouts() (idle, warning, max time.Duration) {
+	idle, warning, max = DefaultIdleTimeout, DefaultWarningTimeout, DefaultMaxTimeout
+	if t != nil {
+		if d := t.Spec.Timeouts.Idle; d != nil && d.Duration > 0 {
+			idle = d.Duration
+		}
+		if d := t.Spec.Timeouts.Warning; d != nil {
+			warning = d.Duration
+		}
+		if d := t.Spec.Timeouts.Max; d != nil && d.Duration > 0 {
+			max = d.Duration
+		}
+	}
+	if warning <= 0 || warning >= idle {
+		warning = time.Duration(float64(idle) * float64(DefaultWarningTimeout) / float64(DefaultIdleTimeout))
+	}
+	return idle, warning, max
+}
+
 // AnnotationImageMetadata is the OCI annotation of the template image manifest that holds the template metadata (U12).
 const AnnotationImageMetadata = "io.eduide.template"
 

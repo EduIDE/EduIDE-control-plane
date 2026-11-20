@@ -16,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
@@ -89,11 +90,17 @@ func TestColdStartCreatesInstance(t *testing.T) {
 	if len(pod.Spec.Containers) != 2 || pod.Spec.Containers[0].Name != "ide" || pod.Spec.Containers[1].Name != "agent" {
 		t.Fatalf("containers: %+v", pod.Spec.Containers)
 	}
-	prefix := ""
+	prefix, idCookie := "", ""
 	for _, e := range pod.Spec.Containers[1].Env {
-		if e.Name == "AGENT_PATH_PREFIX" {
+		switch e.Name {
+		case "AGENT_PATH_PREFIX":
 			prefix = e.Value
+		case "AGENT_ID_TOKEN_COOKIE":
+			idCookie = e.Value
 		}
+	}
+	if idCookie != testIDTokenCookie {
+		t.Errorf("AGENT_ID_TOKEN_COOKIE = %q, want the configured cookie name %q", idCookie, testIDTokenCookie)
 	}
 	if prefix != "/"+pod.Labels[v1.LabelInstance]+"/" {
 		t.Errorf("AGENT_PATH_PREFIX = %q, want /<instance>/", prefix)
@@ -1241,4 +1248,169 @@ func TestWorkspaceVolumeLost(t *testing.T) {
 	}
 	createSession(t, "s-lost", "tpl-lost", func(s *v1.IDESession) { s.Spec.WorkspaceRef = "w-lost" })
 	eventually(t, "session fails", func() bool { return sessionStatus("s-lost").ErrorCode == v1.ErrorWorkspaceLost })
+}
+
+// The service reuses the session name for the same launch key. A relaunch right after a stop meets the pod of
+// the stopped session, which still terminates and carries the same session label: it is not the new instance.
+func TestRelaunchWhileOldPodTerminates(t *testing.T) {
+	requireEnv(t)
+	ctx := context.Background()
+	mustCreate(t, newTemplate("tpl-relaunch"))
+	const name = "s-relaunch"
+	createSession(t, name, "tpl-relaunch")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus(name); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus(name).Phase == v1.SessionReady })
+
+	// envtest has no kubelet: a finalizer holds the old pod in Terminating, as the grace period does.
+	old := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(old); err != nil {
+		t.Fatal(err)
+	}
+	old.Finalizers = append(old.Finalizers, "test.example.org/terminating")
+	if err := k8s.Update(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if get(old) == nil {
+			old.Finalizers = nil
+			_ = k8s.Update(ctx, old)
+		}
+	})
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: testNS}}
+	if err := k8s.Delete(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "session gone", func() bool { return notFound(s) })
+	_ = k8s.Delete(ctx, old) // envtest has no garbage collector either
+	_ = k8s.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name + "-data", Namespace: testNS}})
+
+	createSession(t, name, "tpl-relaunch")
+	eventually(t, "new pod", func() bool {
+		st = sessionStatus(name)
+		return st.PodName != "" && st.PodName != old.Name
+	})
+	setReady(t, st.PodName)
+	eventually(t, "ready again", func() bool {
+		st = sessionStatus(name)
+		if st.Phase == v1.SessionFailed {
+			t.Fatalf("the relaunch failed: %s %q", st.ErrorCode, st.Message)
+		}
+		return st.Phase == v1.SessionReady
+	})
+	// The old pod stays around for a while; the session must keep its own instance.
+	time.Sleep(time.Second)
+	if st = sessionStatus(name); st.Phase != v1.SessionReady || st.PodName == old.Name {
+		t.Fatalf("phase %s on pod %s (old pod %s): %q", st.Phase, st.PodName, old.Name, st.Message)
+	}
+}
+
+// An evicted pod keeps its object in phase Failed. The session must not stay Ready with a dead URL.
+func TestReadySessionFailsWhenPodFails(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-evict"))
+	createSession(t, "s-evict", "tpl-evict")
+	var st v1.IDESessionStatus
+	eventually(t, "pod", func() bool { st = sessionStatus("s-evict"); return st.PodName != "" })
+	setReady(t, st.PodName)
+	eventually(t, "ready", func() bool { return sessionStatus("s-evict").Phase == v1.SessionReady })
+
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: st.PodName, Namespace: testNS}}
+	if err := get(p); err != nil {
+		t.Fatal(err)
+	}
+	p.Status.Phase, p.Status.Reason = corev1.PodFailed, "Evicted"
+	p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse, LastTransitionTime: metav1.Now()}}
+	if err := k8s.Status().Update(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "start-failed", func() bool {
+		st = sessionStatus("s-evict")
+		return st.Phase == v1.SessionFailed && st.ErrorCode == v1.ErrorStartFailed
+	})
+}
+
+// A pod that fits no node for a reason other than room (here: the node affinity of its volume) fails its own
+// session, but it must not put the node pool under pressure: that would delete the idle pods of every pool there.
+func TestUnschedulableWithoutCapacityReasonKeepsThePools(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-nopressure")
+	tm.Spec.Placement.NodeSelector = map[string]string{nodePoolKey: "np-nopressure"}
+	mustCreate(t, tm)
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-tpl-nopressure", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-nopressure", MinIdle: 2, TargetIdle: 2, MaxInstances: 10}})
+	idle := client.MatchingLabels{v1.LabelNodePool: "np-nopressure", v1.LabelState: v1.StateIdle}
+	eventually(t, "idle pods", func() bool { return len(podsWith(idle)) == 2 })
+	names := func() map[string]bool {
+		m := map[string]bool{}
+		for _, p := range podsWith(idle) {
+			m[p.Name] = true
+		}
+		return m
+	}
+	before := names()
+
+	other := newTemplate("tpl-nofit")
+	other.Spec.Placement.NodeSelector = map[string]string{nodePoolKey: "np-nopressure"}
+	mustCreate(t, other)
+	createSession(t, "s-nofit", "tpl-nofit")
+	var st v1.IDESessionStatus
+	eventually(t, "cold pod", func() bool { st = sessionStatus("s-nofit"); return st.PodName != "" })
+	evictions := testutil.ToFloat64(telemetry.CapacityEvictions.WithLabelValues("np-nopressure"))
+	setUnschedulableBecause(t, st.PodName, "0/3 nodes are available: 3 node(s) had volume node affinity conflict.")
+
+	eventually(t, "start-failed", func() bool {
+		st = sessionStatus("s-nofit")
+		return st.Phase == v1.SessionFailed
+	})
+	if st.ErrorCode != v1.ErrorStartFailed {
+		t.Errorf("error code %s, want %s: the cluster is not full", st.ErrorCode, v1.ErrorStartFailed)
+	}
+	if d := testutil.ToFloat64(telemetry.CapacityEvictions.WithLabelValues("np-nopressure")) - evictions; d != 0 {
+		t.Errorf("%v idle pods were evicted", d)
+	}
+	after := names()
+	for n := range before {
+		if !after[n] {
+			t.Errorf("idle pod %s of the pool is gone", n)
+		}
+	}
+}
+
+// The cache can be behind a claim the operator created a moment ago: that is not a lost volume.
+func TestEnsureVolumeAsksTheAPIServerBeforeTheVolumeIsLost(t *testing.T) {
+	ws := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-stale", Namespace: "ns"}, Status: v1.IDEWorkspaceStatus{ClaimName: "w-stale"}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "w-stale", Namespace: "ns"}}
+	empty := func() client.WithWatch { return fake.NewClientBuilder().WithScheme(NewScheme()).Build() }
+	live := fake.NewClientBuilder().WithScheme(NewScheme()).WithObjects(pvc).Build()
+
+	r := &workspaceReconciler{&deps{Client: empty(), reader: live}}
+	if name, msg, err := r.ensureVolume(context.Background(), ws, newTemplate("x")); err != nil || name != "w-stale" {
+		t.Fatalf("stale cache: name %q, message %q, err %v; want the existing claim", name, msg, err)
+	}
+	r = &workspaceReconciler{&deps{Client: empty(), reader: empty()}}
+	if name, msg, err := r.ensureVolume(context.Background(), ws, newTemplate("x")); err != nil || name != "" || msg == "" {
+		t.Fatalf("claim really gone: name %q, message %q, err %v; want no claim and a reason", name, msg, err)
+	}
+}
+
+// An imported claim belongs to one workspace. A second workspace that names it must not get the volume.
+func TestImportedClaimIsNotShared(t *testing.T) {
+	owner := &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: "w-owner", Namespace: "ns", UID: "uid-owner"}}
+	yes := true
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data", Namespace: "ns", OwnerReferences: []metav1.OwnerReference{
+		{APIVersion: v1.GroupVersion.String(), Kind: "IDEWorkspace", Name: owner.Name, UID: owner.UID, Controller: &yes}}}}
+	c := fake.NewClientBuilder().WithScheme(NewScheme()).WithObjects(pvc).Build()
+	r := &workspaceReconciler{&deps{Client: c, reader: c, scheme: NewScheme()}}
+	imports := func(name string, uid types.UID) *v1.IDEWorkspace {
+		return &v1.IDEWorkspace{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", UID: uid},
+			Spec: v1.IDEWorkspaceSpec{Persistence: v1.WorkspacePersistence{ExistingClaimName: "data"}}}
+	}
+	if name, msg, err := r.ensureVolume(context.Background(), imports("w-other", "uid-other"), newTemplate("x")); err != nil || name != "" || !strings.Contains(msg, "w-owner") {
+		t.Fatalf("second workspace: name %q, message %q, err %v; want no claim and the owner in the message", name, msg, err)
+	}
+	if name, _, err := r.ensureVolume(context.Background(), imports("w-owner", "uid-owner"), newTemplate("x")); err != nil || name != "data" {
+		t.Fatalf("the owner itself: name %q, err %v", name, err)
+	}
 }
