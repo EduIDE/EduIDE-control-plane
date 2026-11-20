@@ -111,8 +111,12 @@ func TestLaunchSpan(t *testing.T) {
 			}
 		}
 	}
-	if sp.Parent().TraceID().String() != traceID || sp.Parent().SpanID().String() != "b7ad6b7169203331" {
-		t.Fatalf("parent %v", sp.Parent())
+	// The landing page exports no spans: launch is the root and links to the incoming context.
+	if sp.Parent().IsValid() {
+		t.Fatalf("launch has parent %v, want root", sp.Parent())
+	}
+	if l := sp.Links(); len(l) != 1 || l[0].SpanContext.TraceID().String() != traceID || l[0].SpanContext.SpanID().String() != "b7ad6b7169203331" {
+		t.Fatalf("links %v", l)
 	}
 	attrs := map[string]string{}
 	for _, a := range sp.Attributes() {
@@ -129,7 +133,7 @@ func TestLaunchSpan(t *testing.T) {
 	// The session continues the trace below the launch span.
 	var cr v1alpha1.IDESession
 	_ = e.k.Get(context.Background(), client.ObjectKey{Namespace: testNS, Name: attrs["eduide.session"]}, &cr)
-	if want := "00-" + traceID + "-" + sp.SpanContext().SpanID().String() + "-01"; cr.Annotations[v1alpha1.AnnotationTraceparent] != want {
+	if want := "00-" + sp.SpanContext().TraceID().String() + "-" + sp.SpanContext().SpanID().String() + "-01"; cr.Annotations[v1alpha1.AnnotationTraceparent] != want {
 		t.Fatalf("annotation %q, want %q", cr.Annotations[v1alpha1.AnnotationTraceparent], want)
 	}
 

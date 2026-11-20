@@ -27,11 +27,12 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
-// LaunchSession continues the trace of the incoming traceparent header (params.Traceparent) with a span
-// "launch"; the session carries the trace context of that span so operator and agent join it.
+// LaunchSession starts the trace of a launch with the root span "launch"; the session carries the trace context
+// of that span so operator and agent join it. An incoming traceparent header (params.Traceparent) becomes a link:
+// the landing page exports no spans, so as a parent it would leave every launch trace without its root.
 func (s *Server) LaunchSession(w http.ResponseWriter, r *http.Request, _ LaunchSessionParams) {
-	ctx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
-	ctx, span := otel.Tracer(tracerName).Start(ctx, "launch")
+	in := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer(tracerName).Start(r.Context(), "launch", trace.WithNewRoot(), trace.WithLinks(trace.LinkFromContext(in)))
 	defer span.End()
 	u := user(r)
 	if len(s.salt) > 0 {
