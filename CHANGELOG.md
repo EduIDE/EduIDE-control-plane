@@ -4,6 +4,10 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Fixed
+
+- The landing page names an environment started with a project template after it ("Web", "Node.js"), so several saved workspaces of one template are told apart in "Your environments"
+
 ## [0.2.1] - 2026-11-20
 
 ### Fixed
