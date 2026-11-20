@@ -26,6 +26,7 @@ The tables [decisions.md](decisions.md) list the grilling decisions G1 to G19 an
 | [0019](0019-network-isolation.md) | Network isolation of session pods with NetworkPolicy, default deny | Accepted |
 | [0020](0020-landing-page-data-in-the-api.md) | Start estimates, image metadata, lifecycle times and one-call delete in the API | Accepted |
 | [0021](0021-admin-api-and-public-status.md) | Read-only admin API and public status | Accepted |
+| [0022](0022-launch-root-span.md) | The launch span is the root of the launch trace | Accepted |
 
 ## Format
 

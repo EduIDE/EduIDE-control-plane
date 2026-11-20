@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EduIDE control plane API
-  version: 1.1.0
+  version: 1.1.1
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
@@ -83,7 +83,7 @@ paths:
       description: |
         Launches a session. Idempotent (G14): the key is template plus workspace, or for sessions
         without persistence template plus a hash of the launch data. A repeated launch returns the
-        existing session with 200. Send `traceparent` to join the launch trace.
+        existing session with 200. A `traceparent` becomes a link of the root span `launch`.
       parameters:
         - {name: traceparent, in: header, required: false, schema: {type: string, maxLength: 55}}
       requestBody:

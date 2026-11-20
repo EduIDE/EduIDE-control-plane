@@ -23,7 +23,7 @@ Every span carries `eduide.session`, `eduide.template`, `eduide.persistence` (`n
 Warm launch (an idle instance is claimed):
 
 ```
-launch                      service   click to response (the landing page is the parent)
+launch                      service   request to response; root span, the landing page traceparent is a link
   validate                  service   template, display, launch data allowlist, persistence, session limit
   session.create            service
   secret.create             service   the data Secret with the launch data
