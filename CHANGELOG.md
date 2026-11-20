@@ -4,6 +4,8 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-20
+
 ### Added
 
 - Usage metrics: label `start_mode` (`eager`, `lazy`, `lazy_fallback`, `none`) on `eduide_session_startup_seconds`, label `template` on `eduide_session_phase_seconds`, finer startup buckets, and the new metrics `eduide_pool_min_idle`, `eduide_pool_max_instances`, `eduide_session_lifetime_seconds` and `eduide_template_resources`, `eduide_template_timeout_seconds`
