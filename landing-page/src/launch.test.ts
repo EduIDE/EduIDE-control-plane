@@ -65,6 +65,12 @@ describe('buildLaunchRequest', () => {
         expect(buildTileRequest(template, 'maven')).toEqual({ template: 'java-17' });
     });
 
+    it('names the environment after the chosen project template', () => {
+        const withVariants = { ...template, injectableKeys: ['TEMPLATE'], variants: [{ id: 'web', name: 'Web' }] };
+        expect(buildTileRequest(withVariants, 'web')).toEqual({ template: 'java-17', data: { TEMPLATE: 'web' }, display: { title: 'Web' } });
+        expect(buildTileRequest(withVariants, 'other')).toEqual({ template: 'java-17', data: { TEMPLATE: 'other' } });
+    });
+
     it('reads the link parameters', () => {
         expect(parseLaunchParams('?appDef=java-17&gitUri=g&title=T')).toMatchObject({ appDef: 'java-17', gitUri: 'g', title: 'T' });
         expect(parseLaunchParams('?gitUri=g')).toBeUndefined();

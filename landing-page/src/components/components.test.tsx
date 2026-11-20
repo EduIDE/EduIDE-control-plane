@@ -373,7 +373,7 @@ describe('Home', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
         fireEvent.click(screen.getByRole('radio', { name: /Gradle/ }));
         fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Start' }));
-        expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17', data: { TEMPLATE: 'gradle' } }, java);
+        expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17', data: { TEMPLATE: 'gradle' }, display: { title: 'Gradle' } }, java);
         expect(screen.queryByRole('dialog')).toBeNull();
     });
 
