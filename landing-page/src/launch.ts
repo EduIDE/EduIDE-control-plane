@@ -111,6 +111,11 @@ export function buildTileRequest(template: Template, variantId?: string): Launch
     const request = buildLaunchRequest({ appDef: template.name }, template);
     if (variantId && template.injectableKeys.includes('TEMPLATE')) {
         request.data = { ...request.data, TEMPLATE: variantId };
+        // Each project template gets its own saved workspace; its name tells them apart in "Your environments".
+        const variant = template.variants?.find(v => v.id === variantId);
+        if (variant) {
+            request.display = { ...request.display, title: variant.name };
+        }
     }
     return request;
 }
