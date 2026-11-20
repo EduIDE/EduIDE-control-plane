@@ -345,7 +345,11 @@ func (s *Server) ensureWorkspace(ctx context.Context, name, owner, template stri
 		}
 		n := 0
 		for i := range owned.Items {
-			if o := &owned.Items[i]; o.Spec.Owner == owner && o.DeletionTimestamp == nil {
+			o := &owned.Items[i]
+			if o.Name == name { // the cache lags behind this very workspace: it is not a new one
+				return s.ownWorkspace(o, owner)
+			}
+			if o.Spec.Owner == owner && o.DeletionTimestamp == nil {
 				n++
 			}
 		}
@@ -367,10 +371,14 @@ func (s *Server) ensureWorkspace(ctx context.Context, name, owner, template stri
 	if err != nil {
 		return nil, internalError(err)
 	}
+	return s.ownWorkspace(&ws, owner)
+}
+
+func (s *Server) ownWorkspace(ws *v1alpha1.IDEWorkspace, owner string) (*v1alpha1.IDEWorkspace, *apiError) {
 	if ws.Spec.Owner != owner {
 		return nil, problem(CodeWorkspaceNotFound, "workspace not found")
 	}
-	return &ws, nil
+	return ws, nil
 }
 
 // createSession names the session after the launch key, so two concurrent launches with the same key

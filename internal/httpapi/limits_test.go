@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -140,6 +142,32 @@ func TestWorkspaceLimit(t *testing.T) {
 	}
 	if rec := ws("alice", 2); rec.Code != 201 {
 		t.Fatalf("after delete: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A replica whose cache has not seen the workspace yet returns it, also when the user is at the limit.
+func TestWorkspaceLimitDoesNotCountTheRequestedWorkspace(t *testing.T) {
+	k := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(javaTemplate()).Build()
+	stale := interceptor.NewClient(k, interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+		if _, ok := o.(*v1alpha1.IDEWorkspace); ok {
+			return apierrors.NewNotFound(schema.GroupResource{Resource: "ideworkspaces"}, key.Name)
+		}
+		return c.Get(ctx, key, o, opts...)
+	}})
+	cfg := testConfig()
+	cfg.Workspaces.PerUser = 1
+	srv := NewServer(cfg, stale, k, NewHub(), []byte("salt"))
+	e := &env{t: t, srv: srv, handler: srv.Handler(verifier), k: k}
+	var names []string
+	for range 2 {
+		rec := e.do("POST", "/workspaces", "alice", `{"template":"java"}`)
+		if rec.Code != 201 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+		names = append(names, decode[Workspace](t, rec).Name)
+	}
+	if names[0] != names[1] {
+		t.Fatalf("names %v", names)
 	}
 }
 
