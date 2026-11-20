@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -116,9 +117,20 @@ func (r *poolReconciler) setup(mgr ctrl.Manager) error {
 		WithOptions(opts(4)).Complete(r)
 }
 
+// dropPoolSeries removes the gauges of a pool that is deleted or cannot be reconciled.
+func dropPoolSeries(name string) {
+	l := prometheus.Labels{"pool": name}
+	for _, g := range []*prometheus.GaugeVec{telemetry.PoolInstances, telemetry.PoolTargetIdle, telemetry.PoolMinIdle, telemetry.PoolMaxInstances} {
+		g.DeletePartialMatch(l)
+	}
+}
+
 func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	pool := &v1.IDEPool{}
 	if err := r.Get(ctx, req.NamespacedName, pool); err != nil {
+		if apierrors.IsNotFound(err) {
+			dropPoolSeries(req.Name)
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	orig := pool.DeepCopy()
@@ -127,6 +139,7 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 		if !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
+		dropPoolSeries(pool.Name)
 		meta.SetStatusCondition(&pool.Status.Conditions, metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionFalse,
 			Reason: "TemplateNotFound", Message: fmt.Sprintf("template %s not found", pool.Spec.TemplateRef), ObservedGeneration: pool.Generation})
 		return ctrl.Result{}, r.writeStatus(ctx, orig, pool)

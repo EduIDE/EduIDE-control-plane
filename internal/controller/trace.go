@@ -112,6 +112,7 @@ func (r *sessionReconciler) forget(key types.NamespacedName) {
 	}
 	r.exported.Delete(key)
 	r.failedWritten.Delete(key)
+	r.fellBack.Delete(key)
 }
 
 // failSpan marks a span as failed with the stable error code. Messages stay out: they may name launch data keys.

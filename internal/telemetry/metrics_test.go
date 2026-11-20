@@ -33,6 +33,7 @@ func TestMetricsContract(t *testing.T) {
 	SessionPhase.WithLabelValues("claim", "cold", "t")
 	SessionLifetime.WithLabelValues("t", "user")
 	TemplateResources.WithLabelValues("t", "cpu", "request")
+	TemplateTimeout.WithLabelValues("t", "idle")
 	PoolMinIdle.WithLabelValues("p", "t")
 	PoolMaxInstances.WithLabelValues("p", "t")
 	ClaimTotal.WithLabelValues("t", "claimed")

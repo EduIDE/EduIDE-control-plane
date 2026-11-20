@@ -17,6 +17,7 @@ Rules: add metrics and labels freely; renaming or removing one needs a deprecati
 | `eduide_pool_max_instances` | gauge | `pool`, `template` | operator | `spec.maxInstances` of the pool |
 | `eduide_session_lifetime_seconds` | histogram | `template`, `reason` | operator | IDESession creation until the operator removes its finalizer, observed once per session; `reason` is `error` (phase `Failed`), `timeout` (ended by the idle or maximum timeout) or `user` (deleted by the user or the service; also the value after an operator restart between the timeout delete and the finalizer); buckets 60 s to 86400 s |
 | `eduide_template_resources` | gauge | `template`, `resource`, `kind` | operator | CPU (`cpu`, cores) and memory (`memory`, bytes) `request` or `limit` of the IDE container; only defined values have a series; removed with the template |
+| `eduide_template_timeout_seconds` | gauge | `template`, `kind` | operator | Session timeouts after `ResolvedTimeouts()`: `kind` is `idle`, `warning` or `max`; always set, removed with the template |
 | `eduide_capacity_pressure` | gauge | `node_pool` | operator | 1 while a session pod in this node pool cannot be placed (G8) |
 | `eduide_capacity_evictions_total` | counter | `node_pool` | operator | Idle pods deleted to make room for a session |
 | `eduide_sessions` | gauge | `template`, `phase` | operator | Sessions by phase |

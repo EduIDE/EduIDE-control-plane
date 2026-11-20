@@ -1493,11 +1493,17 @@ func TestTemplateResourcesGauge(t *testing.T) {
 	if g("memory", "request") != 1<<30 || g("memory", "limit") != 2<<30 {
 		t.Errorf("memory request %v limit %v", g("memory", "request"), g("memory", "limit"))
 	}
+	tg := func(kind string) float64 {
+		return testutil.ToFloat64(telemetry.TemplateTimeout.WithLabelValues("tpl-res", kind))
+	}
+	if tg("idle") != v1.DefaultIdleTimeout.Seconds() || tg("warning") != v1.DefaultWarningTimeout.Seconds() || tg("max") != v1.DefaultMaxTimeout.Seconds() {
+		t.Errorf("timeouts idle %v warning %v max %v", tg("idle"), tg("warning"), tg("max"))
+	}
 	if err := k8s.Delete(context.Background(), tm); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "series removed", func() bool {
-		return !hasSeries("tpl-res")
+		return !hasSeries("tpl-res") && !hasTimeoutSeries("tpl-res")
 	})
 }
 
@@ -1512,6 +1518,20 @@ func hasSeries(tpl string) bool {
 			if l.GetName() == "template" && l.GetValue() == tpl {
 				found = true
 			}
+		}
+	}
+	return found
+}
+
+func hasTimeoutSeries(tpl string) bool {
+	ch := make(chan prometheus.Metric, 16)
+	go func() { telemetry.TemplateTimeout.Collect(ch); close(ch) }()
+	found := false
+	for m := range ch {
+		var d dto.Metric
+		_ = m.Write(&d)
+		for _, l := range d.GetLabel() {
+			found = found || l.GetName() == "template" && l.GetValue() == tpl
 		}
 	}
 	return found

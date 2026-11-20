@@ -64,6 +64,9 @@ type sessionReconciler struct {
 	// timedOut holds sessions the operator ends for a timeout, so finalize can label the lifetime metric.
 	// An operator restart between the delete and the finalizer loses the mark; the session then counts as user.
 	timedOut sync.Map
+	// fellBack holds sessions whose claim found no pool instance although the template has a pool.
+	// The mark is made at claim time, so a pool created or deleted later cannot change the start_mode label.
+	fellBack sync.Map
 	// starts and exported hold the tracing state per session (trace.go).
 	starts, exported sync.Map
 }
@@ -327,6 +330,7 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 	hasPool, err := r.hasPool(ctx, s.Namespace, tmpl.Name)
 	if hasPool {
 		telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
+		r.fellBack.Store(sessionKey(s), struct{}{})
 	}
 	return nil, false, err
 }
@@ -340,15 +344,15 @@ func (r *sessionReconciler) hasPool(ctx context.Context, namespace, template str
 	return slices.ContainsFunc(pools.Items, func(p v1.IDEPool) bool { return p.Spec.TemplateRef == template }), nil
 }
 
-// startMode is the start_mode label of the startup metric: eager (a pool instance was claimed), lazy (cold,
-// the template has no pool), lazy_fallback (cold although the template has a pool) or none (no strategy yet).
-func (r *sessionReconciler) startMode(ctx context.Context, s *v1.IDESession, strategy string) string {
+// startMode is the start_mode label of the startup metric: eager (a pool instance was claimed), lazy_fallback
+// (a claim was tried and found no pool instance), lazy (cold without a claim, e.g. no pool or a workspace
+// session) or none (no strategy yet). An operator restart between claim and Ready turns a fallback into lazy.
+func (r *sessionReconciler) startMode(s *v1.IDESession, strategy string) string {
 	switch v1.StartStrategy(strategy) {
 	case v1.StartWarmReady, v1.StartWarmStarting:
 		return "eager"
 	case v1.StartCold:
-		// A failed list counts as no pool: the metric must not block the start path.
-		if has, _ := r.hasPool(ctx, s.Namespace, s.Spec.TemplateRef); has {
+		if _, ok := r.fellBack.Load(sessionKey(s)); ok {
 			return "lazy_fallback"
 		}
 		return "lazy"
@@ -486,7 +490,7 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	telemetry.SessionPhase.WithLabelValues("claim", strategy, tmpl.Name).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy, tmpl.Name).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
 	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy, tmpl.Name).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
-	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready", persistenceOf(s), r.startMode(ctx, s, strategy)).Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready", persistenceOf(s), r.startMode(s, strategy)).Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
 	if s.Spec.WorkspaceRef != "" {
 		if err := r.touchWorkspace(ctx, s); err != nil {
 			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
@@ -714,7 +718,7 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 	r.failedWritten.Store(key, code)
 	strategy := strategyName(s.Status.StartStrategy)
 	r.endStart(s, "failed", code)
-	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s), r.startMode(ctx, s, strategy)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s), r.startMode(s, strategy)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionFailures.WithLabelValues(s.Spec.TemplateRef, code).Inc()
 	r.note(ctx, s, corev1.EventTypeWarning, "Failed", code+": "+msg, "result", "failed", "code", code, "message", msg, "strategy", strategy)
 	return r.expire(ctx, s)
@@ -757,8 +761,8 @@ func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctr
 	}
 	orig := s.DeepCopy()
 	controllerutil.RemoveFinalizer(s, v1.SessionFinalizer)
-	err := client.IgnoreNotFound(r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager)))
-	if err == nil {
+	perr := r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager))
+	if perr == nil {
 		// Only the pass that removes the finalizer observes, so repeated reconciles count a session once.
 		reason := "user"
 		if _, ok := r.timedOut.LoadAndDelete(sessionKey(s)); ok {
@@ -769,7 +773,7 @@ func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctr
 		}
 		telemetry.SessionLifetime.WithLabelValues(s.Spec.TemplateRef, reason).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
 	}
-	return ctrl.Result{}, err
+	return ctrl.Result{}, client.IgnoreNotFound(perr)
 }
 
 // touchWorkspace sets lastUsed to now (G19). A missing workspace is not an error.

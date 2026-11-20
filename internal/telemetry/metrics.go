@@ -48,6 +48,10 @@ var (
 		Name: "eduide_template_resources",
 		Help: "CPU (cores) and memory (bytes) request and limit of the IDE container of a template.",
 	}, []string{"template", "resource", "kind"})
+	TemplateTimeout = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "eduide_template_timeout_seconds",
+		Help: "Resolved session timeouts of a template in seconds: idle, warning, max.",
+	}, []string{"template", "kind"})
 	CapacityPressure = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "eduide_capacity_pressure",
 		Help: "1 while a session pod in this node pool cannot be placed.",
@@ -96,7 +100,7 @@ var (
 
 // OperatorMetrics, ServiceMetrics and AuthzMetrics are registered by the binaries.
 var (
-	OperatorMetrics = []prometheus.Collector{SessionStartup, SessionFailures, SessionPhase, ClaimTotal, PoolInstances, PoolTargetIdle, PoolMinIdle, PoolMaxInstances, SessionLifetime, TemplateResources, CapacityPressure, CapacityEvictions, Sessions, Workspaces, AgentRequests}
+	OperatorMetrics = []prometheus.Collector{SessionStartup, SessionFailures, SessionPhase, ClaimTotal, PoolInstances, PoolTargetIdle, PoolMinIdle, PoolMaxInstances, SessionLifetime, TemplateResources, TemplateTimeout, CapacityPressure, CapacityEvictions, Sessions, Workspaces, AgentRequests}
 	ServiceMetrics  = []prometheus.Collector{APIRequests, APIRequestDuration, Launches}
 	AuthzMetrics    = []prometheus.Collector{AuthzDecisions, AuthzDuration}
 )
