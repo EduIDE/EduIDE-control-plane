@@ -4,7 +4,9 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
-Fixes from the audit of 2026-11-19.
+## [0.2.0] - 2026-11-20
+
+The control plane of EduIDE 3.0.0: fixes from the audit of 2026-11-19, listed templates, and the repository is no longer marked experimental.
 
 ### Added
 
@@ -39,6 +41,10 @@ Fixes from the audit of 2026-11-19.
 - The agent bounds headers and connections on all three listeners and strips the configured ID token cookie (`oidc.idTokenCookie`)
 - The service bounds request body reads, idle connections and header size; requests without a valid token write at most 20 log lines per minute; without a salt, logs carry no user id
 - The landing page moves the deprecated `?artemisToken=` and a `?gitUri=` with credentials out of the URL before the login
+
+### Compatibility
+
+- Additive: the CRD field `IDETemplate.spec.listed` and the API field `Template.listed` (OpenAPI 1.1.0). Upgrade order: CRD chart first, then the control plane chart per deployment.
 
 ## [0.1.0] - 2026-11-20
 
