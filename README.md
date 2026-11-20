@@ -11,11 +11,10 @@
 <p align="center">
   <a href="https://github.com/EduIDE/EduIDE-control-plane/actions/workflows/ci.yml"><img src="https://github.com/EduIDE/EduIDE-control-plane/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"/></a>
   <a href="https://github.com/EduIDE/EduIDE-control-plane/actions/workflows/images.yml"><img src="https://github.com/EduIDE/EduIDE-control-plane/actions/workflows/images.yml/badge.svg?branch=main" alt="Images"/></a>
-  <img src="https://img.shields.io/badge/status-experimental-orange" alt="Status: experimental"/>
   <img src="https://img.shields.io/badge/license-EPL--2.0-blue" alt="License: EPL-2.0"/>
 </p>
 
-> **Experimental.** This control plane replaces [EduIDE-Cloud](https://github.com/EduIDE/EduIDE-Cloud), which still runs production today.
+> This control plane replaces [EduIDE-Cloud](https://github.com/EduIDE/EduIDE-Cloud) from EduIDE 3.0.0 on.
 
 ## What it does
 

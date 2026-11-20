@@ -7,7 +7,7 @@ Instructions for coding agents (and humans) working in this repository.
 
 The EduIDE control plane in Go: operator, service, authz and agent, plus the pool scaler, the landing page, the IDE extension `eduide-session`, the Helm charts, docs and ADRs.
 It replaces `EduIDE-Cloud` (Java) and `workspace-garbage-collector`.
-Status: **experimental**.
+Status: in use from EduIDE 3.0.0 on.
 
 ## Layout
 

@@ -1,6 +1,6 @@
 # EduIDE control plane documentation
 
-Status: **experimental**. Planned parts are marked **Planned** in the pages.
+Planned parts are marked **Planned** in the pages.
 
 | Section | Content |
 |---|---|
