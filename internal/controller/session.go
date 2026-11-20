@@ -61,6 +61,9 @@ type sessionReconciler struct {
 	// failedWritten holds the failure code per session this operator wrote, so a reconcile on a stale cache
 	// does not log, count and emit the same failure again.
 	failedWritten sync.Map
+	// timedOut holds sessions the operator ends for a timeout, so finalize can label the lifetime metric.
+	// An operator restart between the delete and the finalizer loses the mark; the session then counts as user.
+	timedOut sync.Map
 	// starts and exported hold the tracing state per session (trace.go).
 	starts, exported sync.Map
 }
@@ -321,14 +324,36 @@ func (r *sessionReconciler) tryClaim(ctx context.Context, s *v1.IDESession, tmpl
 	}
 	span.SetAttributes(attribute.String("eduide.claim.result", "empty"))
 	// Templates without a pool never have an idle pod: that is no signal.
-	var pools v1.IDEPoolList
-	if err := r.List(ctx, &pools, client.InNamespace(s.Namespace)); err != nil {
-		return nil, false, err
-	}
-	if slices.ContainsFunc(pools.Items, func(p v1.IDEPool) bool { return p.Spec.TemplateRef == tmpl.Name }) {
+	hasPool, err := r.hasPool(ctx, s.Namespace, tmpl.Name)
+	if hasPool {
 		telemetry.ClaimTotal.WithLabelValues(tmpl.Name, "empty").Inc()
 	}
-	return nil, false, nil
+	return nil, false, err
+}
+
+// hasPool reports whether an IDEPool serves the template.
+func (r *sessionReconciler) hasPool(ctx context.Context, namespace, template string) (bool, error) {
+	var pools v1.IDEPoolList
+	if err := r.List(ctx, &pools, client.InNamespace(namespace)); err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(pools.Items, func(p v1.IDEPool) bool { return p.Spec.TemplateRef == template }), nil
+}
+
+// startMode is the start_mode label of the startup metric: eager (a pool instance was claimed), lazy (cold,
+// the template has no pool), lazy_fallback (cold although the template has a pool) or none (no strategy yet).
+func (r *sessionReconciler) startMode(ctx context.Context, s *v1.IDESession, strategy string) string {
+	switch v1.StartStrategy(strategy) {
+	case v1.StartWarmReady, v1.StartWarmStarting:
+		return "eager"
+	case v1.StartCold:
+		// A failed list counts as no pool: the metric must not block the start path.
+		if has, _ := r.hasPool(ctx, s.Namespace, s.Spec.TemplateRef); has {
+			return "lazy_fallback"
+		}
+		return "lazy"
+	}
+	return "none"
 }
 
 // progress moves a session with a pod through Starting to Ready.
@@ -458,10 +483,10 @@ func (r *sessionReconciler) progress(ctx context.Context, s *v1.IDESession, tmpl
 	strategy := string(st.StartStrategy)
 	r.note(ctx, s, corev1.EventTypeNormal, "Ready", fmt.Sprintf("ready after %.1fs (%s)", now.Sub(s.CreationTimestamp.Time).Seconds(), strategy),
 		"result", "ready", "strategy", strategy, "duration_s", now.Sub(s.CreationTimestamp.Time).Seconds())
-	telemetry.SessionPhase.WithLabelValues("claim", strategy).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
-	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
-	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
-	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready", persistenceOf(s)).Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionPhase.WithLabelValues("claim", strategy, tmpl.Name).Observe(st.Timestamps.Claimed.Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionPhase.WithLabelValues("pod_ready", strategy, tmpl.Name).Observe(st.Timestamps.PodReady.Sub(st.Timestamps.Claimed.Time).Seconds())
+	telemetry.SessionPhase.WithLabelValues("agent_ready", strategy, tmpl.Name).Observe(now.Sub(st.Timestamps.PodReady.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(tmpl.Name, strategy, "ready", persistenceOf(s), r.startMode(ctx, s, strategy)).Observe(now.Sub(s.CreationTimestamp.Time).Seconds())
 	if s.Spec.WorkspaceRef != "" {
 		if err := r.touchWorkspace(ctx, s); err != nil {
 			slog.WarnContext(ctx, "cannot update workspace lastUsed", "workspace", s.Spec.WorkspaceRef, "error", err.Error())
@@ -571,6 +596,7 @@ func (r *sessionReconciler) running(ctx context.Context, s *v1.IDESession, tmpl 
 			why = "max"
 		}
 		r.note(ctx, s, corev1.EventTypeNormal, "Ended", "ended by the "+why+" timeout", "reason", why)
+		r.timedOut.Store(sessionKey(s), struct{}{})
 		return ctrl.Result{}, client.IgnoreNotFound(r.Delete(ctx, s))
 	case actWarnIdle, actWarnMax:
 		kind, cond, msg := agentapi.IdleWarning, condIdleWarned, "This session ends soon because it is idle."
@@ -688,7 +714,7 @@ func (r *sessionReconciler) fail(ctx context.Context, s *v1.IDESession, code, ms
 	r.failedWritten.Store(key, code)
 	strategy := strategyName(s.Status.StartStrategy)
 	r.endStart(s, "failed", code)
-	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	telemetry.SessionStartup.WithLabelValues(s.Spec.TemplateRef, strategy, "failed", persistenceOf(s), r.startMode(ctx, s, strategy)).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
 	telemetry.SessionFailures.WithLabelValues(s.Spec.TemplateRef, code).Inc()
 	r.note(ctx, s, corev1.EventTypeWarning, "Failed", code+": "+msg, "result", "failed", "code", code, "message", msg, "strategy", strategy)
 	return r.expire(ctx, s)
@@ -731,7 +757,19 @@ func (r *sessionReconciler) finalize(ctx context.Context, s *v1.IDESession) (ctr
 	}
 	orig := s.DeepCopy()
 	controllerutil.RemoveFinalizer(s, v1.SessionFinalizer)
-	return ctrl.Result{}, client.IgnoreNotFound(r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager)))
+	err := client.IgnoreNotFound(r.Patch(ctx, s, client.MergeFrom(orig), client.FieldOwner(fieldManager)))
+	if err == nil {
+		// Only the pass that removes the finalizer observes, so repeated reconciles count a session once.
+		reason := "user"
+		if _, ok := r.timedOut.LoadAndDelete(sessionKey(s)); ok {
+			reason = "timeout"
+		}
+		if s.Status.Phase == v1.SessionFailed {
+			reason = "error"
+		}
+		telemetry.SessionLifetime.WithLabelValues(s.Spec.TemplateRef, reason).Observe(r.clock.Now().Sub(s.CreationTimestamp.Time).Seconds())
+	}
+	return ctrl.Result{}, err
 }
 
 // touchWorkspace sets lastUsed to now (G19). A missing workspace is not an error.

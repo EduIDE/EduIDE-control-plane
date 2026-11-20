@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
@@ -1413,4 +1415,104 @@ func TestImportedClaimIsNotShared(t *testing.T) {
 	if name, _, err := r.ensureVolume(context.Background(), imports("w-owner", "uid-owner"), newTemplate("x")); err != nil || name != "data" {
 		t.Fatalf("the owner itself: name %q, err %v", name, err)
 	}
+}
+
+// histCount is the number of observations of one histogram series.
+func histCount(o prometheus.Observer) uint64 {
+	var m dto.Metric
+	_ = o.(prometheus.Metric).Write(&m)
+	return m.GetHistogram().GetSampleCount()
+}
+
+func TestStartModeLabel(t *testing.T) {
+	requireEnv(t)
+	mustCreate(t, newTemplate("tpl-sm-lazy"))
+	mustCreate(t, newTemplate("tpl-sm-fallback"))
+	mustCreate(t, &v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-sm-fallback", Namespace: testNS},
+		Spec: v1.IDEPoolSpec{TemplateRef: "tpl-sm-fallback", MinIdle: 0, TargetIdle: 0, MaxInstances: 5}})
+	eventually(t, "pool in the cache", func() bool {
+		return get(&v1.IDEPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-sm-fallback", Namespace: testNS}}) == nil
+	})
+	time.Sleep(300 * time.Millisecond)
+	for _, c := range []struct{ tpl, mode string }{{"tpl-sm-lazy", "lazy"}, {"tpl-sm-fallback", "lazy_fallback"}} {
+		name := "s-" + strings.ReplaceAll(c.mode, "_", "-")
+		createSession(t, name, c.tpl)
+		var st v1.IDESessionStatus
+		eventually(t, "pod", func() bool { st = sessionStatus(name); return st.PodName != "" })
+		setReady(t, st.PodName)
+		eventually(t, "ready", func() bool { return sessionStatus(name).Phase == v1.SessionReady })
+		eventually(t, c.mode+" observed", func() bool {
+			return histCount(telemetry.SessionStartup.WithLabelValues(c.tpl, "cold", "ready", "none", c.mode)) == 1
+		})
+	}
+}
+
+func TestSessionLifetimeReasons(t *testing.T) {
+	requireEnv(t)
+	count := func(tpl, reason string) uint64 {
+		return histCount(telemetry.SessionLifetime.WithLabelValues(tpl, reason))
+	}
+
+	// error: the session fails and is deleted after the retention.
+	createSession(t, "s-life-err", "tpl-life-missing")
+	s := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-life-err", Namespace: testNS}}
+	eventually(t, "failed", func() bool { return sessionStatus("s-life-err").Phase == v1.SessionFailed })
+	clk.Step(failedRetention + time.Second)
+	poke(s)
+	eventually(t, "error lifetime", func() bool { return count("tpl-life-missing", "error") == 1 })
+	clk.Step(-failedRetention - time.Second)
+
+	// user: deleted from outside.
+	mustCreate(t, newTemplate("tpl-life"))
+	createSession(t, "s-life-user", "tpl-life")
+	eventually(t, "pod", func() bool { return sessionStatus("s-life-user").PodName != "" })
+	u := &v1.IDESession{ObjectMeta: metav1.ObjectMeta{Name: "s-life-user", Namespace: testNS}}
+	_ = get(u)
+	if err := k8s.Delete(context.Background(), u); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "user lifetime", func() bool { return count("tpl-life", "user") == 1 })
+	time.Sleep(300 * time.Millisecond)
+	if n := count("tpl-life", "user"); n != 1 {
+		t.Errorf("lifetime observed %d times, want once", n)
+	}
+}
+
+func TestTemplateResourcesGauge(t *testing.T) {
+	requireEnv(t)
+	tm := newTemplate("tpl-res")
+	tm.Spec.Resources = corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("1Gi")},
+		Limits:   corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("2Gi")},
+	}
+	mustCreate(t, tm)
+	g := func(res, kind string) float64 {
+		return testutil.ToFloat64(telemetry.TemplateResources.WithLabelValues("tpl-res", res, kind))
+	}
+	eventually(t, "gauge set", func() bool { return g("cpu", "request") == 0.5 })
+	if g("memory", "request") != 1<<30 || g("memory", "limit") != 2<<30 {
+		t.Errorf("memory request %v limit %v", g("memory", "request"), g("memory", "limit"))
+	}
+	if err := k8s.Delete(context.Background(), tm); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "series removed", func() bool {
+		return !hasSeries("tpl-res")
+	})
+}
+
+func hasSeries(tpl string) bool {
+	ch := make(chan prometheus.Metric, 64)
+	go func() { telemetry.TemplateResources.Collect(ch); close(ch) }()
+	found := false
+	for m := range ch {
+		var d dto.Metric
+		_ = m.Write(&d)
+		for _, l := range d.GetLabel() {
+			if l.GetName() == "template" && l.GetValue() == tpl {
+				found = true
+			}
+		}
+	}
+	return found
 }

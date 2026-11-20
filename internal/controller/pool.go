@@ -319,6 +319,8 @@ func (r *poolReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	telemetry.PoolInstances.WithLabelValues(pool.Name, "idle_starting").Set(float64(starting))
 	telemetry.PoolInstances.WithLabelValues(pool.Name, "claimed").Set(float64(claimed))
 	telemetry.PoolTargetIdle.WithLabelValues(pool.Name).Set(float64(target))
+	telemetry.PoolMinIdle.WithLabelValues(pool.Name, pool.Spec.TemplateRef).Set(float64(pool.Spec.MinIdle))
+	telemetry.PoolMaxInstances.WithLabelValues(pool.Name, pool.Spec.TemplateRef).Set(float64(pool.Spec.MaxInstances))
 	return res, r.writeStatus(ctx, orig, pool)
 }
 

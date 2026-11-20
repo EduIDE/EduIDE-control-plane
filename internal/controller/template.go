@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 const componentPrepull = "prepull"
@@ -50,8 +52,12 @@ func validateTemplate(t *v1.IDETemplate) error {
 func (r *templateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	t := &v1.IDETemplate{}
 	if err := r.Get(ctx, req.NamespacedName, t); err != nil {
+		if apierrors.IsNotFound(err) {
+			telemetry.TemplateResources.DeletePartialMatch(prometheus.Labels{"template": req.Name})
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	recordResources(t)
 	orig := t.DeepCopy()
 	cond := metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Valid", ObservedGeneration: t.Generation}
 	verr := validateTemplate(t)
@@ -71,6 +77,19 @@ func (r *templateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: recheck}, r.reconcilePrepull(ctx, t)
+}
+
+// recordResources exports the IDE container resources of a template; only defined values get a series.
+func recordResources(t *v1.IDETemplate) {
+	telemetry.TemplateResources.DeletePartialMatch(prometheus.Labels{"template": t.Name})
+	for kind, list := range map[string]corev1.ResourceList{"request": t.Spec.Resources.Requests, "limit": t.Spec.Resources.Limits} {
+		if q, ok := list[corev1.ResourceCPU]; ok {
+			telemetry.TemplateResources.WithLabelValues(t.Name, "cpu", kind).Set(q.AsApproximateFloat64())
+		}
+		if q, ok := list[corev1.ResourceMemory]; ok {
+			telemetry.TemplateResources.WithLabelValues(t.Name, "memory", kind).Set(q.AsApproximateFloat64())
+		}
+	}
 }
 
 func prepullName(t string) string { return "prepull-" + t }

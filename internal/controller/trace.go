@@ -238,7 +238,7 @@ func (r *sessionReconciler) emit(ctx context.Context, s *v1.IDESession, tmpl *v1
 		}
 		r.tag(span, s, tmpl, pod)
 		span.End(trace.WithTimestamp(ph.end))
-		telemetry.SessionPhase.WithLabelValues(ph.metric, strategyName(s.Status.StartStrategy)).Observe(ph.end.Sub(ph.start).Seconds())
+		telemetry.SessionPhase.WithLabelValues(ph.metric, strategyName(s.Status.StartStrategy), s.Spec.TemplateRef).Observe(ph.end.Sub(ph.start).Seconds())
 	}
 }
 
