@@ -16,6 +16,7 @@ import { runLaunch } from './runLaunch';
 const template: Template = {
     name: 'java-17',
     displayName: 'Java',
+    listed: true,
     persistence: ['none', 'volume'],
     defaultPersistence: 'none',
     injectableKeys: ['GIT_URI', 'ARTEMIS_TOKEN']

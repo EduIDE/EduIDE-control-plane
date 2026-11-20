@@ -109,6 +109,7 @@ func templateToAPI(t *v1alpha1.IDETemplate, warm bool) Template {
 		Name:               t.Name,
 		DisplayName:        cmp.Or(t.Spec.DisplayName, t.Name),
 		LogoUrl:            emptyToNil(t.Spec.LogoURL),
+		Listed:             t.Spec.Listed == nil || *t.Spec.Listed,
 		DefaultPersistence: PersistenceMode(cmp.Or(t.Spec.Persistence.Default, v1alpha1.PersistenceNone)),
 		Persistence:        []PersistenceMode{},
 		InjectableKeys:     []string{},

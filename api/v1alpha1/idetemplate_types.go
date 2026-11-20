@@ -137,6 +137,11 @@ type IDETemplateSpec struct {
 	// +kubebuilder:validation:MaxLength=2048
 	// +optional
 	LogoURL string `json:"logoURL,omitempty"`
+	// Listed offers the template as a start tile on the landing page. Unlisted templates still launch by name
+	// through the API and Artemis links.
+	// +kubebuilder:default=true
+	// +optional
+	Listed *bool `json:"listed,omitempty"`
 	// +kubebuilder:validation:MinLength=1
 	Image string `json:"image"`
 	// +optional

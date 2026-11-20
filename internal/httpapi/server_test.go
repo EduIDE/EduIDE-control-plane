@@ -361,6 +361,41 @@ func TestTemplates(t *testing.T) {
 	}
 }
 
+func unlistedTemplate() *v1alpha1.IDETemplate {
+	tpl := javaTemplate()
+	tpl.Name, tpl.Spec.DisplayName, tpl.Spec.Listed = "hidden", "Hidden", ptr(false)
+	return tpl
+}
+
+func TestTemplateListed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		listed *bool
+		want   bool
+	}{"default": {nil, true}, "true": {ptr(true), true}, "false": {ptr(false), false}} {
+		t.Run(name, func(t *testing.T) {
+			tpl := javaTemplate()
+			tpl.Spec.Listed = tc.listed
+			if got := templateToAPI(tpl, false).Listed; got != tc.want {
+				t.Fatalf("listed %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnlistedTemplateIsReturnedAndLaunches(t *testing.T) {
+	e := newEnv(t, unlistedTemplate())
+	byName := map[string]Template{}
+	for _, tpl := range decode[[]Template](t, e.do("GET", "/templates", "alice", nil)) {
+		byName[tpl.Name] = tpl
+	}
+	if len(byName) != 2 || !byName["java"].Listed || byName["hidden"].Listed || byName["hidden"].DisplayName != "Hidden" {
+		t.Fatalf("%+v", byName)
+	}
+	if rec := e.do("POST", "/sessions", "alice", launchBody(map[string]any{"template": "hidden"})); rec.Code != 201 {
+		t.Fatalf("launch: %d %s", rec.Code, rec.Body)
+	}
+}
+
 func TestOverview(t *testing.T) {
 	running := session("s-run", "alice", "java", "Ready")
 	running.Spec.Display = v1alpha1.Display{Source: "https://git.example.org/c/ex01-ab12cde.git"}

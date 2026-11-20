@@ -10,6 +10,7 @@ Fixes from the audit of 2026-11-19.
 
 - `workspaces.perUser` (default 20) limits the workspaces of one user; beyond it the API answers the new problem code `workspace-limit-reached` (409)
 - `IDETemplate.ResolvedTimeouts()`: one place that resolves the session timeouts for operator, service and admin API
+- `IDETemplate.spec.listed` (default `true`) and `Template.listed` in the REST API: the landing page shows start tiles only for listed templates. Unlisted templates still launch by name through the API and Artemis links, and their sessions keep display name and logo in "Your environments"
 
 ### Changed
 

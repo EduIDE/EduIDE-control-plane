@@ -52,6 +52,7 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, o
             ? setDialog({ kind: 'pick', template })
             : start(template);
 
+    const listed = templates?.filter(template => template.listed);
     return (
         <>
             <h1>{heading}</h1>
@@ -79,19 +80,22 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, o
                     <div className='empty'>{t('empty.mine')}</div>
                 )}
             </section>
-            <section aria-labelledby='new'>
-                <h2 id='new'>{t('section.new')}</h2>
-                <div className='grid'>
-                    {templates?.map(template => (
-                        <TemplateTile
-                            key={template.name}
-                            template={template}
-                            onPick={pick}
-                            onInfo={tpl => setDialog({ kind: 'info', template: tpl })}
-                        />
-                    ))}
-                </div>
-            </section>
+            {/* Unlisted templates still launch by link and show in the environments above. */}
+            {(!listed || listed.length > 0) && (
+                <section aria-labelledby='new'>
+                    <h2 id='new'>{t('section.new')}</h2>
+                    <div className='grid'>
+                        {listed?.map(template => (
+                            <TemplateTile
+                                key={template.name}
+                                template={template}
+                                onPick={pick}
+                                onInfo={tpl => setDialog({ kind: 'info', template: tpl })}
+                            />
+                        ))}
+                    </div>
+                </section>
+            )}
             {dialog?.kind === 'info' && <InfoDialog template={dialog.template} onClose={() => setDialog(undefined)} onStart={pick} />}
             {dialog?.kind === 'pick' && (
                 <PickDialog

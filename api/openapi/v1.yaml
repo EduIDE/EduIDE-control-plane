@@ -401,11 +401,12 @@ components:
         source: {type: string, maxLength: 2048}
     Template:
       type: object
-      required: [name, displayName, persistence, defaultPersistence, injectableKeys]
+      required: [name, displayName, listed, persistence, defaultPersistence, injectableKeys]
       properties:
         name: {type: string}
         displayName: {type: string}
         logoUrl: {type: string}
+        listed: {type: boolean, description: "The landing page offers the template as a start tile. Unlisted templates still launch by name through the API and Artemis links."}
         persistence: {type: array, items: {$ref: "#/components/schemas/PersistenceMode"}}
         defaultPersistence: {$ref: "#/components/schemas/PersistenceMode"}
         injectableKeys:

@@ -161,6 +161,12 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              listed:
+                default: true
+                description: |-
+                  Listed offers the template as a start tile on the landing page. Unlisted templates still launch by name
+                  through the API and Artemis links.
+                type: boolean
               logoURL:
                 maxLength: 2048
                 type: string
