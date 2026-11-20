@@ -6,7 +6,7 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Fixed
 
-- Launch traces are complete in Jaeger: the service starts `launch` as the root span and keeps the landing page `traceparent` as a link (it was an unexported parent, so most traces showed as incomplete and were listed by trace id)
+- Launch traces are complete in Jaeger: the service starts `launch` as the root span and keeps the landing page `traceparent` as a link (it was an unexported parent, so most traces showed as incomplete and were listed by trace id); ADR 0022, OpenAPI 1.1.1
 
 ## [0.2.1] - 2026-11-20
 

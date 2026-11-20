@@ -66,9 +66,3 @@ Chosen option: "OpenTelemetry in code, Prometheus endpoint, Jaeger v2".
 
 - Good, because buffers and fans out.
 - Bad, because memory per deployment for no current need.
-
-## Amendment 2026-11-20: launch is the root span
-
-The landing page exports no spans, so its `traceparent` as the parent left about three of four launch traces without their root: Jaeger marked them incomplete and listed them by trace id.
-The service now starts `launch` as a new root span and keeps the incoming `traceparent` as a span link.
-The annotation `eduide.github.io/traceparent` carries the context of `launch`, so operator, agent milestones and authz still join the trace.
