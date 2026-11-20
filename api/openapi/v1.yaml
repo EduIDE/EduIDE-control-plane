@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EduIDE control plane API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
@@ -401,11 +401,12 @@ components:
         source: {type: string, maxLength: 2048}
     Template:
       type: object
-      required: [name, displayName, persistence, defaultPersistence, injectableKeys]
+      required: [name, displayName, listed, persistence, defaultPersistence, injectableKeys]
       properties:
         name: {type: string}
         displayName: {type: string}
         logoUrl: {type: string}
+        listed: {type: boolean, description: "The landing page offers the template as a start tile. Unlisted templates still launch by name through the API and Artemis links."}
         persistence: {type: array, items: {$ref: "#/components/schemas/PersistenceMode"}}
         defaultPersistence: {$ref: "#/components/schemas/PersistenceMode"}
         injectableKeys:

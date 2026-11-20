@@ -60,7 +60,14 @@ describe('templates after an outage', () => {
     it('keeps asking, then shows the tiles and drops the alert, and hides the loading text meanwhile', async () => {
         vi.useFakeTimers();
         try {
-            const java = { name: 'java-17', displayName: 'Java 17', persistence: ['none'], defaultPersistence: 'none', injectableKeys: [] };
+            const java = {
+                name: 'java-17',
+                displayName: 'Java 17',
+                listed: true,
+                persistence: ['none'],
+                defaultPersistence: 'none',
+                injectableKeys: []
+            };
             const get = vi
                 .fn()
                 .mockResolvedValueOnce({ response: { status: 503 }, error: { title: 'Service Unavailable', status: 503 } })
@@ -123,6 +130,36 @@ describe('templates after an outage', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+});
+
+describe('unlisted templates', () => {
+    const hidden = {
+        name: 'hidden',
+        displayName: 'Hidden IDE',
+        listed: false,
+        persistence: ['none'],
+        defaultPersistence: 'none',
+        injectableKeys: []
+    };
+
+    it('still start from an Artemis link and show no tile', async () => {
+        window.history.replaceState({}, '', '/?appDef=hidden');
+        const launch = vi.fn(async () => new Promise<never>(() => undefined));
+        const get = vi.fn(async () => ({ data: [hidden], response: { status: 200 } }));
+        const api = {
+            client: { GET: get },
+            launchDeps: { launch },
+            watchOverview: () => new Promise<void>(() => undefined)
+        } as unknown as Api;
+        render(
+            <I18nProvider initial='en'>
+                <App config={config} api={api} user={{ initials: 'AS', label: 'Alex (ga1)' }} />
+            </I18nProvider>
+        );
+        await waitFor(() => expect(launch).toHaveBeenCalledWith(expect.objectContaining({ template: 'hidden' })));
+        expect(screen.queryByRole('button', { name: 'Start Hidden IDE' })).toBeNull();
+        window.history.replaceState({}, '', '/');
     });
 });
 

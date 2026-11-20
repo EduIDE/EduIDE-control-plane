@@ -97,6 +97,13 @@ describe('sessionToRow', () => {
     });
 });
 
+describe('sessionToRow with an unlisted template', () => {
+    it('still takes name and logo from the template', () => {
+        const templates = [{ name: 'java-17', displayName: 'Java', logoUrl: '/l.png', listed: false }] as Template[];
+        expect(sessionToRow(session(), templates, now)).toMatchObject({ title: 'Java', logoUrl: '/l.png' });
+    });
+});
+
 describe('deleteRow', () => {
     const row = (over: object): ReturnType<typeof toRow> => ({
         ...toRow({ ...base, kind: 'workspace', title: 'x', running: false, workspace }, now),

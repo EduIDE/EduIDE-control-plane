@@ -406,6 +406,8 @@ export interface components {
             name: string;
             displayName: string;
             logoUrl?: string;
+            /** @description The landing page offers the template as a start tile. Unlisted templates still launch by name through the API and Artemis links. */
+            listed: boolean;
             persistence: components["schemas"]["PersistenceMode"][];
             defaultPersistence: components["schemas"]["PersistenceMode"];
             /** @description Keys a launch request may send in `data`. */

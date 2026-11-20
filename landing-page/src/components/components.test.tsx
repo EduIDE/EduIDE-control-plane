@@ -22,6 +22,7 @@ const legal: AppConfig['legal'] = { imprint: { url: 'https://example.org/imprint
 const java: Template = {
     name: 'java-17',
     displayName: 'Java 17',
+    listed: true,
     persistence: ['none', 'volume'],
     defaultPersistence: 'volume',
     injectableKeys: ['TEMPLATE'],
@@ -36,6 +37,7 @@ const java: Template = {
 const python: Template = {
     name: 'python',
     displayName: 'Python',
+    listed: true,
     persistence: ['none'],
     defaultPersistence: 'none',
     injectableKeys: [],
@@ -416,6 +418,18 @@ describe('Home', () => {
         } finally {
             vi.useRealTimers();
         }
+    });
+
+    it('offers only listed templates as tiles and hides the section when none is listed', async () => {
+        const hidden = { ...python, name: 'hidden', displayName: 'Hidden', listed: false };
+        const { unmount } = render(wrap(<Home api={overview([])} templates={[java, hidden]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
+        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        screen.getByRole('button', { name: 'Start Java 17' });
+        expect(screen.queryByRole('button', { name: 'Start Hidden' })).toBeNull();
+        unmount();
+        render(wrap(<Home api={overview([])} templates={[hidden]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
+        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        expect(screen.queryByRole('heading', { name: 'Start new' })).toBeNull();
     });
 
     it('opens the info dialog from the picker', async () => {

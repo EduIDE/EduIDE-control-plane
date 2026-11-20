@@ -6,6 +6,7 @@ import { buildLaunchInfo, startLine, templateStartLine } from './templates';
 const template: Template = {
     name: 'c',
     displayName: 'C',
+    listed: true,
     logoUrl: '/c.png',
     persistence: ['none', 'volume'],
     defaultPersistence: 'volume',

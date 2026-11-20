@@ -7,7 +7,7 @@ Change rules: [ADR 0011](../adr/0011-crd-versioning-cel.md). Object model diagra
 
 | CRD | Purpose | Key fields |
 |---|---|---|
-| `IDETemplate` | Kind of IDE: image, resources, port, env, allowlist, persistence, timeouts, placement | `spec.image`, `spec.port`, `spec.resources`, `spec.env`, `spec.injectableKeys`, `spec.persistence` (`allowed`, `default`, `size`, `mountPath`), `spec.timeouts` (`idle`, `warning`, `max`), `spec.retention`, `spec.placement`, `spec.bandwidth`; status `conditions` (`Ready`, `ImageMetadata`), `image` (`digest`, `version`, `variants`, `includes`, `lastChecked`) |
+| `IDETemplate` | Kind of IDE: image, resources, port, env, allowlist, persistence, timeouts, placement | `spec.displayName`, `spec.logoURL`, `spec.listed`, `spec.image`, `spec.port`, `spec.resources`, `spec.env`, `spec.injectableKeys`, `spec.persistence` (`allowed`, `default`, `size`, `mountPath`), `spec.timeouts` (`idle`, `warning`, `max`), `spec.retention`, `spec.placement`, `spec.bandwidth`; status `conditions` (`Ready`, `ImageMetadata`), `image` (`digest`, `version`, `variants`, `includes`, `lastChecked`) |
 | `IDEPool` | Prewarmed instances of one template (optional) | `spec.templateRef`, `spec.minIdle` (floor, Helm), `spec.targetIdle` (pool-scaler), `spec.maxInstances`; status `replicas`, `idleReady`, `idleStarting`, `claimed`, `selector`; scale subresource maps to `targetIdle` |
 | `IDEWorkspace` | Persistent user files | `spec.owner`, `spec.templateRef`, `spec.persistence` (`mode`, `size`, `storageClassName`, `existingClaimName`), `spec.retention`, `spec.display`; status `phase` (`Pending`, `Ready`, `Expired`), `claimName`, `lastUsed`, `expiresAt`, `expiredAt` |
 | `IDESession` | One running IDE | `spec.owner`, `spec.templateRef`, `spec.workspaceRef`, `spec.dataSecretRef`, `spec.display`; status `phase`, `startStrategy`, `instance`, `podName`, `url`, `errorCode`, `message`, `timestamps`, `lastActivity` |
@@ -15,6 +15,7 @@ Change rules: [ADR 0011](../adr/0011-crd-versioning-cel.md). Object model diagra
 Notes:
 
 - `IDEPool` is separate from the template: Helm owns the template, the pool scaler owns `targetIdle`. No field has two owners.
+- `listed` (default `true`) controls only the start tiles of the landing page. `GET /api/v1/templates` returns every template with `listed`; unlisted ones still launch by name (API, Artemis `?appDef=`) and show their display name and logo in the overview.
 - `injectableKeys` is the allowlist for launch data. There is no `fromSecrets` and no `fromConfigMaps`. `allowCredentials` (only with `format: HTTPSURL`) accepts user info such as an Artemis VCS token in the URL; the value then reaches only the launch data Secret ([ADR 0012](../adr/0012-user-data-secrets-allowlist.md)).
 - `persistence.mode` is `none` or `volume`. **Planned:** `snapshot` (optional phase 9). The enum allows it additively.
 - A session with a `workspaceRef` always starts cold. The startup strategy shows it as `cold`.
