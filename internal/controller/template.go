@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -17,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 const componentPrepull = "prepull"
@@ -50,8 +52,13 @@ func validateTemplate(t *v1.IDETemplate) error {
 func (r *templateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	t := &v1.IDETemplate{}
 	if err := r.Get(ctx, req.NamespacedName, t); err != nil {
+		if apierrors.IsNotFound(err) {
+			telemetry.TemplateResources.DeletePartialMatch(prometheus.Labels{"template": req.Name})
+			telemetry.TemplateTimeout.DeletePartialMatch(prometheus.Labels{"template": req.Name})
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	recordResources(t)
 	orig := t.DeepCopy()
 	cond := metav1.Condition{Type: v1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Valid", ObservedGeneration: t.Generation}
 	verr := validateTemplate(t)
@@ -71,6 +78,24 @@ func (r *templateReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{RequeueAfter: recheck}, r.reconcilePrepull(ctx, t)
+}
+
+// recordResources exports the IDE container resources of a template; only defined values get a series.
+func recordResources(t *v1.IDETemplate) {
+	idle, warning, max := t.ResolvedTimeouts()
+	for kind, d := range map[string]time.Duration{"idle": idle, "warning": warning, "max": max} {
+		telemetry.TemplateTimeout.WithLabelValues(t.Name, kind).Set(d.Seconds())
+	}
+	for kind, list := range map[string]corev1.ResourceList{"request": t.Spec.Resources.Requests, "limit": t.Spec.Resources.Limits} {
+		for res, name := range map[string]corev1.ResourceName{"cpu": corev1.ResourceCPU, "memory": corev1.ResourceMemory} {
+			// Only a value that is gone loses its series, so a scrape never sees a gap for unchanged ones.
+			if q, ok := list[name]; ok {
+				telemetry.TemplateResources.WithLabelValues(t.Name, res, kind).Set(q.AsApproximateFloat64())
+			} else {
+				telemetry.TemplateResources.DeleteLabelValues(t.Name, res, kind)
+			}
+		}
+	}
 }
 
 func prepullName(t string) string { return "prepull-" + t }
