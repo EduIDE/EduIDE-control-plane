@@ -319,14 +319,22 @@ func (c *collector) resolves(win time.Duration) bool { return c.scrape > 0 && wi
 
 // startup is M2 and the lazy fallback share of M3.
 func (c *collector) startup(ctx context.Context, w window, d string, at time.Time) {
-	counts := c.q(ctx, "m2_startup_count", fmt.Sprintf(`sum by (template, start_mode, result) (increase(eduide_session_startup_seconds_count%s[%s]))`, c.sel(""), d), at)
+	counts := c.q(ctx, "m2_startup_count", fmt.Sprintf(`sum by (template, start_mode, result, strategy) (increase(eduide_session_startup_seconds_count%s[%s]))`, c.sel(""), d), at)
 	total, failed, perTemplate, fallback, hasMode := map[[2]string]float64{}, map[[2]string]float64{}, map[string]float64{}, map[string]float64{}, map[string]bool{}
+	warm, warmStarting := map[string]float64{}, map[string]float64{}
 	for _, s := range counts {
 		k := [2]string{label(s, []string{"template"}, 0), label(s, []string{"start_mode"}, 0)}
 		total[k] += s.Value
 		perTemplate[k[0]] += s.Value
 		if s.Labels["result"] == "failed" {
 			failed[k] += s.Value
+		}
+		switch s.Labels["strategy"] {
+		case "warm-ready":
+			warm[k[0]] += s.Value
+		case "warm-starting":
+			warm[k[0]] += s.Value
+			warmStarting[k[0]] += s.Value
 		}
 		hasMode[k[0]] = hasMode[k[0]] || k[1] != "unknown"
 		if k[1] == "lazy_fallback" {
@@ -342,6 +350,14 @@ func (c *collector) startup(ctx context.Context, w window, d string, at time.Tim
 		if h := hs[k]; h != nil {
 			r.P50, r.P95, r.Max = h.quantile(0.5), h.quantile(0.95), h.maxBucket()
 		}
+		c.add(r)
+	}
+	for t, n := range warm {
+		if n == 0 {
+			continue
+		}
+		r := newRow(w, "not_ready_claim_share", t, "warm-starting", "share")
+		r.Count, r.Value = math.Round(n), warmStarting[t]/n
 		c.add(r)
 	}
 	for t, n := range perTemplate {

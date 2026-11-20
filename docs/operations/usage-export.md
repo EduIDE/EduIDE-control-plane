@@ -40,7 +40,7 @@ Rules with `increase()[5m]` run in a 5 minute group, so their values do not over
 | M6 | `session_lifetime_count_5m`, `session_lifetime_bucket_5m` by `reason` |
 | M7 | `ide_restarts_5m`, `ide_oom_kills_5m` per namespace; `ide_restarts_by_template_5m`, `ide_oom_kills_by_template_5m` per template |
 
-The 20 s figure needs a scrape interval of 10 s or less (`monitoring.podMonitor.interval`); the chart default is 30 s.
+The 20 s window needs two scrapes inside it, so the scrape interval of the control plane must be 10 s or less. The chart default of `monitoring.podMonitor.interval` is therefore 10s; a PodMonitor overrides the global scrape interval of Prometheus, so a global 10 s does not help when the PodMonitor sets 30 s.
 A pool carries the name of its template in the chart, so the pool rules label the pool as `template`.
 
 ### Idle and claimed pods
@@ -63,6 +63,7 @@ The export uses the split rows when they exist and the fallback rows otherwise (
 ```sh
 go run ./cmd/usage-export \
   --prometheus http://127.0.0.1:9090 --namespace eduide --installation aet \
+  --release 3.0.0 --chart-version 0.2.1 \
   --from 2026-11-09 --to 2026-11-15 --out ./exports
 go run ./cmd/usage-export --check ./exports
 ```
@@ -73,6 +74,7 @@ go run ./cmd/usage-export --check ./exports
 | `--namespace` | Namespace of the control plane and the session pods |
 | `--installation` | Name in the output path (a-z, 0-9, `-`) |
 | `--from`, `--to` | First and last day, inclusive, UTC (default: the last 7 days) |
+| `--release`, `--chart-version` | EduIDE release and chart version of the installation; required, written to `context.json` |
 | `--out` | Output directory; the command writes `<out>/<installation>/<from>_<to>/` |
 | `--check DIR` | Scan `DIR` for e-mail addresses, IPv4 and IPv6 addresses, `ide-` pod names, `s-` session names, hex strings of 16 characters or more and host names; exit code 1 on a finding |
 
@@ -81,7 +83,7 @@ Port-forward Prometheus first (`kubectl -n monitoring port-forward svc/prometheu
 The output directory holds three files:
 
 - `weekly.csv`: one row per ISO week, template and dimension. `README.md` in the directory explains every column.
-- `context.json`: installation, period, scrape interval read from Prometheus, pool sizes, template resources, node count and allocatable CPU and memory, data gaps from `up`, series that were missing.
+- `context.json`: installation, release, chart version, period, session timeouts per template (`eduide_template_timeout_seconds{template,kind}` with kind `idle`, `warning`, `max`, the values of `IDETemplate.ResolvedTimeouts()`), scrape interval read from Prometheus, pool sizes, template resources, node count and allocatable CPU and memory, data gaps from `up`, series that were missing.
 - `README.md`: the column reference, written by the command.
 
 Rules the command enforces:
@@ -92,16 +94,20 @@ Rules the command enforces:
 - A series that does not exist yields no rows and appears under `missing_series`.
 - The same period gives the same files while Prometheus retains the data.
 
-Not collected, add by hand to the report: EduIDE release and chart version, session timeout, peak-hour aggregates of memory and CPU, claims on a not-ready instance.
+The share of claims on a not-ready instance is the share of `strategy="warm-starting"` among the warm starts (`warm-ready` and `warm-starting`) of `eduide_session_startup_seconds_count`.
+Not exported: peak-hour aggregates of memory and CPU.
 The node figures cover all nodes that kube-state-metrics knows, not only the ones that run sessions.
 
 ## Retention
 
-| Installation | Retention | Scrape interval | Consequence |
+| Installation | Retention | Global scrape interval | Consequence |
 |---|---|---|---|
-| stud | 90 days | 10 s | Run the export at least monthly |
-| aet (production) | 90 days | 30 s | At least monthly; 20 s windows are not resolvable |
+| stud | 90 days | 10 s, but the PodMonitor of the chart set 30 s | Run the export at least monthly; set `monitoring.podMonitor.interval: 10s` for 20 s windows |
+| aet (production) | 90 days | 30 s | At least monthly; 20 s windows are not resolvable unless the PodMonitor sets 10s |
 | parma (Bonn) | 365 days | 10 s | Quarterly is enough |
+
+All three run rancher-monitoring.
+None sets the kube-state-metrics pod label allowlist today, so M5 and the per-template restart rules stay empty until you add it (see above); the `_all` fallback rows work.
 
 A lost month cannot be rebuilt, because the raw series expire.
 Keep the exported directories in a Git repository or in the replication package.

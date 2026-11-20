@@ -45,6 +45,7 @@ An empty cell means: not applicable for this metric, not measurable at this reso
 | `launches` | `created` | Launch requests that created a session; `count`, `peak_hour`, `peak_minute`, `max_20s`, `max_60s` |
 | `running_sessions` | `Ready` | Sessions a user has claimed or started, sampled every minute; `p50`, `p95`, `max` over the minutes of the week |
 | `startup` | start mode (`eager`, `lazy`, `lazy_fallback`, `none`) | Session preparation time of sessions that became ready; `count` includes failed sessions; `failure_share` |
+| `not_ready_claim_share` | `warm-starting` | Share of warm starts (`warm-ready` and `warm-starting`) that claimed an instance whose pod was not ready yet, in `value` |
 | `lazy_fallback_share` | `lazy_fallback` | Share of starts that found no unclaimed pool instance, in `value` |
 | `phase` | `data_delivered`, `clone`, `ide_usable` | Late binding and IDE phases after the claim, in seconds |
 | `agent_claim` | `error` | Claim requests from the operator to the agents; `failure_share` is the error share |
@@ -62,6 +63,8 @@ Memory and CPU rows with a template and state split need the kube-state-metrics 
 | Field | Meaning |
 |---|---|
 | `schema_version` | Version of the files |
+| `release`, `chart_version` | EduIDE release and chart version, given with `--release` and `--chart-version` |
+| `template_timeouts` | Session timeouts per template in seconds, kind `idle`, `warning` or `max` |
 | `installation`, `namespace`, `period` | What the export covers (`from` and `to` are inclusive days) |
 | `scrape_interval_seconds` | Scrape interval of the control plane, read from Prometheus |
 | `launch_windows` | Step and method of the 20 s and 60 s windows and whether each one was resolvable |
@@ -70,7 +73,7 @@ Memory and CPU rows with a template and state split need the kube-state-metrics 
 | `nodes` | Count and allocatable CPU and memory of the nodes (`scope` says which nodes) |
 | `data_gaps` | Days with five or more minutes without data or with a target down |
 | `missing_series` | Query ids that returned no series, for example metrics that are not deployed yet |
-| `not_collected` | Context that Prometheus does not hold; add it by hand |
+| `not_collected` | Context that Prometheus does not hold; add it by hand (currently the peak-hour aggregates of memory and CPU, which are not exported) |
 
 ## Small cells
 

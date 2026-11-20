@@ -57,7 +57,7 @@ func runExport(t *testing.T, canned map[string]string) (string, *[]string) {
 	dir := t.TempDir()
 	from := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
-	if err := export(context.Background(), p, "eduide-test", "test", from, to, to.AddDate(0, 0, 3), dir); err != nil {
+	if err := export(context.Background(), p, "eduide-test", "test", "3.0.0", "0.2.1", from, to, to.AddDate(0, 0, 3), dir); err != nil {
 		t.Fatal(err)
 	}
 	return dir, paths
@@ -99,7 +99,8 @@ func TestExportEndToEnd(t *testing.T) {
 		"ctx_never": "",
 		"600 / max": vec(s("10", "")),
 		"session_startup_seconds_count": vec(
-			s("40", `"template":"java","start_mode":"eager","result":"ready"`),
+			s("30", `"template":"java","start_mode":"eager","result":"ready","strategy":"warm-ready"`),
+			s("10", `"template":"java","start_mode":"eager","result":"ready","strategy":"warm-starting"`),
 			s("2", `"template":"java","start_mode":"eager","result":"failed"`),
 			s("8", `"template":"java","start_mode":"lazy_fallback","result":"ready"`),
 			s("3", `"template":"py","start_mode":"lazy","result":"ready"`)),
@@ -125,6 +126,10 @@ func TestExportEndToEnd(t *testing.T) {
 	if e["failure_share"] != "0.047619" {
 		t.Fatalf("failure share: %v", e["failure_share"])
 	}
+	ns := find(rows, "not_ready_claim_share", "java", "warm-starting")
+	if ns == nil || ns["value"] != "0.25" || ns["count"] != "40" {
+		t.Fatalf("not-ready claim share: %v", ns)
+	}
 	// 8 and 3 sessions are below the small-cell limit: count only.
 	for _, k := range [][2]string{{"java", "lazy_fallback"}, {"py", "lazy"}} {
 		r := find(rows, "startup", k[0], k[1])
@@ -144,6 +149,9 @@ func TestExportEndToEnd(t *testing.T) {
 	}
 	if len(cf["missing_series"].([]any)) == 0 {
 		t.Fatal("missing series not listed")
+	}
+	if cf["release"] != "3.0.0" || cf["chart_version"] != "0.2.1" {
+		t.Fatalf("release not in context: %v", cf)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "README.md")); err != nil {
 		t.Fatal(err)
@@ -239,5 +247,20 @@ func TestWriteCSV(t *testing.T) {
 func TestPromRejectsBadURL(t *testing.T) {
 	if _, err := newProm("file:///etc/passwd"); err == nil {
 		t.Fatal("accepted a file URL")
+	}
+}
+
+func TestReleaseAndChartVersionAreRequired(t *testing.T) {
+	err := run([]string{"--prometheus", "http://127.0.0.1:1", "--namespace", "x", "--installation", "x", "--out", t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "--release") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestTemplateTimeoutsInContext(t *testing.T) {
+	dir, _ := runExport(t, map[string]string{"eduide_template_timeout_seconds": vec(s("1800", `"template":"java","kind":"idle"`))})
+	b, _ := os.ReadFile(filepath.Join(dir, "context.json"))
+	if !strings.Contains(string(b), `"kind": "idle"`) {
+		t.Fatalf("timeouts missing: %s", b)
 	}
 }

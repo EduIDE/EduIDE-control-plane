@@ -23,6 +23,12 @@ type templateResource struct {
 	Value    float64 `json:"value"`
 }
 
+type timeout struct {
+	Template string  `json:"template"`
+	Kind     string  `json:"kind"`
+	Seconds  float64 `json:"seconds"`
+}
+
 type dataGap struct {
 	Date               string `json:"date"`
 	MinutesWithoutData int    `json:"minutes_without_data"`
@@ -33,6 +39,8 @@ type contextFile struct {
 	SchemaVersion int    `json:"schema_version"`
 	Installation  string `json:"installation"`
 	Namespace     string `json:"namespace"`
+	Release       string `json:"release"`
+	ChartVersion  string `json:"chart_version"`
 	Period        struct {
 		From string `json:"from"`
 		To   string `json:"to"`
@@ -44,6 +52,7 @@ type contextFile struct {
 		Window60Resolved bool    `json:"window_60s_resolved"`
 		Method           string  `json:"method"`
 	} `json:"launch_windows"`
+	Timeouts          []timeout          `json:"template_timeouts"`
 	PoolSizes         []poolSize         `json:"pool_sizes"`
 	TemplateResources []templateResource `json:"template_resources"`
 	Nodes             struct {
@@ -75,10 +84,10 @@ func (c *collector) scrapeInterval(ctx context.Context, at time.Time) *float64 {
 	return &r
 }
 
-func (c *collector) context(ctx context.Context, install string, from, to time.Time, end time.Time) contextFile {
-	cf := contextFile{PoolSizes: []poolSize{}, TemplateResources: []templateResource{}}
+func (c *collector) context(ctx context.Context, install, release, chart string, from, to time.Time, end time.Time) contextFile {
+	cf := contextFile{Timeouts: []timeout{}, PoolSizes: []poolSize{}, TemplateResources: []templateResource{}}
 	at := end
-	cf.SchemaVersion, cf.Installation, cf.Namespace = schemaVersion, install, c.ns
+	cf.SchemaVersion, cf.Installation, cf.Namespace, cf.Release, cf.ChartVersion = schemaVersion, install, c.ns, release, chart
 	cf.Period.From, cf.Period.To = from.Format("2006-01-02"), to.Format("2006-01-02")
 	cf.ScrapeIntervalSeconds = c.scrapeInterval(ctx, at)
 	cf.LaunchWindows.StepSeconds = c.scrape.Seconds()
@@ -112,6 +121,13 @@ func (c *collector) context(ctx context.Context, install string, from, to time.T
 		return a.Template+a.Resource+a.Kind < b.Template+b.Resource+b.Kind
 	})
 
+	for _, s := range c.q(ctx, "ctx_template_timeouts", fmt.Sprintf(`max by (template, kind) (eduide_template_timeout_seconds%s)`, c.sel("")), at) {
+		cf.Timeouts = append(cf.Timeouts, timeout{label(s, []string{"template"}, 0), s.Labels["kind"], s.Value})
+	}
+	sort.Slice(cf.Timeouts, func(i, j int) bool {
+		return cf.Timeouts[i].Template+cf.Timeouts[i].Kind < cf.Timeouts[j].Template+cf.Timeouts[j].Kind
+	})
+
 	cf.Nodes.Scope = "all nodes known to kube-state-metrics, not only the nodes that run session pods"
 	cf.Nodes.Count = first(c.q(ctx, "ctx_nodes", `count(kube_node_info)`, at))
 	cf.Nodes.AllocatableCPUCores = first(c.q(ctx, "ctx_node_cpu", `sum(kube_node_status_allocatable{resource="cpu"})`, at))
@@ -119,7 +135,7 @@ func (c *collector) context(ctx context.Context, install string, from, to time.T
 
 	cf.DataGaps = c.gaps(ctx, from, end)
 	cf.MissingSeries = c.p.missing()
-	cf.NotCollected = []string{"EduIDE release and chart version", "session timeout", "peak-hour aggregates of M5 (memory and CPU are weekly only)", "claims on a not-ready instance"}
+	cf.NotCollected = []string{"peak-hour aggregates of M5 (memory and CPU are weekly only)"}
 	return cf
 }
 

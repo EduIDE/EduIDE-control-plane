@@ -32,6 +32,8 @@ func run(args []string) error {
 	install := fs.String("installation", "", "installation name, used for the output directory")
 	fromS := fs.String("from", "", "first day, YYYY-MM-DD (default: 6 days before --to)")
 	toS := fs.String("to", "", "last day, YYYY-MM-DD, inclusive (default: today)")
+	release := fs.String("release", "", "EduIDE release of the installation, for example 3.0.0 (required)")
+	chart := fs.String("chart-version", "", "version of the eduide-control-plane chart (required)")
 	out := fs.String("out", "", "output directory")
 	check := fs.String("check", "", "scan this directory for identifiers and exit")
 	if err := fs.Parse(args); err != nil {
@@ -50,6 +52,9 @@ func run(args []string) error {
 		}
 		fmt.Println("no identifiers found")
 		return nil
+	}
+	if *release == "" || *chart == "" {
+		return fmt.Errorf("--release and --chart-version are required")
 	}
 	if *promURL == "" || *out == "" || !safeName.MatchString(*ns) || !safeName.MatchString(*install) {
 		return fmt.Errorf("--prometheus, --out, --namespace and --installation are required; names use a-z, 0-9 and -")
@@ -74,7 +79,7 @@ func run(args []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the export is meant to be shared
 		return err
 	}
-	return export(context.Background(), p, *ns, *install, from, to, now, dir)
+	return export(context.Background(), p, *ns, *install, *release, *chart, from, to, now, dir)
 }
 
 func parseDay(s string, def time.Time) (time.Time, error) {
@@ -84,13 +89,13 @@ func parseDay(s string, def time.Time) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
-func export(ctx context.Context, p *prom, ns, install string, from, to, now time.Time, dir string) error {
+func export(ctx context.Context, p *prom, ns, install, release, chart string, from, to, now time.Time, dir string) error {
 	end := to.AddDate(0, 0, 1)
 	if end.After(now) {
 		end = now.Truncate(time.Minute)
 	}
 	c := &collector{p: p, ns: ns}
-	cf := c.context(ctx, install, from, to, end)
+	cf := c.context(ctx, install, release, chart, from, to, end)
 	if c.lastErr != nil {
 		return c.lastErr
 	}
