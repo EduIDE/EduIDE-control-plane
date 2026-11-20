@@ -2,11 +2,13 @@ package main
 
 import (
 	"bufio"
+	"encoding/csv"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 )
 
 // identifiers are the patterns an export must not contain (brief of the usage metrics, constraint 1).
@@ -35,6 +37,9 @@ func checkDir(dir string) ([]string, error) {
 			return err
 		}
 		defer func() { _ = fh.Close() }()
+		if filepath.Base(path) == "weekly.csv" {
+			found = append(found, checkCells(path)...)
+		}
 		sc := bufio.NewScanner(fh)
 		sc.Buffer(make([]byte, 1<<20), 1<<24)
 		for n := 1; sc.Scan(); n++ {
@@ -47,4 +52,52 @@ func checkDir(dir string) ([]string, error) {
 		return sc.Err()
 	})
 	return found, err
+}
+
+// noCountMetrics are not per-session figures; their rows have no count and need none.
+var noCountMetrics = map[string]bool{"pool_slot_hours": true, "pool_empty_hours": true, "restarts": true, "oom_kills": true}
+
+// distColumns must be empty in a small cell.
+var distColumns = []string{"value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s"}
+
+// checkCells verifies the small-cell rule of a weekly.csv: below 10 sessions only the count may be filled and suppressed must be true.
+func checkCells(path string) []string {
+	fh, err := os.Open(path) //nolint:gosec // path comes from walking the directory the user named
+	if err != nil {
+		return []string{fmt.Sprintf("%s: %v", path, err)}
+	}
+	defer func() { _ = fh.Close() }()
+	recs, err := csv.NewReader(fh).ReadAll()
+	if err != nil || len(recs) == 0 {
+		return []string{fmt.Sprintf("%s: cannot read the CSV", path)}
+	}
+	col := map[string]int{}
+	for i, h := range recs[0] {
+		col[h] = i
+	}
+	var out []string
+	for n, r := range recs[1:] {
+		get := func(c string) string { return r[col[c]] }
+		fail := func(why string) { out = append(out, fmt.Sprintf("%s:%d: small-cell rule: %s", path, n+2, why)) }
+		count := get("count")
+		if count == "" {
+			if !noCountMetrics[get("metric")] && get("suppressed") != "true" {
+				fail("row without a count is not suppressed")
+			}
+			continue
+		}
+		v, err := strconv.ParseFloat(count, 64)
+		if err != nil || v >= minCell {
+			continue
+		}
+		if get("suppressed") != "true" {
+			fail("count below 10 but suppressed is not true")
+		}
+		for _, c := range distColumns {
+			if get(c) != "" {
+				fail("count below 10 but " + c + " is filled")
+			}
+		}
+	}
+	return out
 }

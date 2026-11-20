@@ -25,12 +25,17 @@ func s(v string, labels string) string {
 
 // fakeProm answers a query with the first canned response whose key is a substring of the expression;
 // everything else is an empty vector. It records the paths it was asked for.
+// queries holds every expression the fake saw; tests reset it.
+var queries []string
+
 func fakeProm(t *testing.T, canned map[string]string) (*httptest.Server, *[]string) {
 	t.Helper()
+	queries = nil
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.Method+" "+r.URL.Path)
 		q := r.URL.Query().Get("query")
+		queries = append(queries, q)
 		for k, v := range canned {
 			if strings.Contains(q, k) {
 				_, _ = w.Write([]byte(v))
@@ -57,7 +62,7 @@ func runExport(t *testing.T, canned map[string]string) (string, *[]string) {
 	dir := t.TempDir()
 	from := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
 	to := time.Date(2026, 11, 15, 0, 0, 0, 0, time.UTC)
-	if err := export(context.Background(), p, "eduide-test", "test", "3.0.0", "0.2.1", from, to, to.AddDate(0, 0, 3), dir); err != nil {
+	if err := export(context.Background(), p, "eduide-test", "test", "3.0.0", "0.2.1", from, to, [2]time.Time{from, to}, false, to.AddDate(0, 0, 3), dir); err != nil {
 		t.Fatal(err)
 	}
 	return dir, paths
@@ -188,7 +193,7 @@ func TestSuppress(t *testing.T) {
 	for _, tc := range []struct {
 		count float64
 		want  bool
-	}{{9, true}, {10, false}, {0, true}, {math.NaN(), false}} {
+	}{{9, true}, {10, false}, {0, true}, {math.NaN(), true}} {
 		r := newRow(w, "startup", "t", "eager", "seconds")
 		r.Count, r.P50, r.Max20s = tc.count, 1, 2
 		r.suppress()
@@ -262,5 +267,150 @@ func TestTemplateTimeoutsInContext(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "context.json"))
 	if !strings.Contains(string(b), `"kind": "idle"`) {
 		t.Fatalf("timeouts missing: %s", b)
+	}
+}
+
+func TestSuppressMissingCountAndExemptRows(t *testing.T) {
+	w := window{time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 16, 0, 0, 0, 0, time.UTC)}
+	r := newRow(w, "running_sessions", "t", "Ready", "sessions")
+	r.P95 = 4
+	r.suppress()
+	if !r.Suppressed || !math.IsNaN(r.P95) {
+		t.Fatalf("a row without a count must be suppressed: %+v", r)
+	}
+	p := newRow(w, "pool_slot_hours", "t", "idle_ready", "slot_hours")
+	p.Value, p.noCell = 12, true
+	p.suppress()
+	if p.Suppressed || p.Value != 12 {
+		t.Fatalf("pool rows are not per-session figures: %+v", p)
+	}
+}
+
+func TestStartupSuppressesOnTheCountOfTheDistribution(t *testing.T) {
+	// 5 ready and 20 failed: 25 starts, but the quantiles would describe 5 sessions.
+	dir, _ := runExport(t, map[string]string{
+		"session_startup_seconds_count": vec(
+			s("5", `"template":"java","start_mode":"eager","result":"ready"`),
+			s("20", `"template":"java","start_mode":"eager","result":"failed"`)),
+		"session_startup_seconds_bucket": vec(bucket("java", "eager", "1", "5"), bucket("java", "eager", "+Inf", "5")),
+	})
+	r := find(readRows(t, dir), "startup", "java", "eager")
+	if r == nil || r["count"] != "25" || r["suppressed"] != "true" || r["p50"] != "" || r["p95"] != "" || r["max"] != "" || r["failure_share"] != "0.8" {
+		t.Fatalf("row: %v", r)
+	}
+}
+
+func TestExactCountsAreNotRounded(t *testing.T) {
+	dir, _ := runExport(t, map[string]string{"session_startup_seconds_count": vec(s("9.4", `"template":"java","start_mode":"eager","result":"ready"`))})
+	r := find(readRows(t, dir), "startup", "java", "eager")
+	if r == nil || r["count"] != "9.4" || r["suppressed"] != "true" {
+		t.Fatalf("a count below 10 must stay below 10: %v", r)
+	}
+}
+
+func TestNoIncreaseAndOperatorPodsAreFolded(t *testing.T) {
+	runExport(t, map[string]string{"600 / max": vec(s("10", ""))})
+	if len(queries) == 0 {
+		t.Fatal("no queries")
+	}
+	var pool, running, scrape, gaps bool
+	for _, q := range queries {
+		if strings.Contains(q, "increase(") || strings.Contains(q, "avg_over_time") || strings.Contains(q, "rate(") {
+			t.Errorf("extrapolating function in %s", q)
+		}
+		switch {
+		case strings.Contains(q, "eduide_pool_instances"):
+			// Two operator pods report the gauge: fold them with max before anything is summed or integrated over time.
+			pool = true
+			if !strings.Contains(q, "max by (pool, state) (eduide_pool_instances") {
+				t.Errorf("pool query does not dedupe the operator pods: %s", q)
+			}
+		case strings.Contains(q, "eduide_sessions"):
+			running = true
+			if !strings.Contains(q, "max by (template) (eduide_sessions") || !strings.Contains(q, "max_over_time(") {
+				t.Errorf("running sessions query does not dedupe or take the minute maximum: %s", q)
+			}
+		case strings.Contains(q, "up{"):
+			if !strings.Contains(q, `container=~"operator|service|authz"`) {
+				t.Errorf("up query is not limited to the control plane: %s", q)
+			}
+			scrape = scrape || strings.Contains(q, "600 /")
+			gaps = gaps || strings.Contains(q, "min(up")
+		}
+	}
+	if !pool || !running || !scrape || !gaps {
+		t.Errorf("queries missing: pool=%v running=%v scrape=%v gaps=%v", pool, running, scrape, gaps)
+	}
+}
+
+func TestZeroLaunchesWriteARowAndRunningCarriesTheLaunchCount(t *testing.T) {
+	dir, _ := runExport(t, map[string]string{
+		"eduide_launch_total": vec(s("0", `"template":"java"`)),
+		"eduide_sessions":     vec(s("4", `"template":"java"`)),
+	})
+	rows := readRows(t, dir)
+	l := find(rows, "launches", "java", "created")
+	if l == nil || l["count"] != "0" {
+		t.Fatalf("no launches must be a 0 row, not a missing row: %v", l)
+	}
+	r := find(rows, "running_sessions", "java", "Ready")
+	if r == nil || r["count"] != "0" || r["suppressed"] != "true" || r["max"] != "" {
+		t.Fatalf("running sessions row: %v", r)
+	}
+}
+
+func TestRunningWithoutLaunchSeriesIsSuppressed(t *testing.T) {
+	dir, _ := runExport(t, map[string]string{"eduide_sessions": vec(s("40", `"template":"java"`))})
+	r := find(readRows(t, dir), "running_sessions", "java", "Ready")
+	if r == nil || r["count"] != "" || r["suppressed"] != "true" || r["p95"] != "" {
+		t.Fatalf("running sessions row: %v", r)
+	}
+}
+
+func TestOnlyCompleteWeeksAndContextWithoutNamespace(t *testing.T) {
+	srv, _ := fakeProm(t, nil)
+	p, _ := newProm(srv.URL)
+	from := time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC) // Wednesday of the second week
+	dir := t.TempDir()
+	if err := export(context.Background(), p, "eduide-test", "test", "3.0.0", "0.2.1", from, to, [2]time.Time{from, to}, false, now, dir); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(filepath.Join(dir, "context.json"))
+	var cf struct {
+		Period struct {
+			To      string   `json:"to"`
+			Dropped []string `json:"dropped_incomplete_weeks"`
+		} `json:"period"`
+	}
+	if err := json.Unmarshal(b, &cf); err != nil {
+		t.Fatal(err)
+	}
+	if len(cf.Period.Dropped) != 1 || cf.Period.Dropped[0] != "2026-W47" {
+		t.Fatalf("incomplete week not dropped: %s", b)
+	}
+	if strings.Contains(string(b), `"namespace"`) || strings.Contains(string(b), "eduide-test") {
+		t.Fatalf("context.json names the namespace: %s", b)
+	}
+	if !strings.Contains(string(b), "Only complete ISO weeks") {
+		t.Fatalf("context.json does not say how the period is rounded: %s", b)
+	}
+}
+
+func TestWeekStart(t *testing.T) {
+	for in, want := range map[string]string{"2026-11-09": "2026-11-09", "2026-11-14": "2026-11-09", "2026-11-15": "2026-11-09", "2026-11-16": "2026-11-16"} {
+		d, _ := time.Parse("2006-01-02", in)
+		if got := weekStart(d).Format("2006-01-02"); got != want {
+			t.Errorf("weekStart(%s) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestMissingSeriesAreListedPerWeek(t *testing.T) {
+	dir, _ := runExport(t, nil)
+	b, _ := os.ReadFile(filepath.Join(dir, "context.json"))
+	if !strings.Contains(string(b), `"missing_series_by_week"`) || !strings.Contains(string(b), `"2026-W46"`) {
+		t.Fatalf("missing series are not listed per week: %s", b)
 	}
 }

@@ -35,6 +35,7 @@ func run(args []string) error {
 	release := fs.String("release", "", "EduIDE release of the installation, for example 3.0.0 (required)")
 	chart := fs.String("chart-version", "", "version of the eduide-control-plane chart (required)")
 	out := fs.String("out", "", "output directory")
+	partial := fs.Bool("partial-weeks", false, "also export the incomplete current week (rows carry days below 7)")
 	check := fs.String("check", "", "scan this directory for identifiers and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -71,15 +72,18 @@ func run(args []string) error {
 	if from.After(to) {
 		return fmt.Errorf("--from is after --to")
 	}
+	reqFrom, reqTo := from, to
+	from, to = weekStart(from), weekStart(to).AddDate(0, 0, 6)
 	p, err := newProm(*promURL)
 	if err != nil {
 		return err
 	}
+	period := [2]time.Time{reqFrom, reqTo}
 	dir := filepath.Join(*out, *install, from.Format("2006-01-02")+"_"+to.Format("2006-01-02"))
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the export is meant to be shared
 		return err
 	}
-	return export(context.Background(), p, *ns, *install, *release, *chart, from, to, now, dir)
+	return export(context.Background(), p, *ns, *install, *release, *chart, from, to, period, *partial, now, dir)
 }
 
 func parseDay(s string, def time.Time) (time.Time, error) {
@@ -89,23 +93,48 @@ func parseDay(s string, def time.Time) (time.Time, error) {
 	return time.Parse("2006-01-02", s)
 }
 
-func export(ctx context.Context, p *prom, ns, install, release, chart string, from, to, now time.Time, dir string) error {
+func export(ctx context.Context, p *prom, ns, install, release, chart string, from, to time.Time, period [2]time.Time, partial bool, now time.Time, dir string) error {
 	end := to.AddDate(0, 0, 1)
-	if end.After(now) {
-		end = now.Truncate(time.Minute)
+	var dropped []string
+	ws := weeks(from, end)
+	if partial {
+		if end.After(now) {
+			end = now.Truncate(time.Minute)
+			ws = weeks(from, end)
+		}
+	} else {
+		var whole []window
+		for _, w := range ws {
+			if w.end.After(now) {
+				dropped = append(dropped, w.label())
+				continue
+			}
+			whole = append(whole, w)
+		}
+		ws = whole
+	}
+	if len(ws) > 0 {
+		end = ws[len(ws)-1].end
 	}
 	c := &collector{p: p, ns: ns}
 	cf := c.context(ctx, install, release, chart, from, to, end)
+	cf.Period.RequestedFrom, cf.Period.RequestedTo = period[0].Format("2006-01-02"), period[1].Format("2006-01-02")
+	cf.Period.Note = "Only complete ISO weeks are exported (Monday 00:00 to Sunday 24:00 UTC); the requested days are rounded to week boundaries."
+	if partial {
+		cf.Period.Note = "Weeks are ISO weeks (Monday 00:00 UTC); with partial weeks the last week may be incomplete, see days in weekly.csv."
+	}
+	cf.Period.DroppedWeeks = dropped
 	if c.lastErr != nil {
 		return c.lastErr
 	}
-	for _, w := range weeks(from, end) {
+	for _, w := range ws {
 		c.collectWeek(ctx, w)
 	}
 	if c.lastErr != nil {
 		return c.lastErr
 	}
 	cf.MissingSeries = p.missing()
+	cf.MissingByWeek = p.missingByWeek()
 	if err := writeCSV(filepath.Join(dir, "weekly.csv"), c.rows); err != nil {
 		return err
 	}
@@ -117,4 +146,9 @@ func export(ctx context.Context, p *prom, ns, install, release, chart string, fr
 	}
 	fmt.Printf("wrote %d rows to %s (missing series: %d)\n", len(c.rows), dir, len(cf.MissingSeries))
 	return nil
+}
+
+// weekStart is the Monday 00:00 UTC of the ISO week of t.
+func weekStart(t time.Time) time.Time {
+	return t.AddDate(0, 0, -((int(t.Weekday()) + 6) % 7))
 }

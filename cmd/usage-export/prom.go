@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,9 @@ type prom struct {
 	client *http.Client
 	found  map[string]int
 	order  []string
+	// week names the window that is being collected; queries with no series are recorded per week.
+	week         string
+	missingWeeks map[string]map[string]bool
 }
 
 func newProm(base string) (*prom, error) {
@@ -31,7 +35,7 @@ func newProm(base string) (*prom, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, fmt.Errorf("--prometheus must be an http(s) URL, got %q", base)
 	}
-	return &prom{base: strings.TrimRight(base, "/"), client: &http.Client{Timeout: 2 * time.Minute}, found: map[string]int{}}, nil
+	return &prom{base: strings.TrimRight(base, "/"), client: &http.Client{Timeout: 2 * time.Minute}, found: map[string]int{}, missingWeeks: map[string]map[string]bool{}}, nil
 }
 
 // query evaluates expr at time at. The id names the allowlist entry in context.json.
@@ -75,6 +79,12 @@ func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]samp
 		p.order = append(p.order, id)
 	}
 	p.found[id] += len(out)
+	if len(out) == 0 && p.week != "" {
+		if p.missingWeeks[p.week] == nil {
+			p.missingWeeks[p.week] = map[string]bool{}
+		}
+		p.missingWeeks[p.week][id] = true
+	}
 	return out, nil
 }
 
@@ -85,6 +95,18 @@ func (p *prom) missing() []string {
 		if p.found[id] == 0 {
 			out = append(out, id)
 		}
+	}
+	return out
+}
+
+// missingByWeek lists, per ISO week, the query ids that returned no series in that week.
+func (p *prom) missingByWeek() map[string][]string {
+	out := map[string][]string{}
+	for w, ids := range p.missingWeeks {
+		for id := range ids {
+			out[w] = append(out[w], id)
+		}
+		sort.Strings(out[w])
 	}
 	return out
 }

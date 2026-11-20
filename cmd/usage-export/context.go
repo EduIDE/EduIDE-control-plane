@@ -38,14 +38,19 @@ type dataGap struct {
 type contextFile struct {
 	SchemaVersion int    `json:"schema_version"`
 	Installation  string `json:"installation"`
-	Namespace     string `json:"namespace"`
 	Release       string `json:"release"`
 	ChartVersion  string `json:"chart_version"`
 	Period        struct {
-		From string `json:"from"`
-		To   string `json:"to"`
+		From          string   `json:"from"`
+		To            string   `json:"to"`
+		RequestedFrom string   `json:"requested_from"`
+		RequestedTo   string   `json:"requested_to"`
+		Note          string   `json:"note"`
+		DroppedWeeks  []string `json:"dropped_incomplete_weeks"`
 	} `json:"period"`
 	ScrapeIntervalSeconds *float64 `json:"scrape_interval_seconds"`
+	ScrapeIntervalMin     *float64 `json:"scrape_interval_min_seconds"`
+	ScrapeIntervalMax     *float64 `json:"scrape_interval_max_seconds"`
 	LaunchWindows         struct {
 		StepSeconds      float64 `json:"step_seconds"`
 		Window20Resolved bool    `json:"window_20s_resolved"`
@@ -61,9 +66,10 @@ type contextFile struct {
 		AllocatableMemoryBytes *float64 `json:"allocatable_memory_bytes"`
 		Scope                  string   `json:"scope"`
 	} `json:"nodes"`
-	DataGaps      []dataGap `json:"data_gaps"`
-	MissingSeries []string  `json:"missing_series"`
-	NotCollected  []string  `json:"not_collected"`
+	DataGaps      []dataGap           `json:"data_gaps"`
+	MissingSeries []string            `json:"missing_series"`
+	MissingByWeek map[string][]string `json:"missing_series_by_week"`
+	NotCollected  []string            `json:"not_collected"`
 }
 
 func first(v []sample) *float64 {
@@ -74,22 +80,34 @@ func first(v []sample) *float64 {
 }
 
 // scrapeInterval infers the interval from the number of samples `up` has in ten minutes.
-func (c *collector) scrapeInterval(ctx context.Context, at time.Time) *float64 {
-	v := first(c.q(ctx, "ctx_scrape_interval", fmt.Sprintf(`600 / max(count_over_time(up%s[10m]))`, c.sel("")), at))
-	if v == nil {
-		return nil
+func (c *collector) scrapeInterval(ctx context.Context, from, at time.Time) (med, lo, hi *float64) {
+	// The interval of the best-sampled control plane target every hour of the period; the median decides the resolution.
+	inner := fmt.Sprintf(`(600 / max(count_over_time(up%s[10m])))`, c.controlPlane())
+	span := int(at.Sub(from).Seconds())
+	get := func(id, fn string) *float64 {
+		v := first(c.q(ctx, id, fmt.Sprintf(fn, inner, span), at))
+		if v == nil {
+			return nil
+		}
+		r := math.Round(*v)
+		return &r
 	}
-	r := math.Round(*v)
-	c.scrape = time.Duration(r) * time.Second
-	return &r
+	med = get("ctx_scrape_interval", "quantile_over_time(0.5, %s[%ds:1h])")
+	lo = get("ctx_scrape_interval_min", "min_over_time(%s[%ds:1h])")
+	hi = get("ctx_scrape_interval_max", "max_over_time(%s[%ds:1h])")
+	if med != nil {
+		c.scrape = time.Duration(*med) * time.Second
+	}
+	return
 }
 
 func (c *collector) context(ctx context.Context, install, release, chart string, from, to time.Time, end time.Time) contextFile {
 	cf := contextFile{Timeouts: []timeout{}, PoolSizes: []poolSize{}, TemplateResources: []templateResource{}}
 	at := end
-	cf.SchemaVersion, cf.Installation, cf.Namespace, cf.Release, cf.ChartVersion = schemaVersion, install, c.ns, release, chart
+	cf.SchemaVersion, cf.Installation, cf.Release, cf.ChartVersion = schemaVersion, install, release, chart
 	cf.Period.From, cf.Period.To = from.Format("2006-01-02"), to.Format("2006-01-02")
-	cf.ScrapeIntervalSeconds = c.scrapeInterval(ctx, at)
+	cf.Period.DroppedWeeks = []string{}
+	cf.ScrapeIntervalSeconds, cf.ScrapeIntervalMin, cf.ScrapeIntervalMax = c.scrapeInterval(ctx, from, at)
 	cf.LaunchWindows.StepSeconds = c.scrape.Seconds()
 	cf.LaunchWindows.Window20Resolved, cf.LaunchWindows.Window60Resolved = c.resolves(20*time.Second), c.resolves(60*time.Second)
 	cf.LaunchWindows.Method = "max_over_time of increase(eduide_launch_total{result=created}[window]) evaluated every scrape interval; a window needs at least two scrapes, otherwise the column stays empty"
@@ -139,7 +157,7 @@ func (c *collector) context(ctx context.Context, install, release, chart string,
 	return cf
 }
 
-// gaps reports the days with five or more minutes without any scraped target of the namespace, or with a target that is down.
+// gaps reports the days with five or more minutes without any scraped control plane target, or with a target that is down.
 func (c *collector) gaps(ctx context.Context, from, end time.Time) []dataGap {
 	out := []dataGap{}
 	for day := from; day.Before(end); day = day.AddDate(0, 0, 1) {
@@ -148,8 +166,8 @@ func (c *collector) gaps(ctx context.Context, from, end time.Time) []dataGap {
 			next = end
 		}
 		mins := int(next.Sub(day).Minutes())
-		up := first(c.q(ctx, "ctx_up_samples", fmt.Sprintf(`count_over_time(min(up%s)[%ds:1m])`, c.sel(""), int(next.Sub(day).Seconds())), next))
-		down := first(c.q(ctx, "ctx_up_down", fmt.Sprintf(`count_over_time((min(up%s) == 0)[%ds:1m])`, c.sel(""), int(next.Sub(day).Seconds())), next))
+		up := first(c.q(ctx, "ctx_up_samples", fmt.Sprintf(`count_over_time(min(up%s)[%ds:1m])`, c.controlPlane(), int(next.Sub(day).Seconds())), next))
+		down := first(c.q(ctx, "ctx_up_down", fmt.Sprintf(`count_over_time((min(up%s) == 0)[%ds:1m])`, c.controlPlane(), int(next.Sub(day).Seconds())), next))
 		g := dataGap{Date: day.Format("2006-01-02"), MinutesWithoutData: mins}
 		if up != nil {
 			g.MinutesWithoutData = int(math.Max(0, float64(mins)-*up))

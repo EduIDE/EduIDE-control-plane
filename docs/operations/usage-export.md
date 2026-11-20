@@ -28,7 +28,10 @@ It starts a little after the service received the request and ends before the br
 
 `charts/eduide-control-plane/files/usage-rules.yaml` is part of the PrometheusRule of the chart (`monitoring.rules.enabled`).
 All series start with `eduide:usage:` and carry the labels `namespace` and `template` (or `namespace` alone), never a pod, instance, session or owner label.
-Rules with `increase()[5m]` run in a 5 minute group, so their values do not overlap and weekly sums are exact.
+Counts are exact counter deltas, not `increase()`: `increase()` extrapolates to the window edges and drops the first increment of every new series (a counter appears at 1 on its first `Inc`).
+A delta is the last value in the window minus the value before the window; a series that starts inside the window, or restarts at zero, counts from zero.
+A rule with a 5 minute delta runs in a 5 minute group, so consecutive windows tile without overlap.
+Gauges that both operator pods report during a rollout are folded with `max` over the pods, never summed.
 
 | Id | Recorded series |
 |---|---|
@@ -54,6 +57,18 @@ metricLabelsAllowlist:
   - pods=[eduide.github.io/state,eduide.github.io/template]
 ```
 
+Since 2026-11-20 the allowlist is active on stud, parma and aet.
+It was added by hand, not through a Helm upgrade, because the values of the rancher-monitoring release differ from the live Prometheus resources and an upgrade would reset them:
+
+```sh
+kubectl -n cattle-monitoring-system patch deploy rancher-monitoring-kube-state-metrics --type=json \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--metric-labels-allowlist=pods=[eduide.github.io/state,eduide.github.io/template]"}]'
+```
+
+The deployment carries the annotation `eduide.github.io/note`.
+A rancher-monitoring upgrade drops the flag: add it again, or set `kube-state-metrics.metricLabelsAllowlist` in the Rancher app values.
+On stud and parma `kube_pod_labels` carries only these two labels.
+
 Without the labels the join returns nothing.
 The `_all` rules still record memory, CPU and pod count per namespace over all `ide-*` pods without the split.
 The export uses the split rows when they exist and the fallback rows otherwise (template `all`, dimension `all`).
@@ -73,7 +88,8 @@ go run ./cmd/usage-export --check ./exports
 | `--prometheus` | Base URL; the command sends `GET /api/v1/query` only |
 | `--namespace` | Namespace of the control plane and the session pods |
 | `--installation` | Name in the output path (a-z, 0-9, `-`) |
-| `--from`, `--to` | First and last day, inclusive, UTC (default: the last 7 days) |
+| `--from`, `--to` | First and last day, inclusive, UTC (default: the last 7 days). The command rounds `--from` down to a Monday and `--to` up to a Sunday and exports only complete ISO weeks (Monday 00:00 to Sunday 24:00 UTC); weeks that end after now are dropped and listed in `context.json` |
+| `--partial-weeks` | Also export the incomplete current week; its rows carry `days` below 7 |
 | `--release`, `--chart-version` | EduIDE release and chart version of the installation; required, written to `context.json` |
 | `--out` | Output directory; the command writes `<out>/<installation>/<from>_<to>/` |
 | `--check DIR` | Scan `DIR` for e-mail addresses, IPv4 and IPv6 addresses, `ide-` pod names, `s-` session names, hex strings of 16 characters or more and host names; exit code 1 on a finding |
@@ -89,8 +105,17 @@ The output directory holds three files:
 Rules the command enforces:
 
 - A fixed list of queries in `cmd/usage-export`; no PromQL comes from flags or files.
-- A cell with fewer than 10 sessions carries its count and `suppressed=true`, no distribution.
-- The 20 s and 60 s launch windows are derived from `eduide_launch_total` at the scrape resolution: a window needs two scrapes. With a 30 s interval the 20 s column stays empty and `context.json` says so.
+- The command reads the raw series, not the recorded ones (only M5 and M7 read recorded series, because pod series are not exported). It must therefore run within the retention of Prometheus. The recording rules serve Grafana and keep the pod-level view out of the export.
+- Counts are exact counter deltas (see above); the maxima of the histograms come from the integer bucket deltas, so a bucket counts only when its count grows.
+- `peak_hour` and `peak_minute` are clock-aligned buckets. `max_20s` and `max_60s` slide with the scrape interval and are cut at scrape samples, so a window spans between its length and its length plus one scrape interval. A window needs two scrapes, otherwise its column stays empty.
+- A series that is first seen with a value above zero counts from zero. That holds for pods, which start their counters at zero. A scrape gap longer than 15 minutes can put the whole count of a series into one window; `data_gaps` lists such gaps.
+- Running sessions are the per-minute maximum of the gauge, with the operator pods folded by `max`; their `count` is the launch count of the template in the week.
+- The scrape interval comes from the control plane targets (operator, service, authz) over the whole period; `context.json` holds the median, minimum and maximum. `data_gaps` looks at the same targets.
+- A cell with fewer than 10 sessions carries its count and `suppressed=true`, no distribution. A row without a count is suppressed as well, except pool hours and restarts, which are not per-session figures. For `startup` the quantiles come from ready sessions, so they are also suppressed when fewer than 10 ready sessions stand behind them, even when the count including failed sessions is larger.
+- A week without a series gets a row with count 0 when the series exists, and `missing_series_by_week` lists the ids that returned nothing that week.
+- `--check` also verifies the small-cell rule in `weekly.csv`.
+- Template names are exported as they are. If an installation has one template per course, the names reveal the course; rename or merge them before sharing.
+- The 20 s and 60 s launch windows are derived from `eduide_launch_total` at the scrape resolution. With a 30 s interval the 20 s column stays empty and `context.json` says so.
 - A series that does not exist yields no rows and appears under `missing_series`.
 - The same period gives the same files while Prometheus retains the data.
 
@@ -100,14 +125,15 @@ The node figures cover all nodes that kube-state-metrics knows, not only the one
 
 ## Retention
 
-| Installation | Retention | Global scrape interval | Consequence |
-|---|---|---|---|
-| stud | 90 days | 10 s, but the PodMonitor of the chart set 30 s | Run the export at least monthly; set `monitoring.podMonitor.interval: 10s` for 20 s windows |
-| aet (production) | 90 days | 30 s | At least monthly; 20 s windows are not resolvable unless the PodMonitor sets 10s |
-| parma (Bonn) | 365 days | 10 s | Quarterly is enough |
+| Installation | Retention | Global scrape interval | kube-state-metrics pod labels | Consequence |
+|---|---|---|---|---|
+| stud | 90 days | 10 s, but the PodMonitor of the chart set 30 s | Allowlist set by hand on 2026-11-20 | Run the export at least monthly; set `monitoring.podMonitor.interval: 10s` for 20 s windows |
+| aet (production) | 90 days | 30 s | Allowlist set by hand on 2026-11-20 | At least monthly; 20 s windows are not resolvable unless the PodMonitor sets 10s |
+| parma (Bonn) | 365 days | 10 s | Allowlist set by hand on 2026-11-20 | Quarterly is enough |
 
 All three run rancher-monitoring.
-None sets the kube-state-metrics pod label allowlist today, so M5 and the per-template restart rules stay empty until you add it (see above); the `_all` fallback rows work.
+The allowlist is a manual patch: a rancher-monitoring upgrade drops it (see above).
+Rules and exports that need the labels give empty M5 rows after such an upgrade until the flag is back.
 
 A lost month cannot be rebuilt, because the raw series expire.
 Keep the exported directories in a Git repository or in the replication package.

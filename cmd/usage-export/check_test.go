@@ -52,3 +52,34 @@ func TestRunCheckFailsOnFindings(t *testing.T) {
 		t.Fatal("check passed on an e-mail address")
 	}
 }
+
+func TestCheckSmallCells(t *testing.T) {
+	head := strings.Join(csvHeader, ",") + "\n"
+	for name, tc := range map[string]struct {
+		row string
+		bad bool
+	}{
+		"suppressed":          {"2026-W46,2026-11-09,7,startup,java,eager,seconds,3,true,,,,,,,,,", false},
+		"large cell":          {"2026-W46,2026-11-09,7,startup,java,eager,seconds,12,false,,1.5,2,3,,,,,", false},
+		"small, not flagged":  {"2026-W46,2026-11-09,7,startup,java,eager,seconds,3,false,,,,,,,,,", true},
+		"small, p95 filled":   {"2026-W46,2026-11-09,7,startup,java,eager,seconds,3,true,,,2,,,,,,", true},
+		"small, peak filled":  {"2026-W46,2026-11-09,7,launches,java,created,launches,3,true,,,,,,,5,,", true},
+		"no count, not supp.": {"2026-W46,2026-11-09,7,running_sessions,java,Ready,sessions,,false,,,3,,,,,,", true},
+		"no count, supp.":     {"2026-W46,2026-11-09,7,running_sessions,java,Ready,sessions,,true,,,,,,,,,", false},
+		"pool row":            {"2026-W46,2026-11-09,7,pool_slot_hours,java,idle_ready,slot_hours,,false,12,,,,,,,,", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "weekly.csv"), []byte(head+tc.row+"\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			found, err := checkDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (len(found) > 0) != tc.bad {
+				t.Fatalf("findings %v", found)
+			}
+		})
+	}
+}
