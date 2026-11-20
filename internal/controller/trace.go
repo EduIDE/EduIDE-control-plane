@@ -112,6 +112,7 @@ func (r *sessionReconciler) forget(key types.NamespacedName) {
 	}
 	r.exported.Delete(key)
 	r.failedWritten.Delete(key)
+	r.fellBack.Delete(key)
 }
 
 // failSpan marks a span as failed with the stable error code. Messages stay out: they may name launch data keys.
@@ -238,7 +239,7 @@ func (r *sessionReconciler) emit(ctx context.Context, s *v1.IDESession, tmpl *v1
 		}
 		r.tag(span, s, tmpl, pod)
 		span.End(trace.WithTimestamp(ph.end))
-		telemetry.SessionPhase.WithLabelValues(ph.metric, strategyName(s.Status.StartStrategy)).Observe(ph.end.Sub(ph.start).Seconds())
+		telemetry.SessionPhase.WithLabelValues(ph.metric, strategyName(s.Status.StartStrategy), s.Spec.TemplateRef).Observe(ph.end.Sub(ph.start).Seconds())
 	}
 }
 
