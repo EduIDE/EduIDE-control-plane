@@ -4,22 +4,27 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-21
+
 ### Added
 
+- `usage-export`: command that writes aggregated, anonymous usage data (weekly CSV, context, README; schema version 2) from Prometheus, with a small-cell rule and an identifier check (`docs/operations/usage-export.md`)
+- Recording rules `eduide:usage:*` in the control plane chart, rendered with `monitoring.rules.enabled`; `usage-export` and the board read only these series
 - Grafana board "EduIDE usage" with one row per usage metric M1 to M7, shipped in the dashboard ConfigMap (`monitoring.dashboard.enabled`)
-- Recording rules for restarts and OOM kills of IDE pods (`eduide:usage:ide_restarts_5m`, `eduide:usage:ide_oom_kills_5m`) and installation-wide launch peaks and running sessions
+- Usage rules for restarts and OOM kills of IDE pods (`eduide:usage:ide_restarts_5m`, `eduide:usage:ide_oom_kills_5m`) and installation-wide launch peaks and running sessions
 
 ### Changed
 
-- `usage-export` reads only the recording rules `eduide:usage:*` for its figures, so the export and the board agree; schema version 2 drops the column `gap_steps` (gaps stay in `data_gaps`)
 - CI runs the promtool unit tests of the recording rules
+
+### Fixed
+
+- Usage rules: a kube-state-metrics restart no longer counts every IDE container restart again; running sessions record 0 for templates without Ready sessions, so weekly quantiles include quiet minutes; the memory and CPU split no longer fails while two kube-state-metrics replicas disagree on the state of an instance
 
 ## [0.2.2] - 2026-11-20
 
 ### Added
 
-- `usage-export`: command that writes aggregated, anonymous usage data (weekly CSV, context, README) from Prometheus, with a small-cell rule and an identifier check (`docs/operations/usage-export.md`)
-- Recording rules `eduide:usage:*` in the control plane chart, rendered with `monitoring.rules.enabled`
 - Usage metrics: label `start_mode` (`eager`, `lazy`, `lazy_fallback`, `none`) on `eduide_session_startup_seconds`, label `template` on `eduide_session_phase_seconds`, finer startup buckets, and the new metrics `eduide_pool_min_idle`, `eduide_pool_max_instances`, `eduide_session_lifetime_seconds` and `eduide_template_resources`, `eduide_template_timeout_seconds`
 
 ### Fixed

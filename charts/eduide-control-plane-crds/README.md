@@ -9,7 +9,7 @@ Never edit them here.
 Install this chart once per cluster, before any `eduide-control-plane` release:
 
 ```sh
-helm install eduide-control-plane-crds oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-control-plane-crds --version 0.2.2
+helm install eduide-control-plane-crds oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-control-plane-crds --version 0.2.3
 ```
 
 Operators of different versions run side by side in one cluster (one per deployment namespace).
