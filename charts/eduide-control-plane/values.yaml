@@ -183,7 +183,8 @@ monitoring:
   # PodMonitor (monitoring.coreos.com/v1) for all components.
   podMonitor:
     enabled: false
-    interval: 30s
+    # 10s resolves the 20 s launch window of the usage export (needs two scrapes inside the window).
+    interval: 10s
     labels: {}
   # PrometheusRule with alerts.
   rules:

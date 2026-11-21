@@ -8,6 +8,8 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Added
 
+- `usage-export`: command that writes aggregated, anonymous usage data (weekly CSV, context, README) from Prometheus, with a small-cell rule and an identifier check (`docs/operations/usage-export.md`)
+- Recording rules `eduide:usage:*` in the control plane chart, rendered with `monitoring.rules.enabled`
 - Usage metrics: label `start_mode` (`eager`, `lazy`, `lazy_fallback`, `none`) on `eduide_session_startup_seconds`, label `template` on `eduide_session_phase_seconds`, finer startup buckets, and the new metrics `eduide_pool_min_idle`, `eduide_pool_max_instances`, `eduide_session_lifetime_seconds` and `eduide_template_resources`, `eduide_template_timeout_seconds`
 
 ### Fixed
