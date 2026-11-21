@@ -111,7 +111,7 @@ func (c *collector) context(ctx context.Context, install, release, chart string,
 	cf.ScrapeIntervalSeconds, cf.ScrapeIntervalMin, cf.ScrapeIntervalMax = c.scrapeInterval(ctx, from, at)
 	cf.LaunchWindows.StepSeconds = c.scrape.Seconds()
 	cf.LaunchWindows.Window20Resolved, cf.LaunchWindows.Window60Resolved = c.resolves(20*time.Second), c.resolves(60*time.Second)
-	cf.LaunchWindows.Method = "sums of exact increments between raw samples of eduide_launch_total{result=created} (counter resets handled, no extrapolation); windows slide over the scrape samples; a step across a scrape gap longer than the window is left out of the peak and counted in gap_steps; a window needs at least two scrapes, otherwise the column stays empty"
+	cf.LaunchWindows.Method = "recording rules eduide:usage:launches_max_20s_in_minute and eduide:usage:launches_max_60s_in_minute: exact counter deltas of eduide_launch_total{result=created} over 20 s or 60 s, evaluated every 10 s, maximum per minute, then maximum over the week; a window needs at least two scrapes, otherwise the column stays empty"
 
 	pools := map[string]*poolSize{}
 	for _, m := range []struct{ id, name string }{{"ctx_pool_min_idle", "eduide_pool_min_idle"}, {"ctx_pool_max_instances", "eduide_pool_max_instances"}} {

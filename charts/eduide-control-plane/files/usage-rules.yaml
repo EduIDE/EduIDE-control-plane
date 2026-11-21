@@ -1,10 +1,10 @@
-# Recording rules for the usage export (docs/operations/usage-export.md).
+# Recording rules for the usage metrics (docs/operations/usage-export.md).
+# They are the only definition of the exported numbers: usage-export and the "EduIDE usage" board read these series and nothing else.
 # Every series is aggregated by namespace and template (or by namespace alone); no series carries a pod, instance, session or owner label.
 # Counts are exact counter deltas, not increase(): increase() extrapolates and drops the first increment of every new series.
 # A delta is the last value in the window minus the value before it; a series that starts inside the window, or restarts at zero, counts from zero.
+# shortcut: a counter reset inside one window loses the increments before the reset in that window; resets come only from pod restarts.
 # Rules with a 5 minute delta live in a group that evaluates every 5m, so consecutive windows tile without overlap.
-# M7 (restarts, OOM kills) has no recording rule: the export computes it from the raw kube-state-metrics counters.
-# A delta loses the increments before a counter reset inside its window; the export reads such series as raw samples, the rules do not.
 # Joins with kube_pod_labels fold the series of several kube-state-metrics replicas with max first.
 # Gauges that the operator pods both report during a rollout are folded with max, never summed over pods.
 # Recording rules get no extraLabels: an extra "namespace" label would overwrite the one the rules aggregate by.
@@ -20,11 +20,18 @@
     expr: max_over_time(sum by (namespace, template) (((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) - ((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[15m] offset 20s) * 1) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) * 0))) >= 0) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) * 1))[1m:10s])
   - record: eduide:usage:launches_max_60s_in_minute
     expr: max_over_time(sum by (namespace, template) (((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) - ((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[15m] offset 60s) * 1) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 0))) >= 0) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 1))[1m:10s])
+  # M1: the same peaks for the whole installation; a peak is not the sum of the per-template peaks
+  - record: eduide:usage:launches_max_20s_in_minute_all
+    expr: max_over_time(sum by (namespace) (((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) - ((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[15m] offset 20s) * 1) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) * 0))) >= 0) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[20s]) * 1))[1m:10s])
+  - record: eduide:usage:launches_max_60s_in_minute_all
+    expr: max_over_time(sum by (namespace) (((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) - ((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[15m] offset 60s) * 1) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 0))) >= 0) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 1))[1m:10s])
   # M1: sessions a user has claimed or started; idle pool instances are not sessions
   - record: eduide:usage:running_sessions
     expr: max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"})
   - record: eduide:usage:running_sessions_max_1m
     expr: max_over_time(max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"})[1m:10s])
+  - record: eduide:usage:running_sessions_all_max_1m
+    expr: max_over_time(sum by (namespace) (max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"}))[1m:10s])
   # M3: pool name equals template name in the chart
   - record: eduide:usage:pool_instances
     expr: max by (namespace, template, state) (label_replace(eduide_pool_instances{namespace="__NAMESPACE__"}, "template", "$1", "pool", "(.+)"))
@@ -89,9 +96,9 @@
 - name: eduide-usage-5m
   interval: 5m
   rules:
-  # M2: session preparation time per 5 minutes by start mode and result
+  # M2: session preparation time per 5 minutes by start mode and result; strategy gives the share of claims on a starting instance (M3)
   - record: eduide:usage:startup_count_5m
-    expr: sum by (namespace, template, start_mode, result) (((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
+    expr: sum by (namespace, template, start_mode, result, strategy) (((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   - record: eduide:usage:startup_bucket_5m
     expr: sum by (namespace, template, start_mode, result, le) (((last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 1))
   # M3: share of starts that found no unclaimed instance
@@ -111,3 +118,9 @@
     expr: sum by (namespace, template, reason) (((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   - record: eduide:usage:session_lifetime_bucket_5m
     expr: sum by (namespace, template, reason, le) (((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 1))
+  # M7: container restarts of IDE pods; the template comes from kube_pod_labels and stays empty without the allowlist
+  - record: eduide:usage:ide_restarts_5m
+    expr: sum by (namespace, template) (label_replace(max by (namespace, pod, container) (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1)) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}), "template", "$1", "label_eduide_github_io_template", "(.+)"))
+  # M7: the restarts whose last termination was an OOM kill
+  - record: eduide:usage:ide_oom_kills_5m
+    expr: sum by (namespace, template) (label_replace(max by (namespace, pod, container) (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1)) * on (namespace, pod, container) group_left max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{namespace="__NAMESPACE__", pod=~"ide-.*", reason="OOMKilled"}) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}), "template", "$1", "label_eduide_github_io_template", "(.+)"))

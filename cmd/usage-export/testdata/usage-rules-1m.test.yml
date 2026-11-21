@@ -1,0 +1,62 @@
+# promtool unit test of the 1m rule group of charts/eduide-control-plane/files/usage-rules.yaml (rules_test.go fills in rules.yml).
+# Samples every 10 s; 'v xN' repeats v N more times, '_' is no sample.
+rule_files: [rules.yml]
+evaluation_interval: 1m
+tests:
+- interval: 10s
+  input_series:
+  # first launch at t=300 s, two more at t=360 s: a new series counts from zero, so 3 launches, not 2
+  - series: 'eduide_launch_total{namespace="ns", result="created", template="java", pod="svc"}'
+    values: '_x29 1x5 3x60'
+  # two operator pods report the same gauges during a rollout: folded, not summed
+  - series: 'eduide_sessions{namespace="ns", phase="Ready", template="java", pod="op1"}'
+    values: '2x60'
+  - series: 'eduide_sessions{namespace="ns", phase="Ready", template="java", pod="op2"}'
+    values: '2x60'
+  - series: 'eduide_sessions{namespace="ns", phase="Ready", template="py", pod="op1"}'
+    values: '1x60'
+  - series: 'eduide_pool_instances{namespace="ns", pool="java", state="idle_ready", pod="op1"}'
+    values: '2x60'
+  - series: 'eduide_pool_instances{namespace="ns", pool="java", state="idle_ready", pod="op2"}'
+    values: '2x60'
+  - series: 'eduide_session_startup_seconds_count{namespace="ns", template="java", start_mode="eager", result="ready", strategy="warm-starting", pod="op1"}'
+    values: '_x29 1x60'
+  # two kube-state-metrics replicas: one restart pair after an OOM kill, counted once
+  - series: 'kube_pod_container_status_restarts_total{namespace="ns", pod="ide-x", container="ide", instance="k1"}'
+    values: '0x30 2x30'
+  - series: 'kube_pod_container_status_restarts_total{namespace="ns", pod="ide-x", container="ide", instance="k2"}'
+    values: '0x30 2x30'
+  - series: 'kube_pod_container_status_last_terminated_reason{namespace="ns", pod="ide-x", container="ide", reason="OOMKilled", instance="k1"}'
+    values: '0x30 1x30'
+  - series: 'kube_pod_labels{namespace="ns", pod="ide-x", instance="k1", label_eduide_github_io_template="java", label_eduide_github_io_state="claimed"}'
+    values: '1x60'
+  - series: 'kube_pod_labels{namespace="ns", pod="ide-x", instance="k2", label_eduide_github_io_template="java", label_eduide_github_io_state="claimed"}'
+    values: '1x60'
+  - series: 'container_memory_working_set_bytes{namespace="ns", pod="ide-x", container="ide"}'
+    values: '100x60'
+  promql_expr_test:
+  - expr: sum_over_time(eduide:usage:launches_per_minute[10m])
+    eval_time: 10m
+    exp_samples:
+    - labels: '{namespace="ns", template="java"}'
+      value: 3
+  - expr: max_over_time(eduide:usage:launches_max_20s_in_minute_all[10m])
+    eval_time: 10m
+    exp_samples:
+    - labels: '{namespace="ns"}'
+      value: 2
+  - expr: eduide:usage:running_sessions_all_max_1m
+    eval_time: 10m
+    exp_samples:
+    - labels: 'eduide:usage:running_sessions_all_max_1m{namespace="ns"}'
+      value: 3
+  - expr: eduide:usage:pool_instances
+    eval_time: 10m
+    exp_samples:
+    - labels: 'eduide:usage:pool_instances{namespace="ns", state="idle_ready", template="java"}'
+      value: 2
+  - expr: eduide:usage:ide_pods
+    eval_time: 10m
+    exp_samples:
+    - labels: 'eduide:usage:ide_pods{namespace="ns", state="claimed", template="java"}'
+      value: 1

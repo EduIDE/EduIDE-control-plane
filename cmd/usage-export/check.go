@@ -64,7 +64,7 @@ func exempt(metric, dimension string) bool {
 }
 
 // distColumns must be empty in a small cell.
-var distColumns = []string{"value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s", "gap_steps"}
+var distColumns = []string{"value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s"}
 
 // checkCells verifies the small-cell rule of a weekly.csv: below 10 sessions only the count may be filled and suppressed must be true.
 func checkCells(path string) []string {

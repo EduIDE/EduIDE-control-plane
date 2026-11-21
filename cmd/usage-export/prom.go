@@ -100,35 +100,6 @@ func (p *prom) query(ctx context.Context, id, expr string, at time.Time) ([]samp
 	return out, err
 }
 
-// point is one raw sample.
-type point struct{ t, v float64 }
-
-// rawSeries is one series of a range vector with its raw samples.
-type rawSeries struct {
-	labels map[string]string
-	pts    []point
-}
-
-// queryRange evaluates a range selector such as m[1h] and returns the raw samples without any extrapolation.
-func (p *prom) queryRange(ctx context.Context, id, expr string, at time.Time) ([]rawSeries, error) {
-	items, err := p.do(ctx, id, expr, at)
-	var out []rawSeries
-	for _, r := range items {
-		rs := rawSeries{labels: r.Metric}
-		for _, v := range r.Values {
-			t, _ := v[0].(float64)
-			sv, _ := v[1].(string)
-			f, err := strconv.ParseFloat(sv, 64)
-			if err != nil {
-				continue
-			}
-			rs.pts = append(rs.pts, point{t, f})
-		}
-		out = append(out, rs)
-	}
-	return out, err
-}
-
 // missing lists the query ids that never returned a series.
 func (p *prom) missing() []string {
 	out := []string{}

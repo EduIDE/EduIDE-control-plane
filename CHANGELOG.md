@@ -4,6 +4,16 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Added
+
+- Grafana board "EduIDE usage" with one row per usage metric M1 to M7, shipped in the dashboard ConfigMap (`monitoring.dashboard.enabled`)
+- Recording rules for restarts and OOM kills of IDE pods (`eduide:usage:ide_restarts_5m`, `eduide:usage:ide_oom_kills_5m`) and installation-wide launch peaks and running sessions
+
+### Changed
+
+- `usage-export` reads only the recording rules `eduide:usage:*` for its figures, so the export and the board agree; schema version 2 drops the column `gap_steps` (gaps stay in `data_gaps`)
+- CI runs the promtool unit tests of the recording rules
+
 ## [0.2.2] - 2026-11-20
 
 ### Added
