@@ -58,22 +58,6 @@ func fakePromFn(t *testing.T, fn func(q string) string) (*httptest.Server, *[]st
 	return srv, &paths
 }
 
-// weekStartUnix is Monday 2026-11-09 00:00 UTC, the first day of the test week.
-var weekStartUnix = float64(time.Date(2026, 11, 9, 0, 0, 0, 0, time.UTC).Unix())
-
-// matrix is a range vector answer with one series; points are (seconds after the week start, value).
-func matrix(labels string, pts ...[2]float64) string {
-	var vs []string
-	for _, p := range pts {
-		vs = append(vs, fmt.Sprintf(`[%f,"%v"]`, weekStartUnix+p[0], p[1]))
-	}
-	return fmt.Sprintf(`{"metric":{%s},"values":[%s]}`, labels, strings.Join(vs, ","))
-}
-
-func matrixResult(series ...string) string {
-	return `{"status":"success","data":{"resultType":"matrix","result":[` + strings.Join(series, ",") + `]}}`
-}
-
 func bucket(tpl, mode, le, v string) string {
 	return s(v, fmt.Sprintf(`"template":%q,"start_mode":%q,"le":%q`, tpl, mode, le))
 }
@@ -129,18 +113,20 @@ func TestExportEndToEnd(t *testing.T) {
 	canned := map[string]string{
 		"ctx_never": "",
 		"600 / max": vec(s("10", "")),
-		"session_startup_seconds_count": vec(
+		"startup_count_5m": vec(
 			s("30", `"template":"java","start_mode":"eager","result":"ready","strategy":"warm-ready"`),
 			s("10", `"template":"java","start_mode":"eager","result":"ready","strategy":"warm-starting"`),
 			s("2", `"template":"java","start_mode":"eager","result":"failed"`),
 			s("8", `"template":"java","start_mode":"lazy_fallback","result":"ready"`),
 			s("3", `"template":"py","start_mode":"lazy","result":"ready"`)),
-		"session_startup_seconds_bucket": vec(
+		"startup_bucket_5m": vec(
 			bucket("java", "eager", "1", "10"), bucket("java", "eager", "2", "30"), bucket("java", "eager", "+Inf", "40"),
 			bucket("java", "lazy_fallback", "10", "8"), bucket("java", "lazy_fallback", "+Inf", "8"),
 			bucket("py", "lazy", "10", "3"), bucket("py", "lazy", "+Inf", "3")),
-		"eduide_launch_total":   vec(s("50", `"template":"java"`)),
-		"eduide_pool_instances": vec(s("2", `"pool":"java","state":"idle_ready"`)),
+		"launches_per_minute": vec(s("50", `"template":"java"`)),
+		"pool_instances":      vec(s("120", `"template":"java","state":"idle_ready"`)),
+		"ide_restarts_5m":     vec(s("3", `"template":"java"`)),
+		"ide_oom_kills_5m":    vec(s("1", `"template":"java"`)),
 	}
 	dir, paths := runExport(t, canned)
 	for _, p := range *paths {
@@ -160,6 +146,18 @@ func TestExportEndToEnd(t *testing.T) {
 	ns := find(rows, "not_ready_claim_share", "java", "warm-starting")
 	if ns == nil || ns["value"] != "0.25" || ns["count"] != "40" {
 		t.Fatalf("not-ready claim share: %v", ns)
+	}
+	if l := find(rows, "launches", "java", "created"); l == nil || l["count"] != "50" || l["peak_hour"] != "50" {
+		t.Fatalf("launches: %v", l)
+	}
+	if l := find(rows, "launches", "all", "created"); l == nil || l["count"] != "50" {
+		t.Fatalf("installation-wide launches: %v", l)
+	}
+	if p := find(rows, "pool_slot_hours", "java", "idle_ready"); p == nil || p["value"] != "120" {
+		t.Fatalf("pool slot hours: %v", p)
+	}
+	if r, o := find(rows, "restarts", "java", "ide_pods"), find(rows, "oom_kills", "java", "ide_pods"); r == nil || r["value"] != "3" || o == nil || o["value"] != "1" {
+		t.Fatalf("restarts %v, oom kills %v", r, o)
 	}
 	// 8 and 3 sessions are below the small-cell limit: count only.
 	for _, k := range [][2]string{{"java", "lazy_fallback"}, {"py", "lazy"}} {
@@ -195,7 +193,8 @@ func TestExportEndToEnd(t *testing.T) {
 func TestSlowScrapeLeavesShortWindowsEmpty(t *testing.T) {
 	dir, _ := runExport(t, map[string]string{
 		"600 / max":           vec(s("30", "")),
-		"eduide_launch_total": matrixResult(matrix(`"template":"java","pod":"svc-a"`, [2]float64{-30, 0}, [2]float64{30, 5}, [2]float64{60, 12}, [2]float64{90, 50})),
+		"launches_per_minute": vec(s("50", `"template":"java"`)),
+		"launches_max_":       vec(s("12", `"template":"java"`)),
 	})
 	r := find(readRows(t, dir), "launches", "java", "created")
 	if r == nil || r["max_20s"] != "" || r["max_60s"] == "" {
@@ -267,8 +266,8 @@ func TestWriteCSV(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(got)), "\n")
 	want := []string{
 		strings.Join(csvHeader, ","),
-		"2026-W46,2026-11-09,7,startup,a,eager,seconds,3,true,,,,,,,,,,",
-		"2026-W46,2026-11-09,7,startup,b,lazy,seconds,12,false,,1.5,,,,,,,,",
+		"2026-W46,2026-11-09,7,startup,a,eager,seconds,3,true,,,,,,,,,",
+		"2026-W46,2026-11-09,7,startup,b,lazy,seconds,12,false,,1.5,,,,,,,",
 	}
 	if strings.Join(lines, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(lines, "\n"), strings.Join(want, "\n"))
@@ -315,10 +314,10 @@ func TestSuppressMissingCountAndExemptRows(t *testing.T) {
 func TestStartupSuppressesOnTheCountOfTheDistribution(t *testing.T) {
 	// 5 ready and 20 failed: 25 starts, but the quantiles would describe 5 sessions.
 	dir, _ := runExport(t, map[string]string{
-		"session_startup_seconds_count": vec(
+		"startup_count_5m": vec(
 			s("5", `"template":"java","start_mode":"eager","result":"ready"`),
 			s("20", `"template":"java","start_mode":"eager","result":"failed"`)),
-		"session_startup_seconds_bucket": vec(bucket("java", "eager", "1", "5"), bucket("java", "eager", "+Inf", "5")),
+		"startup_bucket_5m": vec(bucket("java", "eager", "1", "5"), bucket("java", "eager", "+Inf", "5")),
 	})
 	r := find(readRows(t, dir), "startup", "java", "eager")
 	if r == nil || r["count"] != "25" || r["suppressed"] != "true" || r["p50"] != "" || r["p95"] != "" || r["max"] != "" || r["failure_share"] != "0.8" {
@@ -327,36 +326,31 @@ func TestStartupSuppressesOnTheCountOfTheDistribution(t *testing.T) {
 }
 
 func TestExactCountsAreNotRounded(t *testing.T) {
-	dir, _ := runExport(t, map[string]string{"session_startup_seconds_count": vec(s("9.4", `"template":"java","start_mode":"eager","result":"ready"`))})
+	dir, _ := runExport(t, map[string]string{"startup_count_5m": vec(s("9.4", `"template":"java","start_mode":"eager","result":"ready"`))})
 	r := find(readRows(t, dir), "startup", "java", "eager")
 	if r == nil || r["count"] != "9.4" || r["suppressed"] != "true" {
 		t.Fatalf("a count below 10 must stay below 10: %v", r)
 	}
 }
 
-func TestNoIncreaseAndOperatorPodsAreFolded(t *testing.T) {
+// The usage figures come from the recording rules only; the raw series are read for the context alone.
+func TestOnlyRecordedSeriesAndNoExtrapolation(t *testing.T) {
 	runExport(t, map[string]string{"600 / max": vec(s("10", ""))})
 	if len(queries) == 0 {
 		t.Fatal("no queries")
 	}
-	var pool, running, scrape, gaps bool
+	var recorded, scrape, gaps bool
 	for _, q := range queries {
 		if strings.Contains(q, "increase(") || strings.Contains(q, "avg_over_time") || strings.Contains(q, "rate(") {
 			t.Errorf("extrapolating function in %s", q)
 		}
-		switch {
-		case strings.Contains(q, "eduide_pool_instances"):
-			// Two operator pods report the gauge: fold them with max before anything is summed or integrated over time.
-			pool = true
-			if !strings.Contains(q, "max by (pool, state) (eduide_pool_instances") {
-				t.Errorf("pool query does not dedupe the operator pods: %s", q)
+		for _, raw := range []string{"eduide_launch_total", "eduide_session_", "eduide_sessions", "eduide_pool_instances", "eduide_agent_requests", "container_", "kube_pod_container"} {
+			if strings.Contains(q, raw) {
+				t.Errorf("raw series %s in %s", raw, q)
 			}
-		case strings.Contains(q, "eduide_sessions"):
-			running = true
-			if !strings.Contains(q, "max by (template) (eduide_sessions") || !strings.Contains(q, "max_over_time(") {
-				t.Errorf("running sessions query does not dedupe or take the minute maximum: %s", q)
-			}
-		case strings.Contains(q, "up{"):
+		}
+		recorded = recorded || strings.Contains(q, "eduide:usage:")
+		if strings.Contains(q, "up{") {
 			if !strings.Contains(q, `container=~"operator|service|authz"`) && !strings.Contains(q, `job="kube-state-metrics"`) {
 				t.Errorf("up query is not limited to the control plane: %s", q)
 			}
@@ -364,15 +358,15 @@ func TestNoIncreaseAndOperatorPodsAreFolded(t *testing.T) {
 			gaps = gaps || strings.Contains(q, "min(up")
 		}
 	}
-	if !pool || !running || !scrape || !gaps {
-		t.Errorf("queries missing: pool=%v running=%v scrape=%v gaps=%v", pool, running, scrape, gaps)
+	if !recorded || !scrape || !gaps {
+		t.Errorf("queries missing: recorded=%v scrape=%v gaps=%v", recorded, scrape, gaps)
 	}
 }
 
 func TestZeroLaunchesWriteARowAndRunningCarriesTheLaunchCount(t *testing.T) {
 	dir, _ := runExport(t, map[string]string{
-		"eduide_launch_total": matrixResult(matrix(`"template":"java","pod":"svc-a"`, [2]float64{-30, 5}, [2]float64{100, 5})),
-		"eduide_sessions":     vec(s("4", `"template":"java"`)),
+		"launches_per_minute": vec(s("0", `"template":"java"`)),
+		"running_sessions":    vec(s("4", `"template":"java"`)),
 	})
 	rows := readRows(t, dir)
 	l := find(rows, "launches", "java", "created")
@@ -386,7 +380,7 @@ func TestZeroLaunchesWriteARowAndRunningCarriesTheLaunchCount(t *testing.T) {
 }
 
 func TestRunningWithoutLaunchSeriesIsSuppressed(t *testing.T) {
-	dir, _ := runExport(t, map[string]string{"eduide_sessions": vec(s("40", `"template":"java"`))})
+	dir, _ := runExport(t, map[string]string{"running_sessions": vec(s("40", `"template":"java"`))})
 	r := find(readRows(t, dir), "running_sessions", "java", "Ready")
 	if r == nil || r["count"] != "" || r["suppressed"] != "true" || r["p95"] != "" {
 		t.Fatalf("running sessions row: %v", r)

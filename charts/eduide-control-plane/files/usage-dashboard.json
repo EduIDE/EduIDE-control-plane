@@ -1,0 +1,1731 @@
+{
+  "title": "EduIDE usage",
+  "uid": "eduide-usage",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "5m",
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "tags": [
+    "eduide"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "label": "Data source"
+      },
+      {
+        "name": "namespace",
+        "type": "query",
+        "label": "Namespace",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(eduide:usage:running_sessions_all_max_1m, namespace)",
+          "refId": "ns"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "current": {
+          "selected": true,
+          "text": "__NAMESPACE__",
+          "value": "__NAMESPACE__"
+        },
+        "definition": "label_values(eduide:usage:running_sessions_all_max_1m, namespace)"
+      },
+      {
+        "name": "template",
+        "type": "query",
+        "label": "Template",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\"}, template)",
+          "refId": "tpl"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "current": {
+          "selected": true,
+          "text": "All",
+          "value": "$__all"
+        },
+        "allValue": ".*",
+        "definition": "label_values(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\"}, template)"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "About this board",
+      "type": "text",
+      "description": "Explains what the board shows and which privacy rules apply.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 5
+      },
+      "targets": [],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "This board shows the recorded series of the usage export (`eduide:usage:*`), aggregated per template, for the selected namespace and time range. It reads nothing else, so it shows exactly what the export exports.\n\nThe series carry no personal data: no user, owner, session or pod labels.\n\nThe small-cell rule (a cell with fewer than 10 sessions is suppressed) is applied by the export, not by this board. Small numbers can therefore appear here that the export will not publish.\n\nSome series need kube-state-metrics with the pod label allowlist; without it the per-template memory, CPU, pod and restart panels stay empty."
+      }
+    },
+    {
+      "id": 2,
+      "type": "row",
+      "title": "M1 Session starts and concurrency",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "title": "Launches in range",
+      "type": "stat",
+      "description": "Number of sessions launched (created) in the selected time range, summed over the selected templates. Unit: launches.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(sum_over_time(eduide:usage:launches_per_minute{namespace=\"$namespace\", template=~\"$template\"}[$__range]))",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 4,
+      "title": "Peak minute",
+      "type": "stat",
+      "description": "Largest number of launches in any single minute of the selected range, installation total of the selected templates. Unit: launches per minute.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(sum(eduide:usage:launches_per_minute{namespace=\"$namespace\", template=~\"$template\"})[$__range:1m])",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 5,
+      "title": "Largest 20 s window",
+      "type": "stat",
+      "description": "Largest number of launches within any 20 second window in the selected range, whole installation. Cut at scrape samples, so it needs a scrape interval of 10 s or less. Unit: launches.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(eduide:usage:launches_max_20s_in_minute_all{namespace=\"$namespace\"}[$__range])",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 6,
+      "title": "Largest 60 s window",
+      "type": "stat",
+      "description": "Largest number of launches within any 60 second window in the selected range, whole installation. Unit: launches.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 18,
+        "y": 6,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(eduide:usage:launches_max_60s_in_minute_all{namespace=\"$namespace\"}[$__range])",
+          "legendFormat": "",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "colorMode": "none"
+      }
+    },
+    {
+      "id": 7,
+      "title": "Launches by template",
+      "type": "timeseries",
+      "description": "Sessions launched in each displayed interval (at least 1 minute), stacked by template. A launch is counted when the session is created. Unit: launches per interval.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (template) (sum_over_time(eduide:usage:launches_per_minute{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m"
+    },
+    {
+      "id": 8,
+      "title": "Largest launches in 20 s and 60 s window per minute",
+      "type": "timeseries",
+      "description": "Largest number of launches inside any 20 s and any 60 s window, whole installation, maximum per displayed interval (at least 1 minute). A peak is not the sum of the per-template peaks. Unit: launches.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 10,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(eduide:usage:launches_max_20s_in_minute_all{namespace=\"$namespace\"}[$__interval])",
+          "legendFormat": "20 s window",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "max_over_time(eduide:usage:launches_max_60s_in_minute_all{namespace=\"$namespace\"}[$__interval])",
+          "legendFormat": "60 s window",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m"
+    },
+    {
+      "id": 9,
+      "title": "Running sessions",
+      "type": "timeseries",
+      "description": "Sessions that a user has claimed or started and that are ready, maximum per displayed interval (at least 1 minute), per template and for the whole installation. Idle pool instances are not counted. Unit: sessions.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max_over_time(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "max_over_time(eduide:usage:running_sessions_all_max_1m{namespace=\"$namespace\"}[$__interval])",
+          "legendFormat": "all templates",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "1m"
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "M2 Session-preparation time",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 11,
+      "title": "Preparation time p50 and p95 in range by start mode",
+      "type": "bargauge",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Computed over all starts in the selected range. Unit: seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, start_mode) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[$__range])))",
+          "legendFormat": "p50 {{start_mode}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, start_mode) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[$__range])))",
+          "legendFormat": "p95 {{start_mode}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "gradient",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        }
+      }
+    },
+    {
+      "id": 12,
+      "title": "Preparation time p50 and p95 per hour by start mode",
+      "type": "timeseries",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Computed over 1 hour windows. Unit: seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, start_mode) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[1h])))",
+          "legendFormat": "p50 {{start_mode}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, start_mode) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[1h])))",
+          "legendFormat": "p95 {{start_mode}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "title": "Starts by start mode and result",
+      "type": "timeseries",
+      "description": "Sessions that reached Ready or Failed, per displayed interval (at least 5 minutes), by start mode (eager, lazy, lazy_fallback, none) and result. Launches that returned an existing session or were rejected are not counted. Unit: sessions per interval.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (start_mode, result) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
+          "legendFormat": "{{start_mode}} {{result}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 14,
+      "title": "Failure share",
+      "type": "timeseries",
+      "description": "Share of sessions that ended in Failed instead of Ready, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 8,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", result!=\"ready\"}[$__interval])) / sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
+          "legendFormat": "failure share",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 15,
+      "title": "Preparation time distribution",
+      "type": "heatmap",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Each cell is the number of sessions in a time bucket per displayed interval (at least 5 minutes). Unit: seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 16,
+        "y": 35,
+        "w": 8,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (le) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[$__interval]))",
+          "legendFormat": "{{le}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "format": "heatmap"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "calculate": false,
+        "yAxis": {
+          "unit": "s"
+        },
+        "cellGap": 1,
+        "color": {
+          "scheme": "Spectral",
+          "mode": "scheme"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 16,
+      "type": "row",
+      "title": "M3 Warm pool occupancy",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 17,
+      "title": "Pool instances by state",
+      "type": "timeseries",
+      "description": "Pool instances per state (for example idle_ready, idle_starting, claimed), stacked. Pool name equals template name. Unit: instances.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (state) (eduide:usage:pool_instances{namespace=\"$namespace\", template=~\"$template\"})",
+          "legendFormat": "{{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 18,
+      "title": "Pool without unclaimed instance",
+      "type": "state-timeline",
+      "description": "Per template, 1 (red) while the pool has no unclaimed instance, neither ready nor starting, so the next launch falls back to a lazy start. 0 means at least one is available.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 44,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eduide:usage:pool_unclaimed_empty{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "color": {
+            "mode": "thresholds"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "legend": {
+          "showLegend": false
+        }
+      }
+    },
+    {
+      "id": 19,
+      "title": "Lazy fallback share",
+      "type": "timeseries",
+      "description": "Share of session starts that found no unclaimed pool instance and took the lazy start, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (template) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", start_mode=\"lazy_fallback\"}[$__interval])) / sum by (template) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 20,
+      "title": "Claims on a starting instance",
+      "type": "timeseries",
+      "description": "Share of pool claims that took an instance that was not yet ready: starts with strategy warm-starting divided by warm-ready plus warm-starting, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=\"warm-starting\"}[$__interval])) / sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=~\"warm-ready|warm-starting\"}[$__interval]))",
+          "legendFormat": "share on starting instance",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "M4 Late binding phases",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 60,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 22,
+      "title": "Late binding phase duration p50 and p95",
+      "type": "timeseries",
+      "description": "Duration of the phases after the claim, from agent milestones, over 1 hour windows. data_delivered: from the later of claim and IDE plugin host start until the launch data (identity, repository, credentials) reached the agent (late binding). clone: from workspace ready until the repository clone is done. ide_usable: from the claim until the workspace is ready in the IDE; it includes the time the browser needs to load the IDE, so it is a rough upper view of time to interactive, not a system latency. Unit: seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, phase) (sum_over_time(eduide:usage:phase_bucket_5m{namespace=\"$namespace\", template=~\"$template\"}[1h])))",
+          "legendFormat": "p50 {{phase}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, phase) (sum_over_time(eduide:usage:phase_bucket_5m{namespace=\"$namespace\", template=~\"$template\"}[1h])))",
+          "legendFormat": "p95 {{phase}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 23,
+      "title": "Agent claim requests and errors",
+      "type": "timeseries",
+      "description": "Claim requests sent to the Data Bridge agent and those that ended in an error, per displayed interval (at least 5 minutes), whole installation. Unit: requests per interval.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 61,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum_over_time(eduide:usage:agent_claim_requests_5m{namespace=\"$namespace\"}[$__interval])",
+          "legendFormat": "requests",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "sum_over_time(eduide:usage:agent_claim_errors_5m{namespace=\"$namespace\"}[$__interval])",
+          "legendFormat": "errors",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 24,
+      "type": "row",
+      "title": "M5 Memory and CPU per session",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 69,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 25,
+      "title": "Memory per IDE pod p50, p95, max",
+      "type": "timeseries",
+      "description": "Working set memory of one IDE pod (all containers summed), by template and state (claimed session or idle pool instance). Percentiles are taken over the pods. Unit: bytes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 70,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eduide:usage:ide_memory_bytes:p50{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "p50 {{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "eduide:usage:ide_memory_bytes:p95{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "p95 {{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "C",
+          "expr": "eduide:usage:ide_memory_bytes:max{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "max {{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 26,
+      "title": "CPU per IDE pod p50, p95",
+      "type": "timeseries",
+      "description": "CPU used by one IDE pod, averaged over 5 minutes, by template and state. Percentiles are taken over the pods. Unit: cores.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 70,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eduide:usage:ide_cpu_cores:p50{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "p50 {{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "eduide:usage:ide_cpu_cores:p95{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "p95 {{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 27,
+      "title": "IDE pods",
+      "type": "timeseries",
+      "description": "Number of IDE pods by template and state. Unit: pods.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 24,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "eduide:usage:ide_pods{namespace=\"$namespace\", template=~\"$template\"}",
+          "legendFormat": "{{template}} {{state}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 60,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 28,
+      "type": "row",
+      "title": "M5 fallback: all IDE pods without template split",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 86,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 29,
+          "title": "Memory per IDE pod, all pods",
+          "type": "timeseries",
+          "description": "Working set memory of one IDE pod, p50, p95 and max over all ide-* pods of the namespace, without the template and state split. Used when kube_pod_labels is missing. Unit: bytes.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "x": 0,
+            "y": 87,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "eduide:usage:ide_memory_bytes_all:p50{namespace=\"$namespace\"}",
+              "legendFormat": "p50",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            },
+            {
+              "refId": "B",
+              "expr": "eduide:usage:ide_memory_bytes_all:p95{namespace=\"$namespace\"}",
+              "legendFormat": "p95",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            },
+            {
+              "refId": "C",
+              "expr": "eduide:usage:ide_memory_bytes_all:max{namespace=\"$namespace\"}",
+              "legendFormat": "max",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "fillOpacity": 10
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "max",
+                "mean"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 30,
+          "title": "CPU per IDE pod, all pods",
+          "type": "timeseries",
+          "description": "CPU used by one IDE pod, averaged over 5 minutes, p50 and p95 over all ide-* pods of the namespace. Unit: cores.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "x": 8,
+            "y": 87,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "eduide:usage:ide_cpu_cores_all:p50{namespace=\"$namespace\"}",
+              "legendFormat": "p50",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            },
+            {
+              "refId": "B",
+              "expr": "eduide:usage:ide_cpu_cores_all:p95{namespace=\"$namespace\"}",
+              "legendFormat": "p95",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "fillOpacity": 10
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "max",
+                "mean"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        },
+        {
+          "id": 31,
+          "title": "IDE pods, all pods",
+          "type": "timeseries",
+          "description": "Number of ide-* pods in the namespace. Unit: pods.",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "gridPos": {
+            "x": 16,
+            "y": 87,
+            "w": 8,
+            "h": 8
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "eduide:usage:ide_pods_all{namespace=\"$namespace\"}",
+              "legendFormat": "pods",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "fillOpacity": 10
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "max",
+                "mean"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 32,
+      "type": "row",
+      "title": "M6 Session duration",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 95,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 33,
+      "title": "Session lifetime p50 and p95 by end reason",
+      "type": "timeseries",
+      "description": "Lifetime of a session, from its creation until it ends, by the reason it ended, computed over 1 hour windows. Unit: seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.5, sum by (le, reason) (sum_over_time(eduide:usage:session_lifetime_bucket_5m{namespace=\"$namespace\", template=~\"$template\"}[1h])))",
+          "legendFormat": "p50 {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, reason) (sum_over_time(eduide:usage:session_lifetime_bucket_5m{namespace=\"$namespace\", template=~\"$template\"}[1h])))",
+          "legendFormat": "p95 {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "fillOpacity": 10
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 34,
+      "title": "Session ends by reason",
+      "type": "timeseries",
+      "description": "Number of sessions that ended, per displayed interval (at least 5 minutes), by end reason. Unit: sessions per interval.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 96,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (sum_over_time(eduide:usage:session_lifetime_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
+          "legendFormat": "{{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 35,
+      "type": "row",
+      "title": "M7 Stability",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 104,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 36,
+      "title": "IDE container restarts",
+      "type": "timeseries",
+      "description": "Container restarts of IDE pods per displayed interval (at least 5 minutes), by template. Unit: restarts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 105,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum_over_time(eduide:usage:ide_restarts_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    },
+    {
+      "id": 37,
+      "title": "IDE OOM kills",
+      "type": "timeseries",
+      "description": "Restarts of IDE containers whose last termination was an out-of-memory kill, per displayed interval (at least 5 minutes), by template. kube-state-metrics keeps only the last termination reason, so mixed restarts in one window are attributed to the last one. Unit: restarts.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 105,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum_over_time(eduide:usage:ide_oom_kills_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
+          "legendFormat": "{{template}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            },
+            "drawStyle": "bars"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "max",
+            "mean"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "interval": "5m"
+    }
+  ]
+}

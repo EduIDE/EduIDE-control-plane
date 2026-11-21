@@ -54,5 +54,7 @@ metadata:
 data:
   eduide-control-plane.json: |
     {{- $.Files.Get "files/dashboard.json" | replace "__NAMESPACE__" $.Release.Namespace | nindent 4 }}
+  eduide-usage.json: |
+    {{- $.Files.Get "files/usage-dashboard.json" | replace "__NAMESPACE__" $.Release.Namespace | nindent 4 }}
 {{- end }}
 {{- end }}

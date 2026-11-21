@@ -3,7 +3,7 @@
 Aggregated usage data of one EduIDE installation.
 The files hold no user, session, pod or host identifier.
 Check this with `usage-export --check <directory>` before you share them.
-Schema version: 1 (`schema_version` in `context.json`).
+Schema version: 2 (`schema_version` in `context.json`). Version 2 dropped the column `gap_steps`; gaps are listed in `data_gaps`.
 
 ## Files
 
@@ -36,8 +36,7 @@ An empty cell means: not applicable for this metric, not measurable at this reso
 | `failure_share` | Share of failed sessions (`startup`) or failed agent claims (`agent_claim`) |
 | `peak_hour` | Largest number of launches in one clock hour of the week |
 | `peak_minute` | Largest number of launches in one clock minute |
-| `gap_steps` | Number of scrape gaps longer than a minute in the week; the step across such a gap is left out of the peak figures (it still counts in `count`) |
-| `max_20s`, `max_60s` | Largest number of launches in any window of 20 s or 60 s, cut at scrape samples (a window spans its length up to its length plus one scrape interval); empty when the scrape interval cannot resolve the window |
+| `max_20s`, `max_60s` | Largest number of launches in a window of 20 s or 60 s; windows end every 10 s and are cut at scrape samples; empty when the scrape interval cannot resolve the window |
 
 ## Metrics
 
@@ -54,8 +53,9 @@ An empty cell means: not applicable for this metric, not measurable at this reso
 | `pool_slot_hours` | pool state (`idle_ready`, `idle_starting`, `claimed`) | Instance-hours per state, in `value`; the template is the pool name. `claimed` rows carry the launch count of the template as `count` and are suppressed below 10 |
 | `pool_empty_hours` | `no_unclaimed` | Hours without any unclaimed instance (ready or starting), in `value`; `count` is the launch count of the template, suppressed below 10 |
 | `memory`, `cpu` | pod state (`idle`, `claimed`) or `all` | Working set memory in bytes, CPU in cores. `p50` is the median over the week of the per-minute median over pods, `p95` the 95th percentile over the week of the per-minute p95, `max` the largest value of any pod; weekly only |
-| `restarts`, `oom_kills` | `ide_pods` | Container restarts and OOM kills of IDE pods, in `value`; template `unknown` for pods without labels, `all` when no pod labels exist at all |
+| `restarts`, `oom_kills` | `ide_pods` | Container restarts of IDE pods and the restarts whose last termination was an OOM kill, in `value`; template `unknown` for pods without labels |
 
+All figures come from the Prometheus recording rules `eduide:usage:*` of the EduIDE control plane chart.
 Quantiles come from histogram buckets and are as coarse as the bucket widths.
 Memory and CPU rows with a template and state split need the kube-state-metrics pod labels; without them the rows have the template `all` and the dimension `all`.
 

@@ -8,11 +8,12 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
 const (
-	schemaVersion = 1
+	schemaVersion = 2
 	// minCell is the smallest number of sessions in a cell that may carry a distribution.
 	minCell = 10
 )
@@ -25,21 +26,19 @@ type Row struct {
 	Suppressed                                         bool
 	Value, P50, P95, Max, FailureShare                 float64
 	PeakHour, PeakMinute, Max20s, Max60s               float64
-	// GapSteps counts scrape gaps longer than a minute inside the week; they are left out of the peak figures.
-	GapSteps float64
 	// noCell marks rows that are not per-session figures (pool hours, restarts); they need no count.
 	noCell bool
 	// distCount is the number of sessions the distribution columns come from, when it differs from Count.
 	distCount float64
 }
 
-var csvHeader = []string{"week", "week_start", "days", "metric", "template", "dimension", "unit", "count", "suppressed", "value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s", "gap_steps"}
+var csvHeader = []string{"week", "week_start", "days", "metric", "template", "dimension", "unit", "count", "suppressed", "value", "p50", "p95", "max", "failure_share", "peak_hour", "peak_minute", "max_20s", "max_60s"}
 
 func nan() float64 { return math.NaN() }
 
 func newRow(w window, metric, template, dim, unit string) *Row {
 	return &Row{Week: w.label(), WeekStart: w.start.Format("2006-01-02"), Days: w.days(), Metric: metric, Template: template, Dimension: dim, Unit: unit,
-		Count: nan(), distCount: nan(), Value: nan(), P50: nan(), P95: nan(), Max: nan(), FailureShare: nan(), PeakHour: nan(), PeakMinute: nan(), Max20s: nan(), Max60s: nan(), GapSteps: nan()}
+		Count: nan(), distCount: nan(), Value: nan(), P50: nan(), P95: nan(), Max: nan(), FailureShare: nan(), PeakHour: nan(), PeakMinute: nan(), Max20s: nan(), Max60s: nan()}
 }
 
 // suppress applies the small-cell rule: below minCell sessions only the count stays.
@@ -57,7 +56,7 @@ func (r *Row) suppress() {
 	r.P50, r.P95, r.Max = nan(), nan(), nan()
 	if clearAll {
 		r.Value, r.FailureShare = nan(), nan()
-		r.PeakHour, r.PeakMinute, r.Max20s, r.Max60s, r.GapSteps = nan(), nan(), nan(), nan(), nan()
+		r.PeakHour, r.PeakMinute, r.Max20s, r.Max60s = nan(), nan(), nan(), nan()
 	}
 }
 
@@ -84,7 +83,7 @@ func writeCSV(path string, rows []*Row) error {
 	_ = w.Write(csvHeader)
 	for _, r := range rows {
 		_ = w.Write([]string{r.Week, r.WeekStart, strconv.Itoa(r.Days), r.Metric, r.Template, r.Dimension, r.Unit, f(r.Count), strconv.FormatBool(r.Suppressed),
-			f(r.Value), f(r.P50), f(r.P95), f(r.Max), f(r.FailureShare), f(r.PeakHour), f(r.PeakMinute), f(r.Max20s), f(r.Max60s), f(r.GapSteps)})
+			f(r.Value), f(r.P50), f(r.P95), f(r.Max), f(r.FailureShare), f(r.PeakHour), f(r.PeakMinute), f(r.Max20s), f(r.Max60s)})
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
@@ -175,8 +174,8 @@ func (h *histogram) maxBucket() float64 {
 	return max
 }
 
-// histograms groups a bucket query by the given labels. Buckets are made cumulative and monotonic
-// because increase() extrapolates each bucket separately.
+// histograms groups a bucket query by the given labels. Buckets are made cumulative and monotonic,
+// because a counter reset can hit the buckets of one window unevenly.
 func histograms(v []sample, group []string) map[[2]string]*histogram {
 	out := map[[2]string]*histogram{}
 	for _, s := range v {
@@ -252,22 +251,25 @@ func (c *collector) controlPlane() string {
 
 func (c *collector) add(r *Row) { r.suppress(); c.rows = append(c.rows, r) }
 
-// collectWeek adds the rows of one window. Every expression is a fixed template; only the
-// validated namespace and the window length are filled in.
+// rec selects a recorded series of usage-rules.yaml in the namespace.
+func (c *collector) rec(name, extra string) string { return "eduide:usage:" + name + c.sel(extra) }
+
+// collectWeek adds the rows of one window. Every number comes from the recording rules of the chart
+// (files/usage-rules.yaml); the export only sums, maximises or takes quantiles of the recorded series over the window.
+// Every expression is a fixed template; only the validated namespace and the window length are filled in.
 func (c *collector) collectWeek(ctx context.Context, w window) {
 	c.p.week = w.label()
 	defer func() { c.p.week = "" }()
 	d, at := w.dur(), w.end
-	hours := w.end.Sub(w.start).Hours()
 
-	launched := c.launches(ctx, w)
+	launched := c.launches(ctx, w, d, at)
 	c.startup(ctx, w, d, at)
 	c.running(ctx, w, d, at, launched)
-	for _, h := range []struct{ id, base, filter, dim, metric string }{
-		{"m4_phase", "eduide_session_phase_seconds", `phase=~"data_delivered|clone|ide_usable"`, "phase", "phase"},
-		{"m6_lifetime", "eduide_session_lifetime_seconds", "", "reason", "lifetime"},
+	for _, h := range []struct{ id, rec, dim, metric string }{
+		{"m4_phase", "phase_bucket_5m", "phase", "phase"},
+		{"m6_lifetime", "session_lifetime_bucket_5m", "reason", "lifetime"},
 	} {
-		b := c.counterTotals(ctx, h.id, h.base+"_bucket", plain(h.base+"_bucket", c.sel(h.filter)), w, []string{"le", "template", h.dim}, true)
+		b := c.q(ctx, h.id, fmt.Sprintf("sum by (le, template, %s) (sum_over_time(%s[%s]))", h.dim, c.rec(h.rec, ""), d), at)
 		for k, hist := range histograms(b, []string{"template", h.dim}) {
 			r := newRow(w, h.metric, k[0], k[1], "seconds")
 			r.Count, r.P50, r.P95, r.Max = hist.total(), hist.quantile(0.5), hist.quantile(0.95), hist.maxBucket()
@@ -275,18 +277,55 @@ func (c *collector) collectWeek(ctx context.Context, w window) {
 		}
 	}
 	c.agentClaim(ctx, w, d, at)
-	c.pool(ctx, w, d, at, hours, launched)
+	c.pool(ctx, w, d, at, launched)
 	c.resources(ctx, w, d, at)
 }
 
-// launches is M1: launch counts and the largest counts inside an hour, a minute and 20 s and 60 s windows,
-// computed from raw samples (rawLaunches). The hour and the minute are clock-aligned buckets.
-func (c *collector) launches(ctx context.Context, w window) map[string]*Row {
+// launches is M1: launch counts and the largest counts inside a clock hour, a minute and 20 s and 60 s windows,
+// per template and for the whole installation (template "all").
+func (c *collector) launches(ctx context.Context, w window, d string, at time.Time) map[string]*Row {
 	rows := map[string]*Row{}
-	for t, ls := range c.rawLaunches(ctx, w) {
-		r := newRow(w, "launches", t, "created", "launches")
-		r.Count, r.PeakHour, r.PeakMinute, r.Max20s, r.Max60s, r.GapSteps = ls.count, ls.peakHour, ls.peakMinute, ls.max20, ls.max60, float64(ls.gapSteps)
-		rows[t] = r
+	lpm := c.rec("launches_per_minute", "")
+	for _, all := range []bool{false, true} {
+		by, suffix := "sum by (template)", ""
+		if all {
+			by, suffix = "sum", "_all"
+		}
+		maxBy := strings.Replace(by, "sum", "max", 1)
+		stats := []struct {
+			id, expr string
+			set      func(*Row, float64)
+		}{
+			{"m1_launches", fmt.Sprintf("%s (sum_over_time(%s[%s]))", by, lpm, d), func(r *Row, v float64) { r.Count = v }},
+			{"m1_peak_minute", fmt.Sprintf("max_over_time(%s (%s)[%s:1m])", by, lpm, d), func(r *Row, v float64) { r.PeakMinute = v }},
+			{"m1_peak_hour", fmt.Sprintf("max_over_time(%s (sum_over_time(%s[1h]))[%s:1h])", by, lpm, d), func(r *Row, v float64) { r.PeakHour = v }},
+		}
+		if c.resolves(20 * time.Second) {
+			stats = append(stats, struct {
+				id, expr string
+				set      func(*Row, float64)
+			}{"m1_max_20s", fmt.Sprintf("%s (max_over_time(%s[%s]))", maxBy, c.rec("launches_max_20s_in_minute"+suffix, ""), d), func(r *Row, v float64) { r.Max20s = v }})
+		}
+		if c.resolves(60 * time.Second) {
+			stats = append(stats, struct {
+				id, expr string
+				set      func(*Row, float64)
+			}{"m1_max_60s", fmt.Sprintf("%s (max_over_time(%s[%s]))", maxBy, c.rec("launches_max_60s_in_minute"+suffix, ""), d), func(r *Row, v float64) { r.Max60s = v }})
+		}
+		for _, st := range stats {
+			for _, s := range c.q(ctx, st.id, st.expr, at) {
+				t := "all"
+				if !all {
+					t = label(s, []string{"template"}, 0)
+				}
+				if rows[t] == nil {
+					rows[t] = newRow(w, "launches", t, "created", "launches")
+				}
+				st.set(rows[t], s.Value)
+			}
+		}
+	}
+	for _, r := range rows {
 		c.add(r)
 	}
 	return rows
@@ -297,7 +336,7 @@ func (c *collector) resolves(win time.Duration) bool { return c.scrape > 0 && wi
 
 // startup is M2 and the lazy fallback and not-ready claim shares of M3.
 func (c *collector) startup(ctx context.Context, w window, d string, at time.Time) {
-	counts := c.counterTotals(ctx, "m2_startup_count", "eduide_session_startup_seconds_count", plain("eduide_session_startup_seconds_count", c.sel("")), w, []string{"template", "start_mode", "result", "strategy"}, true)
+	counts := c.q(ctx, "m2_startup_count", fmt.Sprintf("sum by (template, start_mode, result, strategy) (sum_over_time(%s[%s]))", c.rec("startup_count_5m", ""), d), at)
 	total, failed, perTemplate, fallback, hasMode := map[[2]string]float64{}, map[[2]string]float64{}, map[string]float64{}, map[string]float64{}, map[string]bool{}
 	warm, warmStarting := map[string]float64{}, map[string]float64{}
 	for _, s := range counts {
@@ -319,7 +358,7 @@ func (c *collector) startup(ctx context.Context, w window, d string, at time.Tim
 			fallback[k[0]] += s.Value
 		}
 	}
-	b := c.counterTotals(ctx, "m2_startup_bucket", "eduide_session_startup_seconds_bucket", plain("eduide_session_startup_seconds_bucket", c.sel(`result="ready"`)), w, []string{"le", "template", "start_mode"}, true)
+	b := c.q(ctx, "m2_startup_bucket", fmt.Sprintf("sum by (le, template, start_mode) (sum_over_time(%s[%s]))", c.rec("startup_bucket_5m", `result="ready"`), d), at)
 	hs := histograms(b, []string{"template", "start_mode"})
 	for k, n := range total {
 		r := newRow(w, "startup", k[0], k[1], "seconds")
@@ -357,27 +396,24 @@ func (c *collector) startup(ctx context.Context, w window, d string, at time.Tim
 	}
 }
 
-// running is the concurrency part of M1. Two operator pods can report the gauge during a rollout, so the
-// pods are folded with max first. Each minute counts with its largest value; p50, p95 and max run over the minutes.
+// running is the concurrency part of M1: p50, p95 and max over the per-minute maxima of the recorded gauge.
 // The count of a row is the launch count of the same template in the week.
 func (c *collector) running(ctx context.Context, w window, d string, at time.Time, launched map[string]*Row) {
-	step := fmt.Sprintf("%ds", int(math.Max(c.scrape.Seconds(), 10)))
 	for _, all := range []bool{false, true} {
-		inner := fmt.Sprintf(`max by (template) (eduide_sessions%s)`, c.sel(`phase="Ready"`))
+		series := c.rec("running_sessions_max_1m", "")
 		if all {
-			inner = "sum (" + inner + ")"
+			series = c.rec("running_sessions_all_max_1m", "")
 		}
-		minute := fmt.Sprintf(`max_over_time(%s[1m:%s])`, inner, step)
 		stats := map[string]*Row{}
 		for _, st := range []struct {
 			fn  string
 			set func(*Row, float64)
 		}{
-			{"quantile_over_time(0.5, %s[%s:1m])", func(r *Row, v float64) { r.P50 = v }},
-			{"quantile_over_time(0.95, %s[%s:1m])", func(r *Row, v float64) { r.P95 = v }},
-			{"max_over_time(%s[%s:1m])", func(r *Row, v float64) { r.Max = v }},
+			{"quantile_over_time(0.5, %s[%s])", func(r *Row, v float64) { r.P50 = v }},
+			{"quantile_over_time(0.95, %s[%s])", func(r *Row, v float64) { r.P95 = v }},
+			{"max_over_time(%s[%s])", func(r *Row, v float64) { r.Max = v }},
 		} {
-			for _, s := range c.q(ctx, "m1_running", fmt.Sprintf(st.fn, minute, d), at) {
+			for _, s := range c.q(ctx, "m1_running", fmt.Sprintf(st.fn, series, d), at) {
 				t := "all"
 				if !all {
 					t = label(s, []string{"template"}, 0)
@@ -398,8 +434,8 @@ func (c *collector) running(ctx context.Context, w window, d string, at time.Tim
 }
 
 func (c *collector) agentClaim(ctx context.Context, w window, d string, at time.Time) {
-	all := c.counterTotals(ctx, "m4_agent_claim", "eduide_agent_requests_total", plain("eduide_agent_requests_total", c.sel(`op="claim"`)), w, nil, true)
-	bad := c.counterTotals(ctx, "m4_agent_claim_errors", "eduide_agent_requests_total", plain("eduide_agent_requests_total", c.sel(`op="claim", result="error"`)), w, nil, true)
+	all := c.q(ctx, "m4_agent_claim", fmt.Sprintf("sum (sum_over_time(%s[%s]))", c.rec("agent_claim_requests_5m", ""), d), at)
+	bad := c.q(ctx, "m4_agent_claim_errors", fmt.Sprintf("sum (sum_over_time(%s[%s]))", c.rec("agent_claim_errors_5m", ""), d), at)
 	if len(all) == 0 {
 		return
 	}
@@ -414,24 +450,19 @@ func (c *collector) agentClaim(ctx context.Context, w window, d string, at time.
 	c.add(r)
 }
 
-// pool is M3: slot-hours by state and the hours without an unclaimed slot. The chart names a pool like its template.
-// The gauge is sampled every minute; the operator pods are folded with max so a rollout does not count twice.
-// shortcut: during an operator handover the old pod's series ends before the new one's starts, which can leave a
-// gap of up to one minute per handover; the hours are then slightly too low.
+// pool is M3: slot-hours by state and the hours without an unclaimed slot. The rule group evaluates every
+// minute, so a sample is one minute.
 // Hours of claimed slots and of empty pools follow the load, so they are suppressed like a distribution when the
 // template had fewer than 10 sessions in the week; hours of idle slots do not depend on sessions.
-func (c *collector) pool(ctx context.Context, w window, d string, at time.Time, hours float64, launched map[string]*Row) {
-	slots := func(extra string) string {
-		return fmt.Sprintf(`max by (pool, state) (eduide_pool_instances%s)`, c.sel(extra))
-	}
+func (c *collector) pool(ctx context.Context, w window, d string, at time.Time, launched map[string]*Row) {
 	sessions := func(r *Row, t string) {
 		r.Count = nan()
 		if l := launched[t]; l != nil {
 			r.Count = l.Count
 		}
 	}
-	for _, s := range c.q(ctx, "m3_pool_slot_hours", fmt.Sprintf(`sum_over_time(%s[%s:1m]) / 60`, slots(""), d), at) {
-		t := label(s, []string{"pool"}, 0)
+	for _, s := range c.q(ctx, "m3_pool_slot_hours", fmt.Sprintf(`sum by (template, state) (sum_over_time(%s[%s])) / 60`, c.rec("pool_instances", ""), d), at) {
+		t := label(s, []string{"template"}, 0)
 		r := newRow(w, "pool_slot_hours", t, s.Labels["state"], "slot_hours")
 		r.Value = s.Value
 		if s.Labels["state"] == "claimed" {
@@ -441,8 +472,8 @@ func (c *collector) pool(ctx context.Context, w window, d string, at time.Time, 
 		}
 		c.add(r)
 	}
-	for _, s := range c.q(ctx, "m3_pool_empty_hours", fmt.Sprintf(`sum_over_time((sum by (pool) (%s) == bool 0)[%s:1m]) / 60`, slots(`state=~"idle_ready|idle_starting"`), d), at) {
-		t := label(s, []string{"pool"}, 0)
+	for _, s := range c.q(ctx, "m3_pool_empty_hours", fmt.Sprintf(`sum by (template) (sum_over_time(%s[%s])) / 60`, c.rec("pool_unclaimed_empty", ""), d), at) {
+		t := label(s, []string{"template"}, 0)
 		r := newRow(w, "pool_empty_hours", t, "no_unclaimed", "hours")
 		r.Value = s.Value
 		sessions(r, t)
@@ -506,45 +537,17 @@ func (c *collector) resources(ctx context.Context, w window, d string, at time.T
 	c.restarts(ctx, w, d, at)
 }
 
-// restarts is M7, computed from the raw kube-state-metrics counters. kube-state-metrics series carry the
-// instance (the pod IP of kube-state-metrics), so after a restart or with two replicas every series exists
-// twice; the series are folded by (namespace, pod, container) with max before they are differenced.
-// The pod names stay in memory: only the sums per template are exported.
+// restarts is M7: container restarts and OOM kills of IDE pods per template.
 func (c *collector) restarts(ctx context.Context, w window, d string, at time.Time) {
-	podSel := fmt.Sprintf(`{namespace=%q, pod=~"ide-.*"}`, c.ns)
-	m := src{expr: "max by (namespace, pod, container) (kube_pod_container_status_restarts_total" + podSel + ")", sub: "1m"}
-	perPod := c.counterTotals(ctx, "m7_restarts", "kube_pod_container_status_restarts_total", m, w, []string{"namespace", "pod", "container"}, false)
-	oomSel := fmt.Sprintf(`{namespace=%q, pod=~"ide-.*", reason="OOMKilled"}`, c.ns)
-	oom := map[string]bool{}
-	for _, s := range c.q(ctx, "m7_oom_containers", fmt.Sprintf(`max by (pod, container) (max_over_time(kube_pod_container_status_last_terminated_reason%s[%s])) == 1`, oomSel, d), at) {
-		oom[key(s.Labels, []string{"pod", "container"})] = true
+	restarts := c.q(ctx, "m7_restarts", fmt.Sprintf("sum by (template) (sum_over_time(%s[%s]))", c.rec("ide_restarts_5m", ""), d), at)
+	kills := map[string]float64{}
+	for _, s := range c.q(ctx, "m7_oom_kills", fmt.Sprintf("sum by (template) (sum_over_time(%s[%s]))", c.rec("ide_oom_kills_5m", ""), d), at) {
+		kills[label(s, []string{"template"}, 0)] = s.Value
 	}
-	tpl := map[string]string{}
-	for _, s := range c.q(ctx, "m7_pod_labels", fmt.Sprintf(`max by (pod, label_eduide_github_io_template) (last_over_time(kube_pod_labels%s[%s]))`, c.sel(""), d), at) {
-		tpl[s.Labels["pod"]] = s.Labels["label_eduide_github_io_template"]
-	}
-	restarts, kills := map[string]float64{}, map[string]float64{}
-	seen := false
-	for _, s := range perPod {
-		seen = true
-		t := "all"
-		if len(tpl) > 0 {
-			t = tpl[s.Labels["pod"]]
-			if t == "" {
-				t = "unknown"
-			}
-		}
-		restarts[t] += s.Value
-		if oom[key(s.Labels, []string{"pod", "container"})] {
-			kills[t] += s.Value
-		}
-	}
-	if !seen {
-		return
-	}
-	for t, v := range restarts {
+	for _, s := range restarts {
+		t := label(s, []string{"template"}, 0)
 		r := newRow(w, "restarts", t, "ide_pods", "restarts")
-		r.Value, r.noCell = math.Round(v), true
+		r.Value, r.noCell = math.Round(s.Value), true
 		c.add(r)
 		k := newRow(w, "oom_kills", t, "ide_pods", "oom_kills")
 		k.Value, k.noCell = math.Round(kills[t]), true
