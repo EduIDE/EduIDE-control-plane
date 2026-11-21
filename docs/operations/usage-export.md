@@ -40,7 +40,7 @@ Gauges that both operator pods report during a rollout are folded with `max` ove
 |---|---|
 | M1 | `launches_per_minute`, `launches_max_20s_in_minute`, `launches_max_60s_in_minute` by template and with the suffix `_all` for the installation, `running_sessions`, `running_sessions_max_1m`, `running_sessions_all_max_1m` |
 | M2 | `startup_count_5m` by `start_mode`, `result` and `strategy`, `startup_bucket_5m` by `start_mode` and `result` |
-| M3 | `pool_instances` by `state`, `pool_unclaimed_empty` (1 while a pool has no ready and no starting instance), `lazy_fallback_share_5m` |
+| M3 | `pool_instances` by `state`, `pool_unclaimed_empty` (1 while a pool has no ready and no starting instance) |
 | M4 | `phase_count_5m`, `phase_bucket_5m` for `data_delivered`, `clone`, `ide_usable`; `agent_claim_requests_5m`, `agent_claim_errors_5m` |
 | M5 | `ide_memory_bytes:{p50,p95,max}`, `ide_cpu_cores:{p50,p95}`, `ide_pods` by `template` and `state`; the same with the suffix `_all` per namespace |
 | M6 | `session_lifetime_count_5m`, `session_lifetime_bucket_5m` by `reason` |

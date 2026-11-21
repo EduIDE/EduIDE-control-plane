@@ -29,7 +29,7 @@
           "uid": "${datasource}"
         },
         "query": {
-          "query": "label_values(eduide_sessions, namespace)",
+          "query": "label_values(eduide:usage:running_sessions_all_max_1m, namespace)",
           "refId": "ns"
         },
         "refresh": 2,
@@ -38,7 +38,8 @@
           "selected": true,
           "text": "__NAMESPACE__",
           "value": "__NAMESPACE__"
-        }
+        },
+        "definition": "label_values(eduide:usage:running_sessions_all_max_1m, namespace)"
       },
       {
         "name": "template",
@@ -49,7 +50,7 @@
           "uid": "${datasource}"
         },
         "query": {
-          "query": "label_values(eduide:usage:pool_instances{namespace=\"$namespace\"}, template)",
+          "query": "label_values(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\"}, template)",
           "refId": "tpl"
         },
         "refresh": 2,
@@ -60,7 +61,9 @@
           "selected": true,
           "text": "All",
           "value": "$__all"
-        }
+        },
+        "allValue": ".*",
+        "definition": "label_values(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\"}, template)"
       }
     ]
   },
@@ -277,9 +280,9 @@
     },
     {
       "id": 7,
-      "title": "Launches per minute by template",
+      "title": "Launches by template",
       "type": "timeseries",
-      "description": "Sessions launched in each minute, stacked by template. A launch is counted when the session is created. Unit: launches per minute.",
+      "description": "Sessions launched in each displayed interval (at least 1 minute), stacked by template. A launch is counted when the session is created. Unit: launches per interval.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -293,7 +296,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (template) (eduide:usage:launches_per_minute{namespace=\"$namespace\", template=~\"$template\"})",
+          "expr": "sum by (template) (sum_over_time(eduide:usage:launches_per_minute{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
           "legendFormat": "{{template}}",
           "datasource": {
             "type": "prometheus",
@@ -328,13 +331,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 8,
       "title": "Largest launches in 20 s and 60 s window per minute",
       "type": "timeseries",
-      "description": "For each minute, the largest number of launches inside any 20 s and any 60 s window within that minute, whole installation. A peak is not the sum of the per-template peaks. Unit: launches.",
+      "description": "Largest number of launches inside any 20 s and any 60 s window, whole installation, maximum per displayed interval (at least 1 minute). A peak is not the sum of the per-template peaks. Unit: launches.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -348,7 +352,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:launches_max_20s_in_minute_all{namespace=\"$namespace\"}",
+          "expr": "max_over_time(eduide:usage:launches_max_20s_in_minute_all{namespace=\"$namespace\"}[$__interval])",
           "legendFormat": "20 s window",
           "datasource": {
             "type": "prometheus",
@@ -357,7 +361,7 @@
         },
         {
           "refId": "B",
-          "expr": "eduide:usage:launches_max_60s_in_minute_all{namespace=\"$namespace\"}",
+          "expr": "max_over_time(eduide:usage:launches_max_60s_in_minute_all{namespace=\"$namespace\"}[$__interval])",
           "legendFormat": "60 s window",
           "datasource": {
             "type": "prometheus",
@@ -387,13 +391,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 9,
       "title": "Running sessions",
       "type": "timeseries",
-      "description": "Sessions that a user has claimed or started and that are ready, maximum within each minute, per template and for the whole installation. Idle pool instances are not counted. Unit: sessions.",
+      "description": "Sessions that a user has claimed or started and that are ready, maximum per displayed interval (at least 1 minute), per template and for the whole installation. Idle pool instances are not counted. Unit: sessions.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -407,7 +412,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:running_sessions_max_1m{namespace=\"$namespace\", template=~\"$template\"}",
+          "expr": "max_over_time(eduide:usage:running_sessions_max_1m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
           "legendFormat": "{{template}}",
           "datasource": {
             "type": "prometheus",
@@ -416,7 +421,7 @@
         },
         {
           "refId": "B",
-          "expr": "eduide:usage:running_sessions_all_max_1m{namespace=\"$namespace\"}",
+          "expr": "max_over_time(eduide:usage:running_sessions_all_max_1m{namespace=\"$namespace\"}[$__interval])",
           "legendFormat": "all templates",
           "datasource": {
             "type": "prometheus",
@@ -446,7 +451,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "1m"
     },
     {
       "id": 10,
@@ -465,7 +471,7 @@
       "id": 11,
       "title": "Preparation time p50 and p95 in range by start mode",
       "type": "bargauge",
-      "description": "Session-preparation time: the timer starts when the REST service receives the launch request and stops when it answers with the session URL. It does not include the network round trip to the client. Only successful starts (result ready). Unit: seconds. Computed over all starts in the selected range.",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Computed over all starts in the selected range. Unit: seconds.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -517,7 +523,7 @@
       "id": 12,
       "title": "Preparation time p50 and p95 per hour by start mode",
       "type": "timeseries",
-      "description": "Session-preparation time: the timer starts when the REST service receives the launch request and stops when it answers with the session URL. It does not include the network round trip to the client. Only successful starts (result ready). Unit: seconds. Computed over 1 hour windows.",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Computed over 1 hour windows. Unit: seconds.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -576,7 +582,7 @@
       "id": 13,
       "title": "Starts by start mode and result",
       "type": "timeseries",
-      "description": "Number of launch requests answered, per 5 minute window, by start mode (eager, lazy, lazy_fallback) and result. Unit: starts per 5 minutes.",
+      "description": "Sessions that reached Ready or Failed, per displayed interval (at least 5 minutes), by start mode (eager, lazy, lazy_fallback, none) and result. Launches that returned an existing session or were rejected are not counted. Unit: sessions per interval.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -590,7 +596,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (start_mode, result) (eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"})",
+          "expr": "sum by (start_mode, result) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
           "legendFormat": "{{start_mode}} {{result}}",
           "datasource": {
             "type": "prometheus",
@@ -625,13 +631,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 14,
       "title": "Failure share",
       "type": "timeseries",
-      "description": "Share of launch requests whose result is not ready, per 5 minute window. Unit: fraction (0 to 1).",
+      "description": "Share of sessions that ended in Failed instead of Ready, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -645,7 +652,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", result!=\"ready\"}) / sum(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"})",
+          "expr": "sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", result!=\"ready\"}[$__interval])) / sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
           "legendFormat": "failure share",
           "datasource": {
             "type": "prometheus",
@@ -675,13 +682,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 15,
       "title": "Preparation time distribution",
       "type": "heatmap",
-      "description": "Distribution of successful session-preparation times per 5 minute window; each cell is the number of starts in a time bucket. Unit: seconds.",
+      "description": "Session-preparation time, timed in the operator: from the creation of the IDESession (shortly after the service accepted the launch) until the session is Ready. It ends before the browser has loaded the IDE, so a client-side benchmark timer reads higher by the network round trip and the IDE load. Only sessions that became ready. Each cell is the number of sessions in a time bucket per displayed interval (at least 5 minutes). Unit: seconds.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -695,7 +703,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (le) (eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"})",
+          "expr": "sum by (le) (sum_over_time(eduide:usage:startup_bucket_5m{namespace=\"$namespace\", template=~\"$template\", result=\"ready\"}[$__interval]))",
           "legendFormat": "{{le}}",
           "datasource": {
             "type": "prometheus",
@@ -720,7 +728,8 @@
           "scheme": "Spectral",
           "mode": "scheme"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 16,
@@ -850,7 +859,7 @@
       "id": 19,
       "title": "Lazy fallback share",
       "type": "timeseries",
-      "description": "Share of session starts that found no unclaimed pool instance and took the lazy start, per 5 minute window. Unit: fraction (0 to 1).",
+      "description": "Share of session starts that found no unclaimed pool instance and took the lazy start, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -864,7 +873,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:lazy_fallback_share_5m{namespace=\"$namespace\", template=~\"$template\"}",
+          "expr": "sum by (template) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", start_mode=\"lazy_fallback\"}[$__interval])) / sum by (template) (sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
           "legendFormat": "{{template}}",
           "datasource": {
             "type": "prometheus",
@@ -894,13 +903,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 20,
       "title": "Claims on a starting instance",
       "type": "timeseries",
-      "description": "Share of pool claims that took an instance that was not yet ready: starts with strategy warm-starting divided by warm-ready plus warm-starting, per 5 minute window. Unit: fraction (0 to 1).",
+      "description": "Share of pool claims that took an instance that was not yet ready: starts with strategy warm-starting divided by warm-ready plus warm-starting, per displayed interval (at least 5 minutes). Unit: fraction (0 to 1).",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -914,7 +924,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=\"warm-starting\"}) / sum(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=~\"warm-ready|warm-starting\"})",
+          "expr": "sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=\"warm-starting\"}[$__interval])) / sum(sum_over_time(eduide:usage:startup_count_5m{namespace=\"$namespace\", template=~\"$template\", strategy=~\"warm-ready|warm-starting\"}[$__interval]))",
           "legendFormat": "share on starting instance",
           "datasource": {
             "type": "prometheus",
@@ -944,7 +954,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 21,
@@ -963,7 +974,7 @@
       "id": 22,
       "title": "Late binding phase duration p50 and p95",
       "type": "timeseries",
-      "description": "Duration of the late binding phases by phase (data_delivered, clone, ide_usable), computed over 1 hour windows. The operator times each phase starting at the claim; ide_usable includes the time the IDE needs to load, so it is a rough upper view, not a system latency. Unit: seconds.",
+      "description": "Duration of the phases after the claim, from agent milestones, over 1 hour windows. data_delivered: from the later of claim and IDE plugin host start until the launch data (identity, repository, credentials) reached the agent (late binding). clone: from workspace ready until the repository clone is done. ide_usable: from the claim until the workspace is ready in the IDE; it includes the time the browser needs to load the IDE, so it is a rough upper view of time to interactive, not a system latency. Unit: seconds.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1022,7 +1033,7 @@
       "id": 23,
       "title": "Agent claim requests and errors",
       "type": "timeseries",
-      "description": "Claim requests sent to the Data Bridge agent and those that ended in an error, per 5 minute window, whole installation. Unit: requests per 5 minutes.",
+      "description": "Claim requests sent to the Data Bridge agent and those that ended in an error, per displayed interval (at least 5 minutes), whole installation. Unit: requests per interval.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1036,7 +1047,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:agent_claim_requests_5m{namespace=\"$namespace\"}",
+          "expr": "sum_over_time(eduide:usage:agent_claim_requests_5m{namespace=\"$namespace\"}[$__interval])",
           "legendFormat": "requests",
           "datasource": {
             "type": "prometheus",
@@ -1045,7 +1056,7 @@
         },
         {
           "refId": "B",
-          "expr": "eduide:usage:agent_claim_errors_5m{namespace=\"$namespace\"}",
+          "expr": "sum_over_time(eduide:usage:agent_claim_errors_5m{namespace=\"$namespace\"}[$__interval])",
           "legendFormat": "errors",
           "datasource": {
             "type": "prometheus",
@@ -1075,7 +1086,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 24,
@@ -1538,7 +1550,7 @@
       "id": 34,
       "title": "Session ends by reason",
       "type": "timeseries",
-      "description": "Number of sessions that ended, per 5 minute window, by end reason. Unit: sessions per 5 minutes.",
+      "description": "Number of sessions that ended, per displayed interval (at least 5 minutes), by end reason. Unit: sessions per interval.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1552,7 +1564,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (reason) (eduide:usage:session_lifetime_count_5m{namespace=\"$namespace\", template=~\"$template\"})",
+          "expr": "sum by (reason) (sum_over_time(eduide:usage:session_lifetime_count_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval]))",
           "legendFormat": "{{reason}}",
           "datasource": {
             "type": "prometheus",
@@ -1587,7 +1599,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 35,
@@ -1606,7 +1619,7 @@
       "id": 36,
       "title": "IDE container restarts",
       "type": "timeseries",
-      "description": "Container restarts of IDE pods per 5 minute window, by template. Unit: restarts.",
+      "description": "Container restarts of IDE pods per displayed interval (at least 5 minutes), by template. Unit: restarts.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1620,7 +1633,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:ide_restarts_5m{namespace=\"$namespace\", template=~\"$template\"}",
+          "expr": "sum_over_time(eduide:usage:ide_restarts_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
           "legendFormat": "{{template}}",
           "datasource": {
             "type": "prometheus",
@@ -1655,13 +1668,14 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     },
     {
       "id": 37,
       "title": "IDE OOM kills",
       "type": "timeseries",
-      "description": "Container restarts of IDE pods whose last termination was an out-of-memory kill, per 5 minute window, by template. Unit: kills.",
+      "description": "Restarts of IDE containers whose last termination was an out-of-memory kill, per displayed interval (at least 5 minutes), by template. kube-state-metrics keeps only the last termination reason, so mixed restarts in one window are attributed to the last one. Unit: restarts.",
       "datasource": {
         "type": "prometheus",
         "uid": "${datasource}"
@@ -1675,7 +1689,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "eduide:usage:ide_oom_kills_5m{namespace=\"$namespace\", template=~\"$template\"}",
+          "expr": "sum_over_time(eduide:usage:ide_oom_kills_5m{namespace=\"$namespace\", template=~\"$template\"}[$__interval])",
           "legendFormat": "{{template}}",
           "datasource": {
             "type": "prometheus",
@@ -1710,7 +1724,8 @@
           "mode": "multi",
           "sort": "desc"
         }
-      }
+      },
+      "interval": "5m"
     }
   ]
 }

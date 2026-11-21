@@ -26,12 +26,14 @@
   - record: eduide:usage:launches_max_60s_in_minute_all
     expr: max_over_time(sum by (namespace) (((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) - ((last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[15m] offset 60s) * 1) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 0))) >= 0) or (last_over_time(eduide_launch_total{namespace="__NAMESPACE__", result="created"}[60s]) * 1))[1m:10s])
   # M1: sessions a user has claimed or started; idle pool instances are not sessions
+  # The operator drops the gauge of a template without Ready sessions, so the _max_1m rules fill 0 for every template
+  # (eduide_template_resources exists per template); quantiles over the week then include the quiet minutes.
   - record: eduide:usage:running_sessions
     expr: max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"})
   - record: eduide:usage:running_sessions_max_1m
-    expr: max_over_time(max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"})[1m:10s])
+    expr: max_over_time((max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"}) or (max by (namespace, template) (eduide_template_resources{namespace="__NAMESPACE__"}) * 0))[1m:10s])
   - record: eduide:usage:running_sessions_all_max_1m
-    expr: max_over_time(sum by (namespace) (max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"}))[1m:10s])
+    expr: max_over_time(sum by (namespace) (max by (namespace, template) (eduide_sessions{namespace="__NAMESPACE__", phase="Ready"}) or (max by (namespace, template) (eduide_template_resources{namespace="__NAMESPACE__"}) * 0))[1m:10s])
   # M3: pool name equals template name in the chart
   - record: eduide:usage:pool_instances
     expr: max by (namespace, template, state) (label_replace(eduide_pool_instances{namespace="__NAMESPACE__"}, "template", "$1", "pool", "(.+)"))
@@ -43,41 +45,41 @@
     expr: quantile by (namespace, template, state) (0.5,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_memory_bytes:p95
     expr: quantile by (namespace, template, state) (0.95,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_memory_bytes:max
     expr: quantile by (namespace, template, state) (1,
       label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_cpu_cores:p50
     expr: quantile by (namespace, template, state) (0.5,
       label_replace(label_replace(
         sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"}[5m]))
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_cpu_cores:p95
     expr: quantile by (namespace, template, state) (0.95,
       label_replace(label_replace(
         sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"}[5m]))
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   - record: eduide:usage:ide_pods
     expr: count by (namespace, template, state) (label_replace(label_replace(
         sum by (namespace, pod) (container_memory_working_set_bytes{namespace="__NAMESPACE__", pod=~"ide-.*", container!="", container!="POD"})
-        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}),
+        * on (namespace, pod) group_left (label_eduide_github_io_state, label_eduide_github_io_template) topk by (namespace, pod) (1, max by (namespace, pod, label_eduide_github_io_state, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"})),
         "template", "$1", "label_eduide_github_io_template", "(.+)"),
         "state", "$1", "label_eduide_github_io_state", "(.+)"))
   # M5 fallback: all ide-* pods of the namespace, without the template and state split
@@ -101,9 +103,6 @@
     expr: sum by (namespace, template, start_mode, result, strategy) (((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   - record: eduide:usage:startup_bucket_5m
     expr: sum by (namespace, template, start_mode, result, le) (((last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 1))
-  # M3: share of starts that found no unclaimed instance
-  - record: eduide:usage:lazy_fallback_share_5m
-    expr: sum by (namespace, template) (((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__", start_mode="lazy_fallback"}[300s]) - ((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__", start_mode="lazy_fallback"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__", start_mode="lazy_fallback"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__", start_mode="lazy_fallback"}[300s]) * 1)) / sum by (namespace, template) (((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_startup_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   # M4: late binding and IDE phases
   - record: eduide:usage:phase_count_5m
     expr: sum by (namespace, template, phase) (((last_over_time(eduide_session_phase_seconds_count{namespace="__NAMESPACE__", phase=~"data_delivered|clone|ide_usable"}[300s]) - ((last_over_time(eduide_session_phase_seconds_count{namespace="__NAMESPACE__", phase=~"data_delivered|clone|ide_usable"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_phase_seconds_count{namespace="__NAMESPACE__", phase=~"data_delivered|clone|ide_usable"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_phase_seconds_count{namespace="__NAMESPACE__", phase=~"data_delivered|clone|ide_usable"}[300s]) * 1))
@@ -118,9 +117,12 @@
     expr: sum by (namespace, template, reason) (((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_count{namespace="__NAMESPACE__"}[300s]) * 1))
   - record: eduide:usage:session_lifetime_bucket_5m
     expr: sum by (namespace, template, reason, le) (((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) - ((last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[15m] offset 300s) * 1) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 0))) >= 0) or (last_over_time(eduide_session_lifetime_seconds_bucket{namespace="__NAMESPACE__"}[300s]) * 1))
-  # M7: container restarts of IDE pods; the template comes from kube_pod_labels and stays empty without the allowlist
+  # M7: container restarts of IDE pods; the template comes from kube_pod_labels and stays empty without the allowlist.
+  # The kube-state-metrics series are folded per pod and container before the delta (a subquery), because every
+  # kube-state-metrics restart starts new series (own instance label) that would count all restarts again.
+  # The joins look back 5 minutes, so a pod that restarted and was deleted in the same window still counts.
   - record: eduide:usage:ide_restarts_5m
-    expr: sum by (namespace, template) (label_replace(max by (namespace, pod, container) (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1)) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}), "template", "$1", "label_eduide_github_io_template", "(.+)"))
-  # M7: the restarts whose last termination was an OOM kill
+    expr: sum by (namespace, template) (label_replace((((last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) - ((last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[15m:30s] offset 300s) * 1) or (last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) * 0))) >= 0) or (last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) * 1)) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (last_over_time(kube_pod_labels{namespace="__NAMESPACE__"}[5m])), "template", "$1", "label_eduide_github_io_template", "(.+)"))
+  # M7: restarts in the window of containers whose last termination was an OOM kill (kube-state-metrics keeps only the last reason)
   - record: eduide:usage:ide_oom_kills_5m
-    expr: sum by (namespace, template) (label_replace(max by (namespace, pod, container) (((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) - ((last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[15m] offset 300s) * 1) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 0))) >= 0) or (last_over_time(kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}[300s]) * 1)) * on (namespace, pod, container) group_left max by (namespace, pod, container) (kube_pod_container_status_last_terminated_reason{namespace="__NAMESPACE__", pod=~"ide-.*", reason="OOMKilled"}) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (kube_pod_labels{namespace="__NAMESPACE__"}), "template", "$1", "label_eduide_github_io_template", "(.+)"))
+    expr: sum by (namespace, template) (label_replace((((last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) - ((last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[15m:30s] offset 300s) * 1) or (last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) * 0))) >= 0) or (last_over_time((max by (namespace, pod, container) (kube_pod_container_status_restarts_total{namespace="__NAMESPACE__", pod=~"ide-.*"}))[300s:30s]) * 1)) * on (namespace, pod, container) group_left max by (namespace, pod, container) (last_over_time(kube_pod_container_status_last_terminated_reason{namespace="__NAMESPACE__", pod=~"ide-.*", reason="OOMKilled"}[5m])) * on (namespace, pod) group_left (label_eduide_github_io_template) max by (namespace, pod, label_eduide_github_io_template) (last_over_time(kube_pod_labels{namespace="__NAMESPACE__"}[5m])), "template", "$1", "label_eduide_github_io_template", "(.+)"))
