@@ -7,6 +7,7 @@ The section of a version becomes the notes of its GitHub Release.
 
 ### Changes
 
+- Stable `data-testid` attributes for end-to-end tests: `launch-app-<template name>` and `data-persistence` on the tiles, `variant-<id>`, `pick-start` and `info-start` in the dialogs, `account-button` and `logoutButton` in the header, `row-<key>`, `row-open` and `row-delete` on the environment rows
 - The deprecated `?artemisToken=` and a `?gitUri=` with credentials leave the address bar before the login, like the fragment forms; they no longer travel to Keycloak inside the redirect URI
 - A repository URL with a query or a fragment no longer makes the launch fail: the display source drops both
 - New message for `workspace-limit-reached`: the service limits the saved workspaces per user (`workspaces.perUser`)
