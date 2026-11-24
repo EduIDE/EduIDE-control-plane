@@ -208,7 +208,7 @@ func (i *ide) tryApprove(w http.ResponseWriter, r *http.Request) {
 	hosts := slices.Clone(i.gitHosts)
 	i.mu.Unlock()
 	body, _ := json.Marshal(map[string]string{"repository": in.Repository, "access": "read"})
-	put := func(u string) attempt {
+	put := func(hc *http.Client, u string) attempt {
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, u, bytes.NewReader(body))
 		if err != nil {
 			return attempt{Error: true}
@@ -221,9 +221,9 @@ func (i *ide) tryApprove(w http.ResponseWriter, r *http.Request) {
 		_ = resp.Body.Close()
 		return attempt{Status: resp.StatusCode}
 	}
-	out := map[string]attempt{"service": put(svc + "/api/v1/sessions/" + in.Session + "/git/repositories")}
+	out := map[string]attempt{"service": put(hc, svc+"/api/v1/sessions/"+in.Session+"/git/repositories")}
 	if len(hosts) > 0 {
-		out["agent"] = put(i.agent + "/git/" + hosts[0] + "/course/other.git/info/refs")
+		out["agent"] = put(&http.Client{Timeout: 5 * time.Second}, i.agent+"/git/"+hosts[0]+"/course/other.git/info/refs")
 	}
 	writeJSON(w, out)
 }

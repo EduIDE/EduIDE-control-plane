@@ -618,8 +618,27 @@ func TestGitAccounts(t *testing.T) {
 			if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&got) != nil {
 				t.Fatalf("try-approve: status %d", resp.StatusCode)
 			}
-			if svc := got["service"]; svc.Error || svc.Status != 401 {
-				t.Errorf("service answered %+v to an approval without a token, want 401 (a blocked connection would prove nothing)", svc)
+			// Session pods may not reach the gateway at all (the egress deny list covers private ranges), so the pod
+			// either gets no connection or a 401. Never a success.
+			if svc := got["service"]; !svc.Error && svc.Status != 401 && svc.Status != 403 {
+				t.Errorf("service answered %+v to a call without a token", svc)
+			}
+			// What the pod would hit if it could connect: the same PUT without a token, and with a made-up token,
+			// from here, with the real session name and a provider repository.
+			for name, bearer := range map[string]string{"no token": "", "made-up token": "pod-guess"} {
+				r, _ := http.NewRequest(http.MethodPut, apiBase+repoPath, strings.NewReader(`{"repository":"`+otherURL+`","access":"read"}`))
+				r.Header.Set("Content-Type", "application/json")
+				if bearer != "" {
+					r.Header.Set("Authorization", "Bearer "+bearer)
+				}
+				pr, err := testHTTPClient(t, false, true).Do(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_ = pr.Body.Close()
+				if pr.StatusCode != http.StatusUnauthorized {
+					t.Errorf("PUT with %s: status %d, want 401", name, pr.StatusCode)
+				}
 			}
 			if ag := got["agent"]; ag.Error || ag.Status < 400 {
 				t.Errorf("agent answered %+v to a PUT on the Git path", ag)
