@@ -156,7 +156,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 }
 
 // gitEnv tells the agent where Git traffic goes (ADR 0023). Without providers or a proxy URL it is empty and the
-// agent answers 404 on /git/. Idle pods built before a config change keep their old values until the pool replaces them.
+// agent answers 404 on /git/. specHash covers the values, so the pool replaces idle pods after a config change.
 func (d *deps) gitEnv() []corev1.EnvVar {
 	g := d.cfg.GitAccounts
 	if len(g.Providers) == 0 || g.ProxyURL == "" {
@@ -173,12 +173,19 @@ func (d *deps) gitEnv() []corev1.EnvVar {
 	}
 }
 
-// specHash identifies what a pod is built from: the template spec, the agent image and the deployment placement.
+// specHash identifies what a pod is built from: the template spec, the agent image, the deployment placement and
+// the Git settings of the agent.
 // A pool replaces idle pods with another hash.
 func (d *deps) specHash(t *v1.IDETemplate) string {
 	// routeVersion changes when the route of an instance changes, so pools replace idle instances with old routes.
 	const routeVersion = 2
-	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement, routeVersion})
+	in := []any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement, routeVersion}
+	// The Git settings of the agent are part of the pod. Without providers the input stays what it was before the
+	// feature, so an upgrade does not replace the idle pods of installations that do not use it.
+	if env := d.gitEnv(); len(env) > 0 {
+		in = append(in, env)
+	}
+	b, _ := json.Marshal(in)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]
 }

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -242,6 +244,67 @@ func TestRateLimitPerInstance(t *testing.T) {
 	other := gitapi.AuthorizeRequest{Instance: "inst2", Host: "github.com", Repository: "o/r", Kind: "read"}
 	if code, _, _ := r.call(instanceTok, other); code == http.StatusTooManyRequests {
 		t.Error("instances share a budget")
+	}
+}
+
+// countingReader counts the Secret reads of the handler.
+type countingReader struct {
+	client.Reader
+	n atomic.Int64
+}
+
+func (c *countingReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	c.n.Add(1)
+	return c.Reader.Get(ctx, key, obj, opts...)
+}
+
+func TestWrongTokensDoNotDrainTheBucketOfTheSession(t *testing.T) {
+	r := newRig(t, session("s", "alice", "inst1", "", v1alpha1.SessionReady))
+	cr := &countingReader{Reader: r.k}
+	r.h.Secrets = cr
+	req := gitapi.AuthorizeRequest{Instance: "inst1", Host: "github.com", Repository: "o/r", Kind: "read"}
+	for i := range 5 * perInstanceBurst {
+		if code, _, _ := r.call(fmt.Sprintf("wrong-%d", i), req); code != http.StatusUnauthorized {
+			t.Fatalf("wrong token: %d", code)
+		}
+	}
+	if code, _, _ := r.call(instanceTok, req); code != http.StatusOK {
+		t.Errorf("the real caller is locked out: %d", code)
+	}
+	if n := cr.n.Load(); n > 3 { // the first lookup, plus Secrets of the decision itself
+		t.Errorf("%d Secret reads for %d wrong tokens: the token is not cached", n, 5*perInstanceBurst)
+	}
+}
+
+func TestMadeUpInstanceNamesAreBounded(t *testing.T) {
+	r := newRig(t, session("s", "alice", "inst1", "", v1alpha1.SessionReady))
+	cr := &countingReader{Reader: r.k}
+	r.h.Secrets = cr
+	limited := 0
+	for i := range 3 * unknownLookupBurst {
+		req := gitapi.AuthorizeRequest{Instance: fmt.Sprintf("made-up-%d", i), Host: "github.com", Repository: "o/r", Kind: "read"}
+		if code, _, _ := r.call("x", req); code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 || cr.n.Load() > unknownLookupBurst+unknownLookupRate {
+		t.Errorf("limited %d, %d Secret reads", limited, cr.n.Load())
+	}
+	// A real instance is not affected by the flood, and its first lookup does not draw on the budget of unknown ones.
+	req := gitapi.AuthorizeRequest{Instance: "inst1", Host: "github.com", Repository: "o/r", Kind: "read"}
+	if code, _, _ := r.call(instanceTok, req); code != http.StatusOK {
+		t.Errorf("a real instance is refused during a flood: %d", code)
+	}
+}
+
+func TestTokenCacheAndLimitersAreBounded(t *testing.T) {
+	r := newRig(t)
+	for i := range maxTracked + 50 {
+		_, _ = r.h.lookupToken(context.Background(), fmt.Sprintf("n%d", i), time.Now())
+		r.h.allow(fmt.Sprintf("n%d", i))
+	}
+	if len(r.h.tokens) > maxTracked || len(r.h.limiters) > maxTracked {
+		t.Errorf("%d tokens, %d limiters", len(r.h.tokens), len(r.h.limiters))
 	}
 }
 

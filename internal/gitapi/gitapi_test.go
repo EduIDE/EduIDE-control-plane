@@ -51,3 +51,39 @@ func TestSplitURL(t *testing.T) {
 		}
 	}
 }
+
+func TestCanonicalRepo(t *testing.T) {
+	tests := []struct {
+		in, want string
+		ok       bool
+	}{
+		{"o/r", "o/r", true},
+		{"/o/r/", "o/r", true},
+		{"o/r.git", "o/r", true},
+		{"G/Sub/P.git", "G/Sub/P", true},
+		{"o/my.repo-1_x~", "o/my.repo-1_x~", true},
+		{"o/r/.git/info", "", false}, // the dot segment that used to normalise to o/r
+		{"o/.git", "", false},
+		{"o/.hidden", "", false},
+		{"o/..", "", false},
+		{"o/./r", "", false},
+		{"o/r.git.git", "", false},
+		{"o.git/r", "", false}, // .git only at the end of the last segment
+		{"o", "", false},
+		{"", "", false},
+		{"o/r%73", "", false},
+		{"o/r s", "", false},
+		{"o//r", "", false},
+		{"a/b/c/d/e/f/g/h/i/j", "a/b/c/d/e/f/g/h/i/j", true},
+		{"a/b/c/d/e/f/g/h/i/j/k", "", false},
+	}
+	for _, tc := range tests {
+		got, ok := CanonicalRepo(tc.in)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("CanonicalRepo(%q) = %q %v, want %q %v", tc.in, got, ok, tc.want, tc.ok)
+		}
+		if ok && NormalizeRepo(got) != got {
+			t.Errorf("CanonicalRepo(%q) = %q is not stable under NormalizeRepo", tc.in, got)
+		}
+	}
+}

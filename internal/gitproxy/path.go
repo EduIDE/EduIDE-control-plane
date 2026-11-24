@@ -4,7 +4,6 @@ package gitproxy
 
 import (
 	"net/url"
-	"regexp"
 	"strings"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitapi"
@@ -24,7 +23,7 @@ const (
 // Target is a request that passed the path allowlist: /{host}/{repo...}/{info/refs|git-upload-pack|git-receive-pack}.
 type Target struct {
 	Host string // lower case
-	Repo string // as sent, without surrounding slashes
+	Repo string // canonical (gitapi.CanonicalRepo): no slashes around it, no .git suffix. Upstream and authorize use this value only.
 	Op   Op
 	// Service is git-upload-pack or git-receive-pack.
 	Service string
@@ -38,19 +37,13 @@ func (t Target) Kind() string {
 	return gitapi.KindRead
 }
 
-// upstreamPath is the path below the repository.
+// upstreamPath is the fixed Git suffix below the repository; the upstream URL is "/" + Repo + upstreamPath.
 func (t Target) upstreamPath() string {
 	if t.Op == OpInfoRefs {
 		return "/info/refs"
 	}
 	return "/" + t.Service
 }
-
-// segmentRE limits a repository path segment to characters that need no escaping and cannot change the meaning
-// of the upstream URL (no slash, percent, query or fragment).
-var segmentRE = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
-
-const maxRepoSegments = 10
 
 // ParsePath checks method, path and query against the allowlist. ok is false for everything else.
 func ParsePath(method, path, rawQuery string) (Target, bool) {
@@ -86,14 +79,10 @@ func ParsePath(method, path, rawQuery string) (Target, bool) {
 	default:
 		return Target{}, false
 	}
-	if len(rest) < 2 || len(rest) > maxRepoSegments {
+	repo, ok := gitapi.CanonicalRepo(strings.Join(rest, "/"))
+	if !ok {
 		return Target{}, false
 	}
-	for _, s := range rest {
-		if s == "." || s == ".." || !segmentRE.MatchString(s) {
-			return Target{}, false
-		}
-	}
-	t.Repo = strings.Join(rest, "/")
+	t.Repo = repo
 	return t, true
 }

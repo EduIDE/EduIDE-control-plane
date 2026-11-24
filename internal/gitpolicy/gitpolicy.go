@@ -4,6 +4,7 @@ package gitpolicy
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,16 @@ const (
 	perInstanceRate  = 10
 	perInstanceBurst = 30
 	instanceIndex    = "status.instance"
+	// maxTracked bounds the limiter map and the token cache.
+	maxTracked = 4096
+	// tokenTTL is how long the hash of an instance token is reused; the token never changes while the instance lives.
+	// A missing Secret is remembered for missTTL only, so a new instance is not refused for long.
+	tokenTTL = 30 * time.Second
+	missTTL  = 5 * time.Second
+	// unknownLookupRate bounds the Secret reads for instances without a session. Instances with a session
+	// (the real ones) do not draw on it, so a flood of made-up names cannot starve them.
+	unknownLookupRate  = 20
+	unknownLookupBurst = 100
 )
 
 // instanceRE is the shape of an instance id; it ends up in a Secret name.
@@ -73,6 +84,15 @@ type Handler struct {
 
 	mu       sync.Mutex
 	limiters map[string]*limiterEntry
+	tokens   map[string]tokenEntry
+	unknown  *rate.Limiter
+}
+
+// tokenEntry is what the service knows of the token Secret of one instance. It holds a hash, never the token.
+type tokenEntry struct {
+	hash    [sha256.Size]byte
+	exists  bool
+	expires time.Time
 }
 
 type limiterEntry struct {
@@ -100,17 +120,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	if !h.allow(req.Instance) {
+	// The token comes first: only a caller that holds the instance token draws on the budget of the instance.
+	// Otherwise anyone who knows an instance name (it is in the IDE URL) could empty the bucket of that session.
+	switch ok, err := h.tokenOK(r.Context(), req.Instance, bearer); {
+	case errors.Is(err, errLookupBudget):
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
-	}
-	switch ok, err := h.tokenOK(r.Context(), req.Instance, bearer); {
 	case err != nil:
 		slog.ErrorContext(r.Context(), "git authorize: instance token lookup failed", "error", err.Error())
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	case !ok:
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !h.allow(req.Instance) {
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
 		return
 	}
 	resp, err := h.decide(r.Context(), req)
@@ -124,6 +149,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+// allow charges the bucket of an authenticated instance. The map is bounded: quiet buckets are dropped first,
+// and when it is still full the call is let through untracked (the caller holds a valid instance token).
 func (h *Handler) allow(instance string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -131,15 +158,18 @@ func (h *Handler) allow(instance string) bool {
 	if h.limiters == nil {
 		h.limiters = map[string]*limiterEntry{}
 	}
-	if len(h.limiters) > 1024 { // forget instances that were quiet for a while
-		for k, e := range h.limiters {
-			if now.Sub(e.seen) > 5*time.Minute {
-				delete(h.limiters, k)
-			}
-		}
-	}
 	e := h.limiters[instance]
 	if e == nil {
+		if len(h.limiters) >= maxTracked {
+			for k, o := range h.limiters {
+				if now.Sub(o.seen) > 5*time.Minute {
+					delete(h.limiters, k)
+				}
+			}
+			if len(h.limiters) >= maxTracked {
+				return true
+			}
+		}
 		e = &limiterEntry{l: rate.NewLimiter(perInstanceRate, perInstanceBurst)}
 		h.limiters[instance] = e
 	}
@@ -147,18 +177,67 @@ func (h *Handler) allow(instance string) bool {
 	return e.l.Allow()
 }
 
-// tokenOK compares the bearer with the instance token Secret in constant time. An unknown instance is not ok.
+var errLookupBudget = errors.New("too many token lookups for unknown instances")
+
+// tokenOK compares the bearer with the instance token in constant time. An unknown instance is not ok.
+// The hash of the token is cached, so wrong tokens for a real instance cost no API call at all.
 func (h *Handler) tokenOK(ctx context.Context, instance, bearer string) (bool, error) {
+	got := sha256.Sum256([]byte(bearer))
+	now := time.Now()
+	h.mu.Lock()
+	e, hit := h.tokens[instance]
+	h.mu.Unlock()
+	if !hit || !now.Before(e.expires) {
+		if l, err := h.Sessions.ByInstance(ctx, instance); err == nil && len(l) == 0 && !h.unknownBudget() {
+			return false, errLookupBudget
+		}
+		var err error
+		if e, err = h.lookupToken(ctx, instance, now); err != nil {
+			return false, err
+		}
+	}
+	return e.exists && subtle.ConstantTimeCompare(got[:], e.hash[:]) == 1, nil
+}
+
+func (h *Handler) unknownBudget() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.unknown == nil {
+		h.unknown = rate.NewLimiter(unknownLookupRate, unknownLookupBurst)
+	}
+	return h.unknown.Allow()
+}
+
+func (h *Handler) lookupToken(ctx context.Context, instance string, now time.Time) (tokenEntry, error) {
 	var sec corev1.Secret
 	err := h.Secrets.Get(ctx, types.NamespacedName{Namespace: h.Namespace, Name: "ide-" + instance + "-token"}, &sec)
-	if apierrors.IsNotFound(err) {
-		return false, nil
+	e := tokenEntry{expires: now.Add(missTTL)}
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return tokenEntry{}, err
+	default:
+		if want := sec.Data[v1alpha1.InstanceTokenKey]; len(want) > 0 {
+			e = tokenEntry{hash: sha256.Sum256(want), exists: true, expires: now.Add(tokenTTL)}
+		}
 	}
-	if err != nil {
-		return false, err
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.tokens == nil {
+		h.tokens = map[string]tokenEntry{}
 	}
-	want := sec.Data[v1alpha1.InstanceTokenKey]
-	return len(want) > 0 && subtle.ConstantTimeCompare([]byte(bearer), want) == 1, nil
+	_, known := h.tokens[instance]
+	if !known && len(h.tokens) >= maxTracked {
+		for k, o := range h.tokens {
+			if !now.Before(o.expires) {
+				delete(h.tokens, k)
+			}
+		}
+	}
+	if known || len(h.tokens) < maxTracked {
+		h.tokens[instance] = e
+	}
+	return e, nil
 }
 
 func (h *Handler) provider(host string) (config.GitProvider, bool) {

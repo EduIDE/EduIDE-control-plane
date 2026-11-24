@@ -20,10 +20,10 @@ func TestParsePath(t *testing.T) {
 		ok                        bool
 		want                      Target
 	}{
-		{"info refs upload", "GET", "/GitHub.com/o/r.git/info/refs", "service=git-upload-pack", true, Target{Host: "github.com", Repo: "o/r.git", Op: OpInfoRefs, Service: "git-upload-pack"}},
+		{"info refs upload", "GET", "/GitHub.com/o/r.git/info/refs", "service=git-upload-pack", true, Target{Host: "github.com", Repo: "o/r", Op: OpInfoRefs, Service: "git-upload-pack"}},
 		{"info refs receive", "GET", "/h.test/o/r/info/refs", "service=git-receive-pack", true, Target{Host: "h.test", Repo: "o/r", Op: OpInfoRefs, Service: "git-receive-pack"}},
 		{"upload pack", "POST", "/h.test/o/r/git-upload-pack", "", true, Target{Host: "h.test", Repo: "o/r", Op: OpUploadPack, Service: "git-upload-pack"}},
-		{"receive pack", "POST", "/h.test/g/sub/r.git/git-receive-pack", "", true, Target{Host: "h.test", Repo: "g/sub/r.git", Op: OpReceivePack, Service: "git-receive-pack"}},
+		{"receive pack", "POST", "/h.test/g/sub/r.git/git-receive-pack", "", true, Target{Host: "h.test", Repo: "g/sub/r", Op: OpReceivePack, Service: "git-receive-pack"}},
 		{"lfs batch", "POST", "/h.test/o/r.git/info/lfs/objects/batch", "", true, Target{Host: "h.test", Repo: "o/r.git", Op: OpLFS}},
 		{"dumb protocol", "GET", "/h.test/o/r/info/refs", "", false, Target{}},
 		{"unknown service", "GET", "/h.test/o/r/info/refs", "service=other", false, Target{}},
@@ -42,6 +42,11 @@ func TestParsePath(t *testing.T) {
 		{"no host", "GET", "//o/r/info/refs", "service=git-upload-pack", false, Target{}},
 		{"too deep", "GET", "/h.test/" + strings.Repeat("a/", 11) + "info/refs", "service=git-upload-pack", false, Target{}},
 		{"root", "GET", "/", "", false, Target{}},
+		{"dot git segment", "GET", "/h.test/o/r/.git/info/refs", "service=git-upload-pack", false, Target{}},
+		{"dot git segment upload", "POST", "/h.test/o/r/.git/git-upload-pack", "", false, Target{}},
+		{"hidden segment", "GET", "/h.test/o/.x/info/refs", "service=git-upload-pack", false, Target{}},
+		{"double git suffix", "GET", "/h.test/o/r.git.git/info/refs", "service=git-upload-pack", false, Target{}},
+		{"git suffix in the middle", "GET", "/h.test/o.git/r/info/refs", "service=git-upload-pack", false, Target{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -50,19 +51,23 @@ type Handler struct {
 	cache      *decisionCache
 	log        *slog.Logger
 	rp         *httputil.ReverseProxy
+	clients    *clientLimiter
+	running    slots
+	idle       time.Duration
 }
 
 // New returns a handler for the provider hosts. rt reaches the provider hosts over HTTPS; nil takes a transport
 // with default TLS verification. Redirects of a provider are never followed.
 func New(providers []config.GitProvider, landingURL string, az Authorizer, rt http.RoundTripper, log *slog.Logger) *Handler {
-	h := &Handler{providers: map[string]Provider{}, landingURL: landingURL, authz: az, cache: newDecisionCache(), log: log}
+	h := &Handler{providers: map[string]Provider{}, landingURL: landingURL, authz: az, cache: newDecisionCache(), log: log, clients: newClientLimiter(), idle: idleTimeout}
 	for _, p := range providers {
 		h.providers[strings.ToLower(p.Host)] = Provider{Name: p.Name, DisplayName: p.DisplayName}
 	}
 	if rt == nil {
 		rt = Transport(nil)
 	}
-	// No timeout of the whole request: a clone or push of gigabytes must not be cut off.
+	// No timeout of the whole request: a clone or push of gigabytes must not be cut off. A request that moves
+	// no byte for h.idle is cancelled (ServeHTTP).
 	h.rp = &httputil.ReverseProxy{
 		FlushInterval:  -1,
 		BufferPool:     bufPool{},
@@ -96,10 +101,13 @@ type reqState struct {
 	connected   bool
 	sessionRepo string
 	approval    string
-	start       time.Time
-	in, out     atomic.Int64
-	result      string
-	upstream    int
+	// progress is called whenever bytes move; it keeps the idle deadline away.
+	progress func()
+	start    time.Time
+	in, out  atomic.Int64
+	idleCut  atomic.Bool
+	result   string
+	upstream int
 }
 
 type stateKey struct{}
@@ -124,7 +132,7 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 		pr.Out.SetBasicAuth(st.cred.Username, st.cred.Password)
 	}
 	if b := pr.Out.Body; b != nil && b != http.NoBody {
-		pr.Out.Body = &countReader{ReadCloser: b, n: &st.in}
+		pr.Out.Body = &countReader{ReadCloser: b, n: &st.in, progress: st.progress}
 	}
 }
 
@@ -150,7 +158,7 @@ func (h *Handler) modifyResponse(resp *http.Response) error {
 			delete(resp.Header, k)
 		}
 	}
-	resp.Body = &countReader{ReadCloser: resp.Body, n: &st.out}
+	resp.Body = &countReader{ReadCloser: resp.Body, n: &st.out, progress: st.progress}
 	return nil
 }
 
@@ -180,6 +188,10 @@ func (h *Handler) upstreamDeniedMessage(st *reqState) string {
 func (h *Handler) upstreamFailed(w http.ResponseWriter, r *http.Request, err error) {
 	st := stateOf(r.Context())
 	st.result = resultUpstreamError
+	if st.idleCut.Load() {
+		writeGitError(w, st.t, "The transfer stalled and EduIDE cancelled it. Try again.")
+		return
+	}
 	if r.Context().Err() != nil { // the client went away
 		return
 	}
@@ -210,6 +222,11 @@ func (h *Handler) replaceWithError(resp *http.Response, st *reqState, msg string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !h.clients.allow(clientIP(r)) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many requests", http.StatusTooManyRequests)
+		return
+	}
 	t, ok := ParsePath(r.Method, r.URL.Path, r.URL.RawQuery)
 	prov, known := h.providers[t.Host]
 	if !ok || !known {
@@ -246,12 +263,55 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.finish(st, resp.Reason)
 		return
 	}
-	h.rp.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), stateKey{}, st)))
+	if !h.running.acquire(instance) {
+		st.result = resultDenied
+		writeGitError(w, t, "Too many Git requests of this session run at the same time. Try again in a moment.")
+		h.finish(st, "busy")
+		return
+	}
+	defer h.running.release(instance)
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+	timer := time.AfterFunc(h.idle, func() { st.idleCut.Store(true); cancel() })
+	defer timer.Stop()
+	rc := http.NewResponseController(w)
+	st.progress = func() {
+		timer.Reset(h.idle)
+		_ = rc.SetReadDeadline(time.Now().Add(h.idle))
+		_ = rc.SetWriteDeadline(time.Now().Add(h.idle))
+	}
+	st.progress()
+	defer func() { _ = rc.SetReadDeadline(time.Time{}); _ = rc.SetWriteDeadline(time.Time{}) }()
+	h.rp.ServeHTTP(&progressWriter{ResponseWriter: w, progress: st.progress}, r.WithContext(context.WithValue(ctx, stateKey{}, st)))
 	if st.result == "" { // the client went away before an answer
 		st.result = resultUpstreamError
 	}
 	h.finish(st, resp.Reason)
 }
+
+func clientIP(r *http.Request) string {
+	h, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return h
+}
+
+// progressWriter reports every write that reached the client.
+type progressWriter struct {
+	http.ResponseWriter
+	progress func()
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n, err := p.ResponseWriter.Write(b)
+	if n > 0 {
+		p.progress()
+	}
+	return n, err
+}
+
+func (p *progressWriter) Unwrap() http.ResponseWriter { return p.ResponseWriter }
 
 func (h *Handler) authorize(ctx context.Context, instance, token string, t Target) (gitapi.AuthorizeResponse, error) {
 	req := gitapi.AuthorizeRequest{Instance: instance, Host: t.Host, Repository: gitapi.NormalizeRepo(t.Repo), Kind: t.Kind()}
@@ -303,6 +363,9 @@ func pktLine(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
 
 func errorBody(t Target, msg string) []byte {
 	msg = strings.Join(strings.Fields(msg), " ")
+	if len(msg) > maxErrMessage {
+		msg = strings.ToValidUTF8(msg[:maxErrMessage], "")
+	}
 	var b strings.Builder
 	if t.Op == OpInfoRefs {
 		b.WriteString(pktLine("# service=" + t.Service + "\n"))
@@ -321,12 +384,16 @@ func writeLFSError(w http.ResponseWriter) {
 
 type countReader struct {
 	io.ReadCloser
-	n *atomic.Int64
+	n        *atomic.Int64
+	progress func() // may be nil
 }
 
 func (c *countReader) Read(p []byte) (int, error) {
 	n, err := c.ReadCloser.Read(p)
 	c.n.Add(int64(n))
+	if n > 0 && c.progress != nil {
+		c.progress()
+	}
 	return n, err
 }
 

@@ -107,7 +107,9 @@ func TestGitPreflight(t *testing.T) {
 			t.Errorf("probe path %s", p)
 		}
 	}
-	for _, bad := range []string{"http://gitlab.example.org/o/priv", "https://u:p@gitlab.example.org/o/priv", "https://gitlab.example.org/", "https://gitlab.example.org/o/../x", "nonsense", ""} {
+	for _, bad := range []string{"http://gitlab.example.org/o/priv", "https://u:p@gitlab.example.org/o/priv", "https://gitlab.example.org/", "https://gitlab.example.org/o/../x",
+		"https://gitlab.example.org/o/priv/.git/info", "https://gitlab.example.org/o/priv.git.git", "https://gitlab.example.org/priv", "https://gitlab.example.org/o/priv/x/../../../../../api/v4/user",
+		"https://gitlab.example.org/o/p%3Fx=1", "nonsense", ""} {
 		if _, code := pre("alice", bad); code != 400 {
 			t.Errorf("%q: %d", bad, code)
 		}
@@ -338,6 +340,9 @@ func TestGitRepositoryApprovalRefusals(t *testing.T) {
 		{"fragment", ok + "#x", "read", 400, "invalid-input"},
 		{"port", "https://gitlab.example.org:8443/o/r", "read", 400, "invalid-input"},
 		{"no path", "https://gitlab.example.org/", "read", 400, "invalid-input"},
+		{"dot git segment", ok + "/.git/info", "read", 400, "invalid-input"},
+		{"double git suffix", ok + ".git.git", "read", 400, "invalid-input"},
+		{"one segment", "https://gitlab.example.org/r", "read", 400, "invalid-input"},
 		{"bad access", ok, "admin", 400, "invalid-input"},
 	} {
 		if rec := put(tc.repo, tc.access); rec.Code != tc.code || codeOf(t, rec) != tc.want {

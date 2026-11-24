@@ -54,6 +54,42 @@ type provider struct {
 	cgi  *cgi.Handler
 	mu   sync.Mutex
 	seen []seenRequest
+	// slow throttles both directions of the fake provider: a slow link. Set it before the first request.
+	slow time.Duration
+}
+
+// slowWriter and slowReader pass 256 KiB per step of the delay.
+type slowWriter struct {
+	http.ResponseWriter
+	d time.Duration
+}
+
+func (s *slowWriter) Write(b []byte) (int, error) {
+	const chunk = 256 << 10
+	total := 0
+	for len(b) > 0 {
+		n := min(len(b), chunk)
+		w, err := s.ResponseWriter.Write(b[:n])
+		total += w
+		if err != nil {
+			return total, err
+		}
+		time.Sleep(s.d)
+		b = b[n:]
+	}
+	return total, nil
+}
+
+func (s *slowWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+type slowReader struct {
+	io.ReadCloser
+	d time.Duration
+}
+
+func (s *slowReader) Read(b []byte) (int, error) {
+	time.Sleep(s.d / 4)
+	return s.ReadCloser.Read(b[:min(len(b), 64<<10)])
 }
 
 func newProvider(t *testing.T, gitExec string) *provider {
@@ -73,6 +109,9 @@ func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.seen = append(p.seen, seenRequest{r.URL.Path, r.Header.Get("Authorization")})
 	p.mu.Unlock()
+	if p.slow > 0 {
+		w, r.Body = &slowWriter{ResponseWriter: w, d: p.slow}, &slowReader{ReadCloser: r.Body, d: p.slow}
+	}
 	push := r.URL.Query().Get("service") == "git-receive-pack" || strings.HasSuffix(r.URL.Path, "/git-receive-pack")
 	if strings.HasPrefix(r.URL.Path, "/priv/") || push {
 		want := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+upstreamTok))
@@ -777,6 +816,10 @@ func TestLargeRepositoryStreams(t *testing.T) {
 	}
 	r := newRig(t)
 	const size = 50 << 20
+	// A slow link: each direction takes about 5 s, the idle deadline is 3 s. The transfer never stops, so it
+	// must finish (the deadline counts idle time, not total time).
+	r.prov.slow = 25 * time.Millisecond
+	r.proxy.idle = 3 * time.Second
 	seedDir := t.TempDir()
 	randomFile(t, filepath.Join(seedDir, "blob.bin"), size)
 	bare := filepath.Join(r.prov.root, "priv", "big.git")

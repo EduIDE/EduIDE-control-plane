@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitapi"
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitpolicy"
 )
 
@@ -61,8 +62,8 @@ func (s *Server) GitPreflight(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// parseGitRepoURL applies the rules of the launch key GIT_URI: https, a host, no credentials. It rejects dot
-// segments, so the result is the repository and nothing else. With strict a query or fragment is an error; without
+// parseGitRepoURL applies the rules of the launch key GIT_URI: https, a host, no credentials. The path must pass
+// gitapi.CanonicalRepo, the same rule the git-proxy applies, so the result is the repository and nothing else. With strict a query or fragment is an error; without
 // it they are dropped.
 func parseGitRepoURL(raw string, strict bool) (*url.URL, *apiError) {
 	bad := problem(CodeInvalidInput, "the repository must be an https URL without credentials, query or fragment")
@@ -71,13 +72,8 @@ func parseGitRepoURL(raw string, strict bool) (*url.URL, *apiError) {
 		strict && (u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || strings.Contains(raw, "#")) {
 		return nil, bad
 	}
-	for _, seg := range strings.Split(u.Path, "/") {
-		if seg == ".." || seg == "." {
-			return nil, bad
-		}
-	}
-	repo := strings.TrimSuffix(strings.TrimRight(u.Path, "/"), ".git")
-	if repo == "" {
+	repo, ok := gitapi.CanonicalRepo(u.Path)
+	if !ok {
 		return nil, bad
 	}
 	return &url.URL{Scheme: "https", Host: u.Host, Path: repo}, nil
