@@ -65,7 +65,7 @@ Go tests with the build tag `e2e` in this directory, run in the order of the fil
 | `capacity_test.go` | oldest idle pod of the same node pool deleted, other pool untouched, session fails with `capacity-exhausted` |
 | `lifecycle_test.go` | SSE events, idle timeout |
 | `git_test.go` | Git accounts (ADR 0023), own phase with `values-git.yaml`: connect flow, preflight, foreign state, clone, commit, push and the credential rule in a session, repository approval (link in the refusal, read then write, negative cases, the pod cannot approve), refresh, disconnect, no token in logs and containers, NetworkPolicy. See below. |
-| `browser/` | Playwright: Artemis launch without login (G16), the token reaches the IDE |
+| `browser/` | Playwright: Artemis launch without login (G16), the token reaches the IDE. `git-accounts.spec.ts` runs in the Git phase: connect through the page, a start link to the private repository that asks to connect and then launches, the approval page |
 
 ## Git accounts run
 
@@ -83,6 +83,7 @@ E2E_RUN=TestGitAccounts make e2e     # only this phase (the base install still r
 ```
 
 Without `E2E_GIT_CA_FILE` (set by `run.sh`) the tests skip, so `go test -tags e2e ./test/e2e/` against a cluster without the feature stays green.
+After the Go tests the phase runs `browser/git-accounts.spec.ts`. The browser cannot resolve the fake's cluster address, so `run.sh` starts `kubectl port-forward svc/fake-git` on `E2E_FAKE_GIT_PORT` (default 18444) and the spec answers the authorize step through it, the way the fake would redirect a browser.
 The approval modes `read` and `off` are not part of this run (default mode `write`).
 The refresh test waits about a minute: the fake's access tokens live 75 seconds and the service refreshes a minute before expiry.
 

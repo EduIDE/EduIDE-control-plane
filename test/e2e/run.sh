@@ -160,6 +160,21 @@ run_git_phase() {
     --set image.tag="$TAG" >/dev/null
   trust_e2e_ca
   E2E_GIT_CA_FILE="$REPO/.e2e/certs-git/ca.crt" go test -tags e2e ./test/e2e/... -run "${E2E_RUN:-^TestGit}" -count=1 -v -timeout 40m
+  if [[ "${E2E_SKIP_BROWSER:-}" != 1 ]]; then
+    log "browser tests of the Git accounts (Playwright)"
+    # The browser cannot resolve the fake provider inside the cluster: the spec asks it through this forward.
+    export E2E_FAKE_GIT_PORT=${E2E_FAKE_GIT_PORT:-18444}
+    kubectl -n "$NS" port-forward svc/fake-git "$E2E_FAKE_GIT_PORT:443" >/dev/null 2>&1 &
+    forward_pid=$!
+    for _ in $(seq 1 30); do
+      curl -ks -o /dev/null "https://127.0.0.1:$E2E_FAKE_GIT_PORT/" && break
+      sleep 1
+    done
+    status=0
+    (cd test/e2e/browser && npm ci --silent && npx playwright install chromium && npx playwright test git-accounts.spec.ts) || status=$?
+    kill "$forward_pid" 2>/dev/null || true
+    return "$status"
+  fi
 }
 
 log "tests"
@@ -182,7 +197,8 @@ if [[ "${E2E_SKIP_BROWSER:-}" != 1 && -n "$RUN" ]]; then
   log "browser tests (Playwright; skip with E2E_SKIP_BROWSER=1)"
   grep=()
   [[ "${E2E_INFRA_ONLY:-}" == 1 ]] && grep=(--grep infra)
-  (cd test/e2e/browser && npm ci --silent && npx playwright install chromium && npx playwright test ${grep[@]+"${grep[@]}"})
+  # git-accounts.spec.ts needs the providers and runs in the Git phase.
+  (cd test/e2e/browser && npm ci --silent && npx playwright install chromium && npx playwright test smoke.spec.ts artemis-launch.spec.ts ${grep[@]+"${grep[@]}"})
 fi
 
 [[ "$RUN_GIT" == 1 ]] && run_git_phase
