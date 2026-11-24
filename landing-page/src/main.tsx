@@ -5,9 +5,11 @@ import { createApi } from './api';
 import App from './App';
 import { captureFromWindow } from './artemisToken';
 import { initKeycloak, tokenProvider } from './auth';
+import { GitCallback } from './components/GitCallback';
 import { LegalPage } from './components/LegalPage';
 import { Shell } from './components/Shell';
 import { loadConfig } from './config';
+import { captureGitCallbackFromWindow } from './git';
 import { loadLang, translate } from './i18n';
 import { I18nProvider } from './I18nProvider';
 import { appRoute } from './routes';
@@ -18,6 +20,8 @@ async function start(): Promise<void> {
     try {
         // Order matters (G16): the fragment must be gone before Keycloak reads the URL.
         captureFromWindow();
+        // The Git host's code and state leave the address bar the same way, before Keycloak sees the URL.
+        captureGitCallbackFromWindow();
         const config = await loadConfig();
         document.title = config.title ?? 'EduIDE';
         // The legal pages and the footer must work without an account, so they render before Keycloak asks for a login.
@@ -60,6 +64,18 @@ async function start(): Promise<void> {
                             user={userFromToken(keycloak.tokenParsed)}
                             logoutUrl={keycloak.createLogoutUrl()}
                         />
+                    </I18nProvider>
+                </React.StrictMode>
+            );
+            return;
+        }
+        if (route.kind === 'gitCallback') {
+            root.render(
+                <React.StrictMode>
+                    <I18nProvider>
+                        <Shell config={config} user={userFromToken(keycloak.tokenParsed)} logoutUrl={keycloak.createLogoutUrl()}>
+                            <GitCallback api={api} />
+                        </Shell>
                     </I18nProvider>
                 </React.StrictMode>
             );

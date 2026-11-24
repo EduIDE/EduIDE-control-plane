@@ -12,6 +12,9 @@ describe('appRoute', () => {
         ['/status/', { kind: 'status' }],
         ['/admin', { kind: 'admin' }],
         ['/admin/pools', { kind: 'admin' }],
+        ['/git/callback', { kind: 'gitCallback' }],
+        ['/git/callback/', { kind: 'gitCallback' }],
+        ['/git', { kind: 'home' }],
         ['/administrator', { kind: 'home' }]
     ])('%s', (path, route) => {
         expect(appRoute(path)).toEqual(route);

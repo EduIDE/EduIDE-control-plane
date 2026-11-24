@@ -18,3 +18,9 @@ export type AdminProblems = Schemas['AdminProblems'];
 export type AdminProblemEvent = Schemas['AdminProblemEvent'];
 export type AdminTemplate = Schemas['AdminTemplate'];
 export type AdminConfig = Schemas['AdminConfig'];
+
+export type GitProvider = Schemas['GitProvider'];
+export type GitPreflightResponse = Schemas['GitPreflightResponse'];
+export type GitRepositories = Schemas['GitRepositories'];
+export type GitApproval = Schemas['GitApproval'];
+export type GitAccess = Schemas['GitAccess'];

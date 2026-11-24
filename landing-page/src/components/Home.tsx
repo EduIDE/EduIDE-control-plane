@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import type { Api } from '../api';
 import type { LaunchRequest, Template } from '../api-client';
+import type { GitProvider } from '../apiTypes';
 import { useI18n } from '../i18n';
 import { buildTileRequest } from '../launch';
 import { type Row, toRows } from '../overview';
 import { EnvironmentRows } from './EnvironmentRows';
+import { GitAccounts } from './GitAccounts';
 import { InfoDialog, PickDialog } from './TemplateDialogs';
 import { TemplateTile } from './TemplateTile';
 import { useNow } from './useNow';
@@ -20,12 +22,25 @@ interface HomeProps {
     onStartRow: (row: Row) => void;
     /** The overview stream came back after a drop: a good moment to ask for the templates again. */
     onReconnect?: () => void;
+    /** Git providers with the connection state of the user; empty when the feature is off. */
+    providers?: GitProvider[];
+    onProvidersChange?: () => void;
 }
 
 type Dialogs = { kind: 'info' | 'pick'; template: Template } | undefined;
 
 /** Your environments on top, new ones below. Both `/` and `/me/overview` show this page. */
-export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, onReconnect }: HomeProps): React.JSX.Element => {
+export const Home = ({
+    api,
+    templates,
+    error,
+    firstName,
+    onLaunch,
+    onStartRow,
+    onReconnect,
+    providers,
+    onProvidersChange
+}: HomeProps): React.JSX.Element => {
     const { t } = useI18n();
     const { overview, lost, recovered } = useOverview(api);
     const reconnect = useRef(onReconnect);
@@ -96,6 +111,7 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, o
                     </div>
                 </section>
             )}
+            {providers && providers.length > 0 && <GitAccounts api={api} providers={providers} onChange={() => onProvidersChange?.()} />}
             {dialog?.kind === 'info' && <InfoDialog template={dialog.template} onClose={() => setDialog(undefined)} onStart={pick} />}
             {dialog?.kind === 'pick' && (
                 <PickDialog
