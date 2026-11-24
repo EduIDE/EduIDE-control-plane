@@ -72,14 +72,15 @@ func TestGatewayAuth(t *testing.T) {
 		var idCookies int
 		for _, l := range ownerCookies() {
 			host, line, _ := strings.Cut(l, " ")
-			if !strings.HasPrefix(host, instanceHost) || strings.Contains(line, "Max-Age=0") || strings.Contains(line, "Max-Age=-1") {
+			if !strings.HasPrefix(host, instanceHost) || strings.Contains(line, "Max-Age=0") || strings.Contains(line, "Max-Age=-1") || strings.Contains(line, "1970") { // deleting a cookie
 				continue
 			}
 			name, _, _ := strings.Cut(line, "=")
 			if name == "eduide-id" {
 				idCookies++
 			}
-			if low := strings.ToLower(line); !strings.Contains(low, "; httponly") || !strings.Contains(low, "; secure") {
+			// Envoy writes the attributes without a blank: "...;secure;HttpOnly".
+			if low := strings.ReplaceAll(strings.ToLower(line), " ", ""); !strings.Contains(low, ";httponly") || !strings.Contains(low, ";secure") {
 				t.Errorf("cookie %s of the instance host is not HttpOnly and Secure: %s", name, strings.SplitN(line, ";", 2)[1])
 			}
 		}
