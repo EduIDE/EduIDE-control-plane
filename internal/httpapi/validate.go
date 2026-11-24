@@ -61,7 +61,7 @@ func decodeJSON(body io.Reader, v any) *apiError {
 
 // validateData checks the request data against the template allowlist (G18) and adds the
 // keys that come from the token. The result is what goes into the data Secret.
-func validateData(tpl *v1alpha1.IDETemplate, in map[string]string, user auth.User, allowedHosts []string) (map[string]string, *apiError) {
+func validateData(tpl *v1alpha1.IDETemplate, in map[string]string, user auth.User, allowedHosts func(key string) []string) (map[string]string, *apiError) {
 	total := 0
 	for k, v := range in {
 		total += len(k) + len(v)
@@ -93,7 +93,7 @@ func validateData(tpl *v1alpha1.IDETemplate, in map[string]string, user auth.Use
 			out[name] = val
 			continue
 		}
-		if err := validateValue(k, val, allowedHosts); err != nil {
+		if err := validateValue(k, val, allowedHosts(k.Name)); err != nil {
 			return nil, problem(CodeInvalidInput, "invalid value for key "+name+": "+err.Error())
 		}
 		out[name] = val

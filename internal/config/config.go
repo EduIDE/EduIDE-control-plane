@@ -53,6 +53,11 @@ type GitAccounts struct {
 	// EncryptionKeyFile holds the secret the service derives the token encryption key and the state key from
 	// (at least 32 bytes). Required with providers; the service reads it, the config never holds it.
 	EncryptionKeyFile string `json:"encryptionKeyFile,omitempty"`
+	// ProxyURL is the git-proxy Service the operator hands to the agents of new session pods (the chart sets it).
+	// Empty means session pods get no path for Git traffic.
+	ProxyURL string `json:"proxyURL,omitempty"`
+	// InternalURL is the internal listener of the service, which the git-proxy calls (the chart sets it).
+	InternalURL string `json:"internalURL,omitempty"`
 }
 
 // GitProvider is one Git host with its own OAuth application.
@@ -83,11 +88,15 @@ var (
 	gitHostRE = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?$`)
 )
 
-// HTTPSURLHosts are the hosts an HTTPSURL key such as GIT_URI may name: allowedHosts plus the provider hosts.
-func (c *Config) HTTPSURLHosts() []string {
+// HTTPSURLHosts are the hosts an HTTPSURL key may name: allowedHosts, plus the provider hosts for GIT_URI only.
+// Another key such as ARTEMIS_URL names a server that receives requests with credentials, so a Git host must not
+// pass there just because users can connect an account to it.
+func (c *Config) HTTPSURLHosts(key string) []string {
 	hosts := slices.Clone(c.AllowedHosts)
-	for _, p := range c.GitAccounts.Providers {
-		hosts = append(hosts, p.Host)
+	if key == "GIT_URI" {
+		for _, p := range c.GitAccounts.Providers {
+			hosts = append(hosts, p.Host)
+		}
 	}
 	return hosts
 }
@@ -389,6 +398,11 @@ func (c *Config) validateGitAccounts() []error {
 	var errs []error
 	if len(g.Providers) > 0 && g.EncryptionKeyFile == "" {
 		errs = append(errs, errors.New("config: gitAccounts.encryptionKeyFile is required with providers"))
+	}
+	for name, u := range map[string]string{"proxyURL": g.ProxyURL, "internalURL": g.InternalURL} {
+		if u != "" && !httpURL(u) {
+			errs = append(errs, fmt.Errorf("config: gitAccounts.%s must be an http(s) URL", name))
+		}
 	}
 	names, hosts := map[string]bool{}, map[string]bool{}
 	for i, p := range g.Providers {

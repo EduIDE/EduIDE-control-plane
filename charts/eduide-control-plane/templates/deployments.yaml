@@ -1,9 +1,17 @@
 {{- $full := include "ecp.fullname" . }}
 {{- $sum := include "ecp.config" . | sha256sum }}
-{{- range $c := list
+{{- $svcPorts := list (dict "name" "http" "port" 8080) (dict "name" "metrics" "port" 9090) }}
+{{- /* The internal listener of the service (Git authorize, ADR 0023) is only there with providers. */}}
+{{- if include "ecp.gitEnabled" . }}{{ $svcPorts = append $svcPorts (dict "name" "internal" "port" 8083) }}{{ end }}
+{{- $comps := list
   (dict "name" "operator" "v" .Values.operator "ports" (list (dict "name" "metrics" "port" 9464) (dict "name" "health" "port" 8081)) "probe" 8081 "strategy" "Recreate")
-  (dict "name" "service" "v" .Values.service "ports" (list (dict "name" "http" "port" 8080) (dict "name" "metrics" "port" 9090)) "probe" 9090)
+  (dict "name" "service" "v" .Values.service "ports" $svcPorts "probe" 9090)
   (dict "name" "authz" "v" .Values.authz "ports" (list (dict "name" "grpc" "port" 9001) (dict "name" "metrics" "port" 9090)) "probe" 9090) }}
+{{- /* git-proxy keeps a running clone going for up to 60 s on shutdown; it sits behind a ClusterIP Service, so the drain is short. */}}
+{{- if include "ecp.gitEnabled" . }}
+{{- $comps = append $comps (dict "name" "git-proxy" "v" .Values.gitProxy "ports" (list (dict "name" "git" "port" 8080) (dict "name" "metrics" "port" 9090)) "probe" 9090 "drain" 5 "grace" 70) }}
+{{- end }}
+{{- range $c := $comps }}
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -38,6 +46,9 @@ spec:
         checksum/config: {{ $sum }}
     spec:
       serviceAccountName: {{ $full }}-{{ $c.name }}
+      {{- if eq $c.name "git-proxy" }}
+      automountServiceAccountToken: false
+      {{- end }}
       securityContext:
         {{- include "ecp.podSecurityContext" $ | nindent 8 }}
       {{- with $.Values.imagePullSecrets }}
@@ -46,7 +57,7 @@ spec:
       {{- end }}
       {{- if ne $c.name "operator" }}
       # Envoy Gateway takes up to a minute or more to drop a pod from its endpoints; keep serving meanwhile.
-      terminationGracePeriodSeconds: {{ add $.Values.endpointDrainSeconds 15 }}
+      terminationGracePeriodSeconds: {{ $c.grace | default (add $.Values.endpointDrainSeconds 15) }}
       {{- end }}
       containers:
       - name: {{ $c.name }}
@@ -56,7 +67,7 @@ spec:
         {{- if ne $c.name "operator" }}
         lifecycle:
           preStop:
-            sleep: {seconds: {{ $.Values.endpointDrainSeconds }}}
+            sleep: {seconds: {{ $c.drain | default $.Values.endpointDrainSeconds }}}
         {{- end }}
         env:
         - name: LOG_LEVEL
@@ -78,12 +89,26 @@ spec:
         securityContext:
           {{- include "ecp.containerSecurityContext" $ | nindent 10 }}
         volumeMounts:
+          {{- if eq $c.name "git-proxy" }}
+          {{- /* No user salt: git-proxy does not need it, and authz derives its session cookie key from it. */}}
+          - {name: config, mountPath: /etc/eduide/config.yaml, subPath: config.yaml, readOnly: true}
+          - {name: tmp, mountPath: /tmp}
+          {{- else }}
           {{- include "ecp.mounts" $ | nindent 10 }}
+          {{- end }}
           {{- if and (eq $c.name "service") (include "ecp.gitEnabled" $) }}
           - {name: git-accounts, mountPath: /etc/eduide/git-accounts, readOnly: true}
           {{- end }}
       volumes:
+        {{- if eq $c.name "git-proxy" }}
+        - name: config
+          configMap:
+            name: {{ $full }}-config
+        - name: tmp
+          emptyDir: {}
+        {{- else }}
         {{- include "ecp.volumes" $ | nindent 8 }}
+        {{- end }}
         {{- /* Only the service reads the Git account key and the OAuth client secrets. */}}
         {{- if and (eq $c.name "service") (include "ecp.gitEnabled" $) }}
         - name: git-accounts
@@ -159,6 +184,10 @@ spec:
     {{- include "ecp.selector" (dict "ctx" . "component" "service") | nindent 4 }}
   ports:
   - {name: http, port: 8080, targetPort: http}
+  {{- if include "ecp.gitEnabled" . }}
+  # Not routed by the gateway; a NetworkPolicy lets only git-proxy reach it.
+  - {name: internal, port: 8083, targetPort: internal}
+  {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -172,3 +201,31 @@ spec:
     {{- include "ecp.selector" (dict "ctx" . "component" "authz") | nindent 4 }}
   ports:
   - {name: grpc, port: 9001, targetPort: grpc, appProtocol: kubernetes.io/h2c}
+{{- if include "ecp.gitEnabled" . }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $full }}-git-proxy
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "git-proxy") | nindent 6 }}
+---
+# ClusterIP only, and no HTTPRoute: the agents of session pods are its only clients.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-git-proxy
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+    app.kubernetes.io/component: git-proxy
+spec:
+  selector:
+    {{- include "ecp.selector" (dict "ctx" . "component" "git-proxy") | nindent 4 }}
+  ports:
+  - {name: git, port: 8080, targetPort: git}
+{{- end }}

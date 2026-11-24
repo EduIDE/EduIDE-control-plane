@@ -91,6 +91,19 @@ var (
 		Name: "eduide_authz_decisions_total",
 		Help: "ext_authz decisions by result (allow, deny, login) and reason.",
 	}, []string{"result", "reason"})
+	GitProxyRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "eduide_gitproxy_requests_total",
+		Help: "Git requests of the git-proxy by provider, kind (read, push) and result.",
+	}, []string{"provider", "kind", "result"})
+	GitProxyBytes = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "eduide_gitproxy_bytes_total",
+		Help: "Bytes streamed by the git-proxy by provider and direction (in: client to provider, out: provider to client).",
+	}, []string{"provider", "direction"})
+	GitProxyUpstreamDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "eduide_gitproxy_upstream_seconds",
+		Help:    "Duration of a request to the provider host, until the last byte went to the client.",
+		Buckets: []float64{0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600},
+	}, []string{"provider", "kind"})
 	AuthzDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "eduide_authz_check_seconds",
 		Help:    "Duration of one ext_authz check.",
@@ -103,4 +116,5 @@ var (
 	OperatorMetrics = []prometheus.Collector{SessionStartup, SessionFailures, SessionPhase, ClaimTotal, PoolInstances, PoolTargetIdle, PoolMinIdle, PoolMaxInstances, SessionLifetime, TemplateResources, TemplateTimeout, CapacityPressure, CapacityEvictions, Sessions, Workspaces, AgentRequests}
 	ServiceMetrics  = []prometheus.Collector{APIRequests, APIRequestDuration, Launches}
 	AuthzMetrics    = []prometheus.Collector{AuthzDecisions, AuthzDuration}
+	GitProxyMetrics = []prometheus.Collector{GitProxyRequests, GitProxyBytes, GitProxyUpstreamDuration}
 )

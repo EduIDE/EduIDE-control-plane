@@ -145,8 +145,32 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$(echo "$nogit" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules[] | select(.resources[0] == "secrets") | .verbs | join(",")')" = '"create,get,delete"' ] || fail "service Secret verbs without git accounts ($v)"
   ok "git accounts ($v)"
 
-  # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
-  total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
+  # Git proxy (ADR 0023): ClusterIP only, never routed, policies present, nothing rendered without providers.
+  gp=r-eduide-control-plane-git-proxy
+  [ "$(echo "$out" | yq 'select(.kind == "Deployment" and .metadata.name == "'$gp'") | .spec.replicas')" = "2" ] || fail "git-proxy does not run 2 replicas ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "Service" and .metadata.name == "'$gp'") | .spec.type // "ClusterIP"')" = "ClusterIP" ] || fail "git-proxy Service is not ClusterIP ($v)"
+  echo "$out" | yq -e 'select(.kind == "PodDisruptionBudget" and .metadata.name == "'$gp'")' >/dev/null || fail "git-proxy PodDisruptionBudget missing ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "HTTPRoute") | .spec.rules[].backendRefs[].name' | grep -c git-proxy || true)" -eq 0 ] || fail "an HTTPRoute points to git-proxy ($v)"
+  ! echo "$out" | yq 'select(.kind == "HTTPRoute") | .spec.hostnames[]' | grep -q git-proxy || fail "git-proxy has a hostname ($v)"
+  for np in session-to-git-proxy git-proxy service-internal; do
+    echo "$out" | yq -e 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-'$np'")' >/dev/null || fail "NetworkPolicy $np missing ($v)"
+  done
+  # The session rule selects pods, not an ipBlock, so no deny list can take it away.
+  [ "$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-session-to-git-proxy") | .spec.egress[0].to[0].podSelector.matchLabels."app.kubernetes.io/component"')" = '"git-proxy"' ] || fail "session egress rule to git-proxy ($v)"
+  [ "$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-session-to-git-proxy") | .spec.egress[0].to[0].ipBlock')" = "null" ] || fail "session rule to git-proxy uses an ipBlock ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-service-internal") | .spec.ingress[0].from[0].podSelector.matchLabels."app.kubernetes.io/component"')" = "git-proxy" ] || fail "the internal port does not accept git-proxy only ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-git-proxy") | .spec.ingress[0].from[0].podSelector.matchLabels."eduide.github.io/component"')" = "session" ] || fail "git-proxy does not accept session pods ($v)"
+  gpe=$(echo "$out" | yq -o=json -I=0 'select(.kind == "NetworkPolicy" and .metadata.name == "r-eduide-control-plane-git-proxy")')
+  for cidr in 10.0.0.0/8 169.254.0.0/16 fc00::/7; do grep -q "\"$cidr\"" <<<"$gpe" || fail "git-proxy egress does not deny $cidr ($v)"; done
+  # No volume of git-proxy holds a Secret: it needs neither the salt nor the account key.
+  [ "$(echo "$out" | yq 'select(.kind == "Deployment" and .metadata.name == "'$gp'") | .spec.template.spec.volumes[] | select(.secret != null) | .name' | wc -l | tr -d ' ')" = "0" ] || fail "git-proxy mounts a Secret ($v)"
+  grep -q 'proxyURL: http://r-eduide-control-plane-git-proxy.ns.svc:8080' <<<"$cfg" && grep -q 'internalURL: http://r-eduide-control-plane-service.ns.svc:8083' <<<"$cfg" || fail "git proxy URLs not in the config ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "Service" and .metadata.name == "r-eduide-control-plane-service") | .spec.ports[].port' | paste -sd, -)" = "8080,8083" ] || fail "service ports with git accounts ($v)"
+  ! grep -q 'git-proxy\|8083' <<<"$nogit" || fail "chart renders git-proxy or the internal port without providers ($v)"
+  ok "git proxy ($v)"
+
+  # The control plane stays below 150 MiB of memory requests (pool scaler and git-proxy excluded, they are optional).
+  total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler" and .metadata.name != "r-eduide-control-plane-git-proxy") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
   [ "$total" -lt 150 ] || fail "memory requests are ${total}Mi, limit is 150Mi"
   ok "memory requests ${total}Mi"
 done

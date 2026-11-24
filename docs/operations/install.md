@@ -131,7 +131,8 @@ The route of a session keeps its own HSTS header without `includeSubDomains`.
 The service can connect GitHub and GitLab accounts of users ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)).
 The feature is off while `config.gitAccounts.providers` is empty, and the chart renders nothing for it then.
 Each provider needs an OAuth application at the Git host and the values described in the [chart README](../../charts/eduide-control-plane/README.md).
-**Planned:** a step-by-step operator guide with the Git proxy.
+With providers the chart also renders the `git-proxy` (2 replicas, ClusterIP Service, no route), the internal port 8083 of the service and the NetworkPolicies for them. See the [git-proxy runbook](git-proxy.md).
+**Planned:** a step-by-step operator guide for the OAuth applications.
 
 ## 5. Verify
 

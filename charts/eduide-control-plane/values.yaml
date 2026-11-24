@@ -128,6 +128,19 @@ authz:
   tolerations: []
   affinity: {}
 
+# Git proxy between session pods and the Git hosts (ADR 0023). Rendered only with config.gitAccounts.providers.
+# It streams, so memory stays small however large a clone is.
+gitProxy:
+  # debug, info or warn. Changing it restarts the component.
+  logLevel: info
+  replicas: 2
+  resources:
+    requests: {cpu: 10m, memory: 16Mi}
+    limits: {memory: 64Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # Prewarmed instances per template: name, the IDETemplate spec and an optional pool.
 # The pool name equals the template name.
 templates: []

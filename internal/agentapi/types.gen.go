@@ -38,6 +38,14 @@ type ClaimRequest struct {
 	Traceparent *string `json:"traceparent,omitempty"`
 }
 
+// GitHosts defines model for GitHosts.
+type GitHosts struct {
+	Hosts []string `json:"hosts"`
+
+	// LandingUrl Landing page, where the user connects an account.
+	LandingUrl *string `json:"landingUrl,omitempty"`
+}
+
 // LocalSession defines model for LocalSession.
 type LocalSession struct {
 	Claimed bool               `json:"claimed"`

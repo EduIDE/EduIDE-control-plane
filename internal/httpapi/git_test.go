@@ -14,6 +14,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
 )
@@ -290,14 +291,18 @@ func TestGitFlowDoesNotLogSecrets(t *testing.T) {
 func TestGitProviderHostIsAllowedForGitURI(t *testing.T) {
 	cfg := testConfig()
 	cfg.GitAccounts.Providers = []config.GitProvider{{Name: "gl", Type: "gitlab", Host: "gitlab.example.org"}}
-	hosts := cfg.HTTPSURLHosts()
+	hosts := cfg.HTTPSURLHosts
 	for host, want := range map[string]bool{"git.example.org": true, "gitlab.example.org": true, "GitLab.Example.org": true, "evil.example.org": false} {
 		_, perr := validateData(javaTemplate(), map[string]string{"GIT_URI": "https://" + host + "/a/b.git"}, alice, hosts)
 		if (perr == nil) != want {
 			t.Errorf("%s: %v", host, perr)
 		}
 	}
-	if len(testConfig().HTTPSURLHosts()) != 1 {
+	if len(testConfig().HTTPSURLHosts("GIT_URI")) != 1 {
 		t.Error("allowedHosts alone changed")
+	}
+	// A provider host is no host for the Artemis URL: that server gets requests with credentials.
+	if _, perr := validateData(&v1alpha1.IDETemplate{Spec: v1alpha1.IDETemplateSpec{InjectableKeys: []v1alpha1.InjectableKey{{Name: "ARTEMIS_URL", Format: v1alpha1.FormatHTTPSURL}}}}, map[string]string{"ARTEMIS_URL": "https://gitlab.example.org"}, alice, hosts); perr == nil {
+		t.Error("a provider host is accepted for ARTEMIS_URL")
 	}
 }

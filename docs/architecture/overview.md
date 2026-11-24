@@ -23,6 +23,9 @@ flowchart LR
   AZ -->|session informer| K
   SC[pool-scaler] -->|/scale of IDEPool| K
   OP -->|claim, status, notify :8081| AG
+  AG -->|/git/ with instance token| GP[git-proxy<br/>only with Git providers]
+  GP -->|authorize :8083| SVC
+  GP -->|HTTPS, user token| GH[(GitHub, GitLab)]
   subgraph Pod[session pod]
     AG[agent]
     IDE[ide container<br/>127.0.0.1]
@@ -35,14 +38,15 @@ flowchart LR
 | Component | Binary or chart | Responsibility |
 |---|---|---|
 | operator | `cmd/operator` | Reconciles `IDETemplate`, `IDEPool`, `IDESession`, `IDEWorkspace`. Owns pods, services, HTTPRoutes, token Secrets, PVCs. Claims idle instances, enforces timeouts and capacity rules. One active replica (leader election). |
-| service | `cmd/service` | REST API `/api/v1`. Verifies the OIDC token, validates launch data against the template allowlist, creates `IDESession`, `IDEWorkspace` and the launch data Secret. Reads from informer caches only. Streams progress as SSE. Creates no pods or routes. |
+| service | `cmd/service` | REST API `/api/v1`. With Git providers it also serves the internal authorize endpoint for the git-proxy on its own port. Verifies the OIDC token, validates launch data against the template allowlist, creates `IDESession`, `IDEWorkspace` and the launch data Secret. Reads from informer caches only. Streams progress as SSE. Creates no pods or routes. |
 | authz | `cmd/authz` | ext_authz gRPC for the gateway. Allows an owner into a `Ready` session and nobody else. Fail closed. Two replicas with a PodDisruptionBudget. See [session-access.md](session-access.md). |
-| agent | `cmd/agent` | Sidecar in every session pod. Proxy to the IDE for requests with a valid instance token, receives launch data once per claim, serves it on localhost to the IDE extension, reports activity. |
+| agent | `cmd/agent` | Sidecar in every session pod. Proxy to the IDE for requests with a valid instance token, receives launch data once per claim, serves it on localhost to the IDE extension, reports activity. With Git providers it also forwards `/git/<host>/...` of the IDE container to the git-proxy, with the instance token. |
+| git-proxy | `cmd/git-proxy` | Only with Git providers ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)). Streams Git smart HTTP between session pods and the provider hosts. Asks the service per request what is allowed and which credential to use. Stateless, two replicas. Runbook: [git-proxy.md](../operations/git-proxy.md). |
 | pool-scaler | `pool-scaler/` | Sets `targetIdle` of an `IDEPool` through `/scale`. Reads pool status and metrics. Own Go module. |
 | landing page | `landing-page/` | Launch page and overview of sessions and workspaces. Uses the generated TypeScript client. Host `hosts.service`. |
 | `eduide-session` | `extensions/eduide-session/` | IDE extension. Long-polls the agent on `127.0.0.1:8082`, sends heartbeats on real input, exposes `dataBridge.getEnv` and `dataBridge.getEnvState`. |
 | CRD chart | `charts/eduide-control-plane-crds` | The four CRDs, once per cluster. |
-| control plane chart | `charts/eduide-control-plane` | Per deployment: operator, service, authz, RBAC, SecurityPolicy, NetworkPolicies, config. |
+| control plane chart | `charts/eduide-control-plane` | Per deployment: operator, service, authz, git-proxy (with Git providers), RBAC, SecurityPolicy, NetworkPolicies, config. |
 
 External systems: Envoy Gateway (>= v1.8), Keycloak (one realm per deployment), the Kubernetes API, Artemis (redirects to the landing page with the token in the URL fragment).
 
@@ -53,8 +57,9 @@ Per deployment, one namespace `eduide-<deployment>`:
 | Workload | Replicas | Ports |
 |---|---|---|
 | operator | 1 active (leader election lease `eduide-operator`) | metrics :9464, probes :8081 |
-| service | 2 or more | API :8080, `/metrics` `/healthz` `/readyz` :9090 |
+| service | 2 or more | API :8080, `/metrics` `/healthz` `/readyz` :9090, internal Git authorize :8083 (only with Git providers, no route) |
 | authz | 2, PodDisruptionBudget | gRPC :9001, `/metrics` `/healthz` `/readyz` :9090 |
+| git-proxy (only with Git providers) | 2, PodDisruptionBudget | Git :8080 (ClusterIP, no route), `/metrics` `/healthz` `/readyz` :9090 |
 | pool-scaler | 1 | metrics :9090 |
 | session pod (many) | one per instance | agent proxy :8080, agent control :8081, local :8082 on 127.0.0.1 |
 
@@ -78,6 +83,7 @@ A session URL is `https://<hosts.instance>/<instance>/`.
 | Internet to gateway | TLS. OIDC login through the SecurityPolicy. No anonymous mode and no switch to turn auth off. |
 | Gateway to session pod | ext_authz decides per request. The HTTPRoute sets `X-EduIDE-Instance-Token`, overwriting client values. The agent forwards only requests with a valid token. |
 | Pod to pod | NetworkPolicy, default deny. :8080 only from Envoy, :8081 only from the operator, session pods cannot reach each other ([ADR 0019](../adr/0019-network-isolation.md)). |
+| Session pod to Git hosts | Every Git request goes agent, git-proxy, host. The token of the user never enters the pod, and the git-proxy uses it for the repository of the session only ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)). Session pods may reach the git-proxy Service. The git-proxy accepts only session pods, and the internal port 8083 of the service accepts only the git-proxy. |
 | Session pod to Kubernetes | None: `automountServiceAccountToken: false`. |
 | User input to cluster | The service accepts only keys on the template allowlist with a check per key, at most 8 KiB. Launch data lives in a Secret owned by the session and in agent memory, never in CR specs, logs, traces, metrics or status ([ADR 0012](../adr/0012-user-data-secrets-allowlist.md)). |
 | Control plane to cluster | RBAC per namespace, minimal. Informers filter on `app.kubernetes.io/managed-by=eduide`. |

@@ -164,7 +164,8 @@ func (m *Manager) Save(ctx context.Context, owner, provider string, t Token, a A
 		DisplayName: a.DisplayName, NoReplyEmail: a.NoReplyEmail, ConnectedAt: m.now().UTC()}
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: m.ns, Labels: map[string]string{
-			v1alpha1.LabelManagedBy: v1alpha1.LabelManagedByValue, v1alpha1.LabelComponent: v1alpha1.ComponentGitAccount,
+			// No managed-by label: it selects what the operator caches, and the operator has no use for these Secrets.
+			v1alpha1.LabelComponent:   v1alpha1.ComponentGitAccount,
 			v1alpha1.LabelGitProvider: provider, v1alpha1.LabelOwnerHash: v1alpha1.OwnerHash(owner)},
 			Annotations: map[string]string{v1alpha1.AnnotationGitLastUsed: m.now().UTC().Format(time.RFC3339)}},
 		Data: map[string][]byte{blobKey: m.encode(name, rec)},
@@ -348,7 +349,7 @@ func (m *Manager) touch(ctx context.Context, sec *corev1.Secret) {
 // and safe to run on every replica: a Secret that changed since the list is left for the next run.
 func (m *Manager) Sweep(ctx context.Context) {
 	var l corev1.SecretList
-	err := m.c.List(ctx, &l, client.InNamespace(m.ns), client.MatchingLabels{v1alpha1.LabelManagedBy: v1alpha1.LabelManagedByValue, v1alpha1.LabelComponent: v1alpha1.ComponentGitAccount})
+	err := m.c.List(ctx, &l, client.InNamespace(m.ns), client.MatchingLabels{v1alpha1.LabelComponent: v1alpha1.ComponentGitAccount})
 	if err != nil {
 		slog.WarnContext(ctx, "git account sweep failed", "error", err.Error())
 		return

@@ -93,7 +93,10 @@ func TestSaveAndRead(t *testing.T) {
 	r := newRig(t)
 	r.save(t, "alice", "gl", time.Hour)
 	sec := r.secret(t, "alice", "gl")
-	if sec.Labels[v1alpha1.LabelManagedBy] != "eduide" || sec.Labels[v1alpha1.LabelGitProvider] != "gl" || sec.Labels[v1alpha1.LabelComponent] != v1alpha1.ComponentGitAccount {
+	if _, has := sec.Labels[v1alpha1.LabelManagedBy]; has {
+		t.Error("the operator's Secret cache selects on managed-by and must not hold the token Secrets")
+	}
+	if sec.Labels[v1alpha1.LabelGitProvider] != "gl" || sec.Labels[v1alpha1.LabelComponent] != v1alpha1.ComponentGitAccount {
 		t.Errorf("labels %v", sec.Labels)
 	}
 	if bytes.Contains(sec.Data[blobKey], []byte(tokAccess)) || bytes.Contains(sec.Data[blobKey], []byte("gitty")) {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -122,6 +123,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 	}
+	agent.Env = append(agent.Env, d.gitEnv()...)
 	mode := int32(0o444)
 	tok := corev1.Volume{Name: "token", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 		SecretName: tokenName(instance), DefaultMode: &mode,
@@ -150,6 +152,24 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			Containers: []corev1.Container{ide, agent},
 			Volumes:    volumes,
 		},
+	}
+}
+
+// gitEnv tells the agent where Git traffic goes (ADR 0023). Without providers or a proxy URL it is empty and the
+// agent answers 404 on /git/. Idle pods built before a config change keep their old values until the pool replaces them.
+func (d *deps) gitEnv() []corev1.EnvVar {
+	g := d.cfg.GitAccounts
+	if len(g.Providers) == 0 || g.ProxyURL == "" {
+		return nil
+	}
+	hosts := make([]string, len(g.Providers))
+	for i, p := range g.Providers {
+		hosts[i] = p.Host
+	}
+	return []corev1.EnvVar{
+		{Name: "AGENT_GIT_PROXY_URL", Value: g.ProxyURL},
+		{Name: "AGENT_GIT_HOSTS", Value: strings.Join(hosts, ",")},
+		{Name: "AGENT_GIT_LANDING_URL", Value: "https://" + d.cfg.Hosts.Service},
 	}
 }
 

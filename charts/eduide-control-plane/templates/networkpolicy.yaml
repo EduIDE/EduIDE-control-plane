@@ -174,4 +174,102 @@ spec:
     ports:
     - {protocol: TCP, port: 9090}
 {{- end }}
+{{- if include "ecp.gitEnabled" . }}
+{{- /* ADR 0023. NetworkPolicies only add allowed paths; an "except" list narrows its own ipBlock rule and denies nothing.
+       So the pod selector rule below holds on clusters that deny the pod CIDR in sessionEgressDeny or sessionEgressExtraDeny. */}}
+{{- $gitProxy := include "ecp.selector" (dict "ctx" . "component" "git-proxy") }}
+---
+# Session pods (their agent) may reach git-proxy. This is a rule of its own, next to session-egress.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-session-to-git-proxy
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml $session | nindent 6 }}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- $gitProxy | nindent 10 }}
+    ports:
+    - {protocol: TCP, port: 8080}
+---
+# git-proxy takes requests from session pods only, and the metrics scrape.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-git-proxy
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- $gitProxy | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- toYaml $session | nindent 10 }}
+    ports:
+    - {protocol: TCP, port: 8080}
+  - from:
+    {{- toYaml $mon | nindent 4 }}
+    ports:
+    - {protocol: TCP, port: 9090}
+  # DNS, the internal port of the service, and the internet without the private ranges (the deny list of session pods).
+  egress:
+  - to:
+    - namespaceSelector:
+        {{- toYaml $np.dnsNamespaceSelector | nindent 8 }}
+    ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+  - to:
+    - podSelector:
+        matchLabels:
+          {{- include "ecp.selector" (dict "ctx" . "component" "service") | nindent 10 }}
+    ports:
+    - {protocol: TCP, port: 8083}
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+        {{- with $deny4 }}
+        except:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+    - ipBlock:
+        cidr: ::/0
+        {{- with $deny6 }}
+        except:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+    ports:
+    - {protocol: TCP, port: 443}
+---
+# The internal port of the service accepts git-proxy only. The gateway reaches port 8080 through the policy above.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $full }}-service-internal
+  labels:
+    {{- include "ecp.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ecp.selector" (dict "ctx" . "component" "service") | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          {{- $gitProxy | nindent 10 }}
+    ports:
+    - {protocol: TCP, port: 8083}
+{{- end }}
 {{- end }}

@@ -6,9 +6,14 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Added
 
-- Git accounts ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md)): users connect a GitHub or GitLab account through the new endpoints `GET /git/providers`, `POST /git/providers/{name}/connect`, `GET /git/callback` and `DELETE /git/providers/{name}` (OpenAPI 1.2.0). The token stays in the control plane, in one encrypted Secret per user and provider. The feature is off without `gitAccounts.providers` in the config; the Git proxy, the agent path and the landing page follow in later releases
+- Git accounts ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md)): users connect a GitHub or GitLab account through the new endpoints `GET /git/providers`, `POST /git/providers/{name}/connect`, `GET /git/callback` and `DELETE /git/providers/{name}` (OpenAPI 1.2.0). The token stays in the control plane, in one encrypted Secret per user and provider. The feature is off without `gitAccounts.providers` in the config; the landing page and the `eduide-session` extension follow in later releases
 - Config `gitAccounts` (providers, `inactivityExpiry`, `encryptionKeyFile`); chart values `config.gitAccounts` and `gitAccounts.encryptionKey`, a generated key Secret, and the Secret rights of the service Role that the feature needs
-- Provider hosts count as allowed hosts for `HTTPSURL` keys such as `GIT_URI`
+- Provider hosts count as allowed hosts for the key `GIT_URI` only, not for other `HTTPSURL` keys such as `ARTEMIS_URL`
+- `git-proxy` (new binary and image `git-proxy`, chart Deployment with 2 replicas, PodDisruptionBudget and ClusterIP Service, only with `config.gitAccounts.providers`): streams Git smart HTTP from session pods to the provider hosts. The token of the user stays in the control plane and is used for the repository the session was started with; other repositories are read anonymously, and a push to any other repository is refused. Errors reach the user as `fatal: remote error: ...` messages. Runbook: `docs/operations/git-proxy.md`
+- Service: internal listener `:8083` with `POST /internal/v1/git/authorize` (contract in `internal/gitapi`, ADR 0023), served only with providers and reachable only from the git-proxy
+- Agent: `/git/<host>/...` on the loopback listener (only while claimed) and `GET /v1/git/hosts` (`api/agent/v1.yaml`); the operator passes `AGENT_GIT_PROXY_URL`, `AGENT_GIT_HOSTS` and `AGENT_GIT_LANDING_URL` to new session pods. Idle pods built before a config change keep their old settings
+- Config `gitAccounts.proxyURL` and `gitAccounts.internalURL` (set by the chart); chart values `gitProxy.*`; NetworkPolicies `session-to-git-proxy`, `git-proxy` and `service-internal`
+- Metrics `eduide_gitproxy_requests_total`, `eduide_gitproxy_bytes_total`, `eduide_gitproxy_upstream_seconds`
 - An hourly sweep revokes and deletes Git accounts that no session used for `inactivityExpiry`
 
 ## [0.2.3] - 2026-11-21

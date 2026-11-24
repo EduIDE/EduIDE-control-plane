@@ -63,7 +63,10 @@ seccompProfile:
 {{- $_ := set $q "clientSecretFile" (printf "/etc/eduide/git-accounts/client-secret-%s" $p.name) -}}
 {{- $provs = append $provs $q -}}
 {{- end -}}
-{{- $_ := set $c "gitAccounts" (dict "providers" $provs "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key") -}}
+{{- $full := include "ecp.fullname" . -}}
+{{- $_ := set $c "gitAccounts" (dict "providers" $provs "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key"
+  "proxyURL" (printf "http://%s-git-proxy.%s.svc:8080" $full .Release.Namespace)
+  "internalURL" (printf "http://%s-service.%s.svc:8083" $full .Release.Namespace)) -}}
 {{- else -}}
 {{- $_ := unset $c "gitAccounts" -}}
 {{- end -}}

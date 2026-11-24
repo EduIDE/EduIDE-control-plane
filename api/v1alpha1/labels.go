@@ -5,7 +5,7 @@ package v1alpha1
 const (
 	Prefix = "eduide.github.io/"
 
-	// LabelManagedBy marks every object the control plane creates; informers filter on it.
+	// LabelManagedBy marks the objects the control plane creates; informers filter on it. The token Secrets of Git accounts do not carry it.
 	LabelManagedBy      = "app.kubernetes.io/managed-by"
 	LabelManagedByValue = "eduide"
 

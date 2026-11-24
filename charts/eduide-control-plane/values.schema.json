@@ -75,6 +75,7 @@
     "operator": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
     "service": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
     "authz": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
+    "gitProxy": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
     "poolScaler": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}}}
   }
 }

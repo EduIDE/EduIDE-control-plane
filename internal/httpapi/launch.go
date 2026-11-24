@@ -211,7 +211,7 @@ func (s *Server) validate(ctx context.Context, u auth.User, req *LaunchRequest) 
 	if req.Data != nil {
 		in = *req.Data
 	}
-	data, perr := validateData(&tpl, in, u, s.cfg.HTTPSURLHosts())
+	data, perr := validateData(&tpl, in, u, s.cfg.HTTPSURLHosts)
 	if perr != nil {
 		return nil, perr
 	}

@@ -1,0 +1,67 @@
+# Runbook: git-proxy
+
+Symptom: `git clone` or `git push` in a session fails, hangs or prints `fatal: remote error: ...`.
+Design: [ADR 0023](../adr/0023-git-accounts-and-git-proxy.md).
+
+## What it does
+
+With `config.gitAccounts.providers` the chart renders two `git-proxy` pods and a ClusterIP Service.
+The IDE container reaches a provider host through the agent (`127.0.0.1:8082/git/<host>/...`), which adds the instance name and the instance token.
+The git-proxy asks the service (`:8083`, `POST /internal/v1/git/authorize`) what is allowed, then streams the request to `https://<host>/...`.
+The user's token is used for the session repository only (its `GIT_URI`).
+Other repositories are read anonymously, and a push to them is refused.
+Nothing is buffered, so a clone of any size uses little memory.
+
+## Metrics
+
+| Metric | Meaning |
+|---|---|
+| `eduide_gitproxy_requests_total{provider,kind,result}` | `result`: `ok`, `denied` (the service said no), `upstream-denied` (provider answered 401, 403, 404 or a redirect), `upstream-error` (provider unreachable or 5xx), `unavailable` (the service did not answer) |
+| `eduide_gitproxy_bytes_total{provider,direction}` | `in` is client to provider (pushes), `out` is provider to client |
+| `eduide_gitproxy_upstream_seconds{provider,kind}` | Duration of a forwarded request |
+
+A rise of `unavailable` means the service internal port is not reachable.
+A rise of `upstream-error` for one provider means that host is down or not reachable from the cluster.
+
+## Logs
+
+```bash
+kubectl -n <ns> logs deploy/<release>-eduide-control-plane-git-proxy --since=15m
+```
+
+One JSON line per push and per request that did not succeed, with `user` (salted id), `session`, `provider`, `repository`, `kind`, `result`, `reason` and `status`.
+Reads that succeed are only counted.
+`reason` is `push-rule`, `connect`, `not-ready`, `unknown-host`, `unauthorized`, `anonymous-other` or `ok`.
+Tokens and bodies are never logged.
+
+## Failure modes
+
+| Symptom in the session | Cause | Check and fix |
+|---|---|---|
+| `fatal: unable to access 'http://127.0.0.1:8082/...': Failed to connect` | The agent listener is down, or the `insteadOf` entry is wrong | `kubectl logs <pod> -c agent`. Check `git config --global --get-regexp insteadof` in the session |
+| 404 on `/git/...` | The pod has no Git settings: it was built before the feature was on, or `gitAccounts.proxyURL` is empty | `kubectl get pod <pod> -o yaml` shows `AGENT_GIT_PROXY_URL` in the agent container. Idle pods keep old settings until the pool replaces them: delete them, or start a new session |
+| 403 on `/git/...` | The instance is not claimed | Expected for idle warm pods |
+| 502 `git proxy unavailable` | git-proxy is down, or a NetworkPolicy blocks session pods | `kubectl -n <ns> get pods -l app.kubernetes.io/component=git-proxy`. Check the policy `session-to-git-proxy` and that the CNI enforces it. Agent log: `git proxy unreachable` |
+| `remote error: EduIDE cannot check your access right now` | The service internal port is not reachable, or the service returns errors (git-proxy log: `git authorize unavailable`) | Check the policy `service-internal`, the service `internal` port (`kubectl -n <ns> get svc <release>-eduide-control-plane-service`), and the service logs. Both service replicas serve it |
+| `remote error: <displayName> is not reachable right now` | The provider host is down or egress is blocked | Check the policy `git-proxy` egress (DNS, HTTPS, deny list) and the provider status page |
+| `remote error: Connect your <displayName> account ...` | No account, or the account was revoked at the host | The user connects on the landing page. The answer is cached for up to 3 seconds |
+| `remote error: EduIDE uses your <displayName> account only for the repository this session was started with` | A private repository other than the session repository | Start a session from that repository. This is the credential rule, not a fault |
+| `remote error: EduIDE only pushes to the repository ...` | A push to a repository other than the session repository, or from a session without one | Start a session from the repository to push |
+| `remote error: EduIDE could not verify this session` | The service rejected the instance token: the session ended, or the token Secret is gone | Start a new session |
+| `remote error: ... not found, or your <displayName> account has no access` | The provider answered 404, 403 or 401 for the account | The repository does not exist or the account lacks access. Revoked tokens are detected on the next use and the account is deleted |
+| Git LFS prints `Git LFS is not supported through EduIDE.` | LFS is not proxied | Limitation. Do not use LFS in sessions |
+
+### Policy not enforced
+
+If a session can push to or read private repositories it should not, check in this order:
+
+1. `kubectl -n <ns> get networkpolicy`: `session-to-git-proxy`, `git-proxy` and `service-internal` exist. Without enforcement by the CNI, session pods could reach the service internal port directly. The instance token is still required there, but the rule is the second line of defence.
+2. The service log for `git authorize` errors. The decision lives in the service only (`internal/gitpolicy`), never in the git-proxy.
+3. The `GIT_URI` of the session launch data (the Secret `<session>-data`; list its key names only with `kubectl get secret <name> -o json | jq '.data | keys'`, never print the values). The push rule compares it with the pushed repository without credentials, host case-insensitive, without a trailing `.git`.
+4. Provider hosts in the config: a host that is no provider is refused (`unknown-host`).
+
+## Scaling and rollout
+
+Replicas are stateless; the Deployment has a PodDisruptionBudget (`minAvailable: 1`).
+A pod finishes running transfers for up to 60 seconds on shutdown (`terminationGracePeriodSeconds: 70`).
+A longer clone or push during a rollout can break and the user retries.
