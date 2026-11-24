@@ -6,7 +6,7 @@ The Gateway, the Envoy Gateway installation, the OIDC provider and the client se
 
 ```sh
 helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-control-plane \
-  --version 0.2.3 -n eduide -f my-values.yaml
+  --version 0.2.4 -n eduide -f my-values.yaml
 ```
 
 ## What it renders
