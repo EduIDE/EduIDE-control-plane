@@ -6,7 +6,7 @@ The Gateway, the Envoy Gateway installation, the OIDC provider and the client se
 
 ```sh
 helm install eduide oci://ghcr.io/eduide/eduide-control-plane/charts/eduide-control-plane \
-  --version 0.2.3 -n eduide -f my-values.yaml
+  --version 0.2.4 -n eduide -f my-values.yaml
 ```
 
 ## What it renders
@@ -66,6 +66,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `gitAccounts.encryptionKey.secretName` | generated | Use an own Secret with key `key` (at least 32 bytes) instead. **GitOps setups (Argo CD, Flux, `helm template`) must set this**: the chart generates the key with `lookup`, which is empty when the chart is only rendered, so every sync would draw a new key and drop all connected accounts. A changed key makes stored accounts unreadable: the service treats them as not connected and deletes them on the next use, without a revoke at the host. Users connect again |
 | `poolScaler.enabled`, `.mode`, `.logLevel`, `.config`, `.env`, `.resources`, `.image` | disabled, `shadow` | Config is rendered into `/etc/pool-scaler/config.yaml`, see `pool-scaler/examples/config.yaml` |
 | `monitoring.podMonitor`, `.rules`, `.dashboard` | disabled | `enabled` and extra `labels`; `podMonitor.interval` defaults to 10s (the usage export needs it to resolve 20 s windows) (dashboard default label `grafana_dashboard: "1"`). Alerts carry `eduide_namespace` and select metrics by the release namespace (the PodMonitor sets the `namespace` label); the dashboards ("EduIDE control plane" and "EduIDE usage", one ConfigMap) have a namespace variable. `monitoring.rules.extraLabels` (map, default empty) is added to every alert, e.g. `{namespace: eduide-system}` for an AlertmanagerConfig that routes on that namespace. `monitoring.dashboard.namespace` (default: release namespace) places the dashboard ConfigMap where the Grafana sidecar looks. `monitoring.rules` also renders the `eduide:usage:*` recording rules that the usage export and the "EduIDE usage" board read ([usage-export](../../docs/operations/usage-export.md)). `monitoring.rules.certificates` (default true) adds certificate expiry and readiness alerts for the release namespace |
+| `usageArchive.enabled`, `.prometheusURL`, `.schedule`, `.days`, `.persistence`, `.image`, `.resources` | disabled; `17 3 * * *`, 85 days, 2Gi | Daily CronJob that keeps the `eduide:usage:*` samples (one OpenMetrics file per day) and the weekly export on a PersistentVolumeClaim that `helm uninstall` keeps; `prometheusURL` and `monitoring.rules.enabled` are required when enabled ([usage-export](../../docs/operations/usage-export.md#usage-archive)) |
 
 ## Tests
 

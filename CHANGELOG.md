@@ -32,6 +32,18 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 - A reconnect revokes the replaced token; GitHub tokens are revoked one by one (`DELETE /applications/{client_id}/token`), a 422 counts as already revoked; no no-reply address is guessed for GitHub Enterprise Server hosts
 - A token refresh survives the end of the request, and an `invalid_grant` deletes the account only if the Secret still holds the refresh token that was sent
 
+## [0.2.4] - 2026-11-24
+
+### Added
+
+- Usage archive: `usageArchive.enabled` in the control plane chart adds a daily CronJob and a kept PersistentVolumeClaim; `usage-export --archive` writes every `eduide:usage:*` sample of a day as gzipped OpenMetrics (loadable with `promtool`) and catches up missed days, so the usage data outlives the Prometheus retention
+- Alert `EduIDEUsageArchiveStale` when the usage archive has not succeeded for 36 hours
+- Image `usage-export`
+
+### Compatibility
+
+- CRD and API version `v1alpha1` / `v1`, unchanged. The CRD chart has no changes; upgrade it first as always, then the control plane chart per deployment. `usageArchive` is off by default.
+
 ## [0.2.3] - 2026-11-21
 
 ### Added

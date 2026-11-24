@@ -41,3 +41,32 @@ func TestUsageRules(t *testing.T) {
 		}
 	}
 }
+
+// TestUsageArchiveAlert checks the alert that reports a usage archive which stopped running.
+func TestUsageArchiveAlert(t *testing.T) {
+	bin, err := exec.LookPath("promtool")
+	if err != nil {
+		t.Skip("promtool not installed")
+	}
+	src, err := os.ReadFile("../../charts/eduide-control-plane/files/alerts.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := strings.NewReplacer("__NAMESPACE__", "ns", "__USAGE_ARCHIVE__", "rel-usage-archive", "__FULLNAME__", "rel", "__EXTRA_LABELS__", "")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "alerts.yml"), []byte(r.Replace(string(src))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	test, err := os.ReadFile("testdata/alerts-usage-archive.test.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "test.yml")
+	if err := os.WriteFile(path, test, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(bin, "test", "rules", path).CombinedOutput() //nolint:gosec // fixed binary and a temp file
+	if err != nil {
+		t.Fatalf("promtool: %v\n%s", err, out)
+	}
+}
