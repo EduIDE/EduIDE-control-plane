@@ -35,6 +35,18 @@ The agent keeps the first report per name, so each name is sent at most once, wi
 
 `clone-done` is not reported: Scorpio exposes no hook for it.
 
+## Git accounts
+
+With Git accounts on ([ADR 0023](../../docs/adr/0023-git-accounts-and-git-proxy.md)) the extension makes Git use the agent for the provider hosts, so a clone or push of a private repository needs no credential in the IDE.
+
+- When the session is claimed, and again after the agent was unreachable, the extension reads `GET /v1/git/hosts` and writes one global Git config entry per host: `url.http://127.0.0.1:8082/git/<host>/.insteadOf = https://<host>/`.
+  It does this before it hands launch data to other extensions (`dataBridge.getEnv`, `dataBridge.getEnvState`), so the clone of Scorpio already goes through the agent.
+- Entries with the agent URL prefix for hosts that are no longer in the list are removed. Other `insteadOf` entries stay.
+- Git runs through `spawn` with an argument array, never a shell. Hosts must be bare host names, anything else is skipped.
+- Feature off or an older agent (the endpoint answers 404 or fails): the extension does nothing and shows nothing.
+- `git` missing: the extension logs once to the console and carries on.
+- The extension writes no token and no `credential.helper`. The agent proxy never answers 401, so Git does not ask for credentials.
+
 ## Migration
 
 Remove `data-bridge` and the `monitor-theia` extension from the IDE image and install the `.vsix` instead.
