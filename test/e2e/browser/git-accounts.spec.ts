@@ -20,16 +20,19 @@ async function stubAuthorize(page: Page) {
   });
 }
 
-// Opens a landing page URL and signs in at Keycloak when asked to.
+// Opens a landing page URL, signs in at Keycloak when asked to, and returns once the page has rendered.
 async function open(page: Page, url: string) {
   await page.goto(url);
-  await page.waitForURL(/keycloak\.e2e\.test|ide\.e2e\.test/);
-  if (/keycloak\.e2e\.test/.test(page.url())) {
-    await page.fill("#username", "alice");
+  // The first URL already matches the landing page, so wait for whatever renders first: the Keycloak form or the header.
+  const form = page.locator("#username");
+  const header = page.locator("header .brand");
+  await form.or(header).first().waitFor({ timeout: 60_000 });
+  if (await form.isVisible()) {
+    await form.fill("alice");
     await page.fill("#password", "alice");
     await page.click("#kc-login");
   }
-  await page.waitForURL(/ide\.e2e\.test/);
+  await header.waitFor({ timeout: 60_000 });
 }
 
 // Calls the API as alice from inside the page: only the browser resolves *.e2e.test to the local gateway.
