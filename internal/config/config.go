@@ -43,6 +43,53 @@ type Config struct {
 	Admin Admin `json:"admin,omitempty"`
 	// Security tunes response headers of the service.
 	Security Security `json:"security,omitempty"`
+	// GitAccounts connects users to GitHub and GitLab hosts (ADR 0023). No providers means the feature is off.
+	GitAccounts GitAccounts `json:"gitAccounts,omitempty"`
+}
+
+// GitAccounts holds the Git hosts a user can connect an account for.
+type GitAccounts struct {
+	Providers []GitProvider `json:"providers,omitempty"`
+	// EncryptionKeyFile holds the secret the service derives the token encryption key and the state key from
+	// (at least 32 bytes). Required with providers; the service reads it, the config never holds it.
+	EncryptionKeyFile string `json:"encryptionKeyFile,omitempty"`
+}
+
+// GitProvider is one Git host with its own OAuth application.
+type GitProvider struct {
+	// Name is a DNS label, unique; it is the path segment in the API and a label value on the token Secrets.
+	Name string `json:"name"`
+	// Type is "github" (OAuth App, also GitHub Enterprise Server) or "gitlab".
+	Type string `json:"type"`
+	// Host is a bare host name such as github.com. API and OAuth URLs derive from it.
+	Host        string `json:"host"`
+	DisplayName string `json:"displayName,omitempty"`
+	ClientID    string `json:"clientID"`
+	// ClientSecretFile holds the OAuth client secret; the chart mounts it from a Secret.
+	ClientSecretFile string `json:"clientSecretFile"`
+	// InactivityExpiry revokes and deletes an account that no session used for this long. Default 2160h.
+	InactivityExpiry *metav1.Duration `json:"inactivityExpiry,omitempty"`
+}
+
+// GitProviderTypes are the known values of GitProvider.Type.
+const (
+	GitHub = "github"
+	GitLab = "gitlab"
+)
+
+var (
+	gitNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
+	// A bare host name: labels of letters, digits and hyphens. No scheme, port, path or user info.
+	gitHostRE = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?$`)
+)
+
+// HTTPSURLHosts are the hosts an HTTPSURL key such as GIT_URI may name: allowedHosts plus the provider hosts.
+func (c *Config) HTTPSURLHosts() []string {
+	hosts := slices.Clone(c.AllowedHosts)
+	for _, p := range c.GitAccounts.Providers {
+		hosts = append(hosts, p.Host)
+	}
+	return hosts
 }
 
 // Security tunes response headers of the service.
@@ -250,6 +297,15 @@ func (c *Config) defaults() {
 	if c.Gateway.Namespace == "" {
 		c.Gateway.Namespace = c.Namespace
 	}
+	for i := range c.GitAccounts.Providers {
+		p := &c.GitAccounts.Providers[i]
+		if p.DisplayName == "" {
+			p.DisplayName = p.Name
+		}
+		if p.InactivityExpiry == nil {
+			p.InactivityExpiry = &metav1.Duration{Duration: 2160 * time.Hour}
+		}
+	}
 }
 
 func (c *Config) validate() error {
@@ -287,6 +343,7 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))
 	}
 	errs = append(errs, c.validateAdmin()...)
+	errs = append(errs, c.validateGitAccounts()...)
 	return errors.Join(errs...)
 }
 
@@ -323,6 +380,43 @@ func (c *Config) validateAdmin() []error {
 	}
 	if d := c.Admin.ScalerInterval; d != nil && d.Duration <= 0 {
 		errs = append(errs, errors.New("config: admin.scalerInterval must be positive"))
+	}
+	return errs
+}
+
+func (c *Config) validateGitAccounts() []error {
+	g := c.GitAccounts
+	var errs []error
+	if len(g.Providers) > 0 && g.EncryptionKeyFile == "" {
+		errs = append(errs, errors.New("config: gitAccounts.encryptionKeyFile is required with providers"))
+	}
+	names, hosts := map[string]bool{}, map[string]bool{}
+	for i, p := range g.Providers {
+		at := fmt.Sprintf("gitAccounts.providers[%d]", i)
+		if !gitNameRE.MatchString(p.Name) {
+			errs = append(errs, fmt.Errorf("config: %s.name must be a lowercase DNS label of at most 40 characters", at))
+		}
+		if names[p.Name] {
+			errs = append(errs, fmt.Errorf("config: %s.name %q is not unique", at, p.Name))
+		}
+		names[p.Name] = true
+		if p.Type != GitHub && p.Type != GitLab {
+			errs = append(errs, fmt.Errorf("config: %s.type must be github or gitlab", at))
+		}
+		if !gitHostRE.MatchString(p.Host) {
+			errs = append(errs, fmt.Errorf("config: %s.host must be a bare host name without scheme, port or path", at))
+		}
+		if h := strings.ToLower(p.Host); hosts[h] {
+			errs = append(errs, fmt.Errorf("config: %s.host %q is not unique", at, p.Host))
+		} else {
+			hosts[h] = true
+		}
+		if p.ClientID == "" || p.ClientSecretFile == "" {
+			errs = append(errs, fmt.Errorf("config: %s needs clientID and clientSecretFile", at))
+		}
+		if d := p.InactivityExpiry; d != nil && d.Duration <= 0 {
+			errs = append(errs, fmt.Errorf("config: %s.inactivityExpiry must be positive", at))
+		}
 	}
 	return errs
 }

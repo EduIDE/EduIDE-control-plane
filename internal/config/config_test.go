@@ -108,3 +108,41 @@ func TestAgentLogLevelIsValidated(t *testing.T) {
 		t.Fatalf("want a logLevel error, got %v", err)
 	}
 }
+
+func TestGitAccounts(t *testing.T) {
+	prov := func(name, typ, host string) string {
+		return "{name: " + name + ", type: " + typ + ", host: " + host + ", clientID: cid, clientSecretFile: /s/" + name + "}"
+	}
+	with := func(keyFile string, provs ...string) string {
+		return minimal + "gitAccounts:\n  encryptionKeyFile: " + keyFile + "\n  providers: [" + strings.Join(provs, ", ") + "]\n"
+	}
+	c, err := Parse([]byte(with("/k", prov("gh", "github", "github.com"), prov("gl", "gitlab", "gitlab.example.org"))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.GitAccounts.Providers[0]; p.DisplayName != "gh" || p.InactivityExpiry.Duration != 2160*time.Hour {
+		t.Errorf("defaults %+v", p)
+	}
+	if got := c.HTTPSURLHosts(); len(got) != 2 || got[1] != "gitlab.example.org" {
+		t.Errorf("hosts %v", got)
+	}
+	if c, err := Parse([]byte(minimal)); err != nil || len(c.GitAccounts.Providers) != 0 {
+		t.Errorf("no providers must stay valid: %v", err)
+	}
+	for name, tc := range map[string]struct{ cfg, want string }{
+		"duplicate name":   {with("/k", prov("a", "github", "github.com"), prov("a", "gitlab", "gl.example.org")), "not unique"},
+		"duplicate host":   {with("/k", prov("a", "github", "github.com"), prov("b", "gitlab", "GitHub.com")), "not unique"},
+		"unknown type":     {with("/k", prov("a", "gitea", "git.example.org")), "type"},
+		"host with scheme": {with("/k", prov("a", "github", "https://github.com")), "bare host"},
+		"host with port":   {with("/k", prov("a", "gitlab", "gl.example.org:8443")), "bare host"},
+		"host with path":   {with("/k", prov("a", "gitlab", "gl.example.org/x")), "bare host"},
+		"bad name":         {with("/k", prov("A_b", "github", "github.com")), "DNS label"},
+		"no key":           {with("", prov("a", "github", "github.com")), "encryptionKeyFile"},
+		"no secret file":   {with("/k", "{name: a, type: github, host: github.com, clientID: c}"), "clientSecretFile"},
+		"negative expiry":  {with("/k", "{name: a, type: github, host: github.com, clientID: c, clientSecretFile: /s, inactivityExpiry: -1h}"), "inactivityExpiry"},
+	} {
+		if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: want error with %q, got %v", name, tc.want, err)
+		}
+	}
+}

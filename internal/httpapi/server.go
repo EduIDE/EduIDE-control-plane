@@ -22,6 +22,7 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
 	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 )
 
@@ -36,6 +37,9 @@ type Server struct {
 	// salt keys the pseudonymous user id of spans (telemetry.userSaltFile); nil leaves the id out.
 	salt       []byte
 	titleStrip *regexp.Regexp
+
+	// git is nil without configured Git providers (ADR 0023).
+	git *gitaccount.Manager
 
 	// prom is nil without admin.prometheusURL (U16).
 	prom *promClient

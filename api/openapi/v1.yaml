@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EduIDE control plane API
-  version: 1.1.1
+  version: 1.2.0
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
@@ -16,6 +16,8 @@ tags:
   - name: sessions
   - name: workspaces
   - name: overview
+  - name: git
+    description: "Git accounts (ADR 0023): connect a GitHub or GitLab account once. The tokens stay in the control plane. Without configured providers `GET /git/providers` is empty and the others answer 404."
   - name: public
     description: "Unauthenticated health summary for the landing page (U17). Contains no user, session, host or capacity data."
   - name: admin
@@ -211,6 +213,87 @@ paths:
             text/event-stream:
               schema: {type: string}
         default: {$ref: "#/components/responses/Problem"}
+  /git/providers:
+    get:
+      operationId: listGitProviders
+      tags: [git]
+      description: Git providers the administrator configured, with the connection state of the calling user. Empty when the feature is off.
+      responses:
+        "200":
+          description: Providers in configuration order.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/GitProvider"}}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/providers/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    delete:
+      operationId: disconnectGitProvider
+      tags: [git]
+      description: Revokes the token at the Git host (best effort) and deletes it. Disconnecting an account that is not connected succeeds.
+      responses:
+        "204": {description: Disconnected.}
+        "404":
+          description: No provider has this name (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/providers/{name}/connect:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    post:
+      operationId: connectGitProvider
+      tags: [git]
+      description: |
+        Starts the OAuth flow. The answer holds the URL the browser opens at the Git host, and a short-lived cookie
+        (`HttpOnly`, `Secure`, `SameSite=Lax`, path `/api/v1/git/callback`) binds the flow to this browser.
+        The callback must therefore come back in the browser that received this answer.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitConnectRequest"}
+      responses:
+        "200":
+          description: Authorize URL.
+          headers:
+            Set-Cookie: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitConnectResponse"}
+        "404":
+          description: No provider has this name (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/callback:
+    get:
+      operationId: gitCallback
+      tags: [git]
+      security: []
+      description: |
+        Redirect target of the Git host, no bearer token (the browser arrives from the host). The service checks the
+        signed `state` and the flow cookie, exchanges the code, stores the account and redirects to the landing page.
+        The redirect carries `git=connected&provider=<name>` or `git=error&code=<code>` with one of `invalid-state`,
+        `expired`, `denied`, `provider-error`, `exchange-failed`, `account-failed`, `store-failed`. Provider error text never reaches the page.
+      parameters:
+        - {name: state, in: query, required: false, schema: {type: string, maxLength: 2048}}
+        - {name: code, in: query, required: false, schema: {type: string, maxLength: 2048}}
+        - {name: error, in: query, required: false, schema: {type: string, maxLength: 256}}
+      responses:
+        "302":
+          description: Redirect to the landing page.
+          headers:
+            Location: {schema: {type: string}}
+            Set-Cookie: {schema: {type: string}}
+        "404":
+          description: The deployment configures no Git provider (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
   /admin/status:
     get:
       operationId: getAdminStatus
@@ -391,6 +474,26 @@ components:
           description: Running sessions of the user, only with `session-limit-reached`.
           type: array
           items: {$ref: "#/components/schemas/Session"}
+    GitProvider:
+      type: object
+      required: [name, type, host, displayName, connected]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [github, gitlab]}
+        host: {type: string}
+        displayName: {type: string}
+        connected: {type: boolean}
+        login: {type: string, description: "Account login at the host, only when connected."}
+    GitConnectRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        returnTo: {type: string, maxLength: 512, description: "Relative path on the landing page the callback redirects to. Must start with a single `/`."}
+    GitConnectResponse:
+      type: object
+      required: [authorizeUrl]
+      properties:
+        authorizeUrl: {type: string}
     PersistenceMode:
       type: string
       enum: [none, volume]

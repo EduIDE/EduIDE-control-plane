@@ -22,6 +22,7 @@ Since [0021](../adr/0021-admin-api-and-public-status.md):
 - Public, no token (U17): `getPublicStatus` (`GET /status`, cached 15 s, rate limited per IP).
 - Admin API, read-only, tag `admin` (U16): `getAdminStatus`, `watchAdminStatus` (SSE), `listAdminPools`, `listAdminSessions`, `watchAdminSessions` (SSE), `getAdminSession`, `listAdminWorkspaces`, `getAdminProblems`, `listAdminTemplates`, `getAdminConfig`. They need the Keycloak role of `oidc.admin` (403 without it) and answer 404 while the deployment configures no role. Users appear only as `ownerHash`, launch data only as key names.
 Admin changes go through Helm values and the CRDs; there is no write endpoint.
+Since [0023](../adr/0023-git-accounts-and-git-proxy.md), tag `git`: `listGitProviders` (`GET /git/providers`), `connectGitProvider` (`POST /git/providers/{name}/connect`), `gitCallback` (`GET /git/callback`, no token, answers with a redirect to the landing page) and `disconnectGitProvider` (`DELETE /git/providers/{name}`). Without configured providers the list is empty and the other three answer 404.
 
 ## Errors
 

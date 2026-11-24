@@ -25,6 +25,15 @@ app.kubernetes.io/component: {{ .component }}
 {{ .Values.userSalt.secretName | default (printf "%s-user-salt" (include "ecp.fullname" .)) }}
 {{- end }}
 
+{{/* "true" when the config names Git account providers (ADR 0023); empty otherwise */}}
+{{- define "ecp.gitEnabled" -}}
+{{- if dig "gitAccounts" "providers" (list) .Values.config }}true{{ end }}
+{{- end }}
+
+{{- define "ecp.gitKeySecret" -}}
+{{ .Values.gitAccounts.encryptionKey.secretName | default (printf "%s-git-accounts-key" (include "ecp.fullname" .)) }}
+{{- end }}
+
 {{- define "ecp.podSecurityContext" -}}
 runAsNonRoot: true
 seccompProfile:
@@ -46,6 +55,18 @@ seccompProfile:
 {{- $c := deepCopy .Values.config -}}
 {{- if not $c.agent.image }}{{ $_ := set $c.agent "image" (include "ecp.image" (dict "ctx" . "name" "agent")) }}{{ end -}}
 {{- $_ := set $c "telemetry" (mergeOverwrite (dict) ($c.telemetry | default dict) (dict "userSaltFile" "/etc/eduide/secrets/user-salt")) -}}
+{{- if include "ecp.gitEnabled" . -}}
+{{- /* The client secrets and the key are files of a projected volume in the service pod; the config names the paths only. */ -}}
+{{- $provs := list -}}
+{{- range $p := $c.gitAccounts.providers -}}
+{{- $q := omit $p "clientSecretRef" -}}
+{{- $_ := set $q "clientSecretFile" (printf "/etc/eduide/git-accounts/client-secret-%s" $p.name) -}}
+{{- $provs = append $provs $q -}}
+{{- end -}}
+{{- $_ := set $c "gitAccounts" (dict "providers" $provs "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key") -}}
+{{- else -}}
+{{- $_ := unset $c "gitAccounts" -}}
+{{- end -}}
 {{- if .Values.poolScaler.enabled -}}
 {{- $_ := set $c "admin" (mergeOverwrite (dict "scalerInterval" (.Values.poolScaler.config.interval | default "30s")) ($c.admin | default dict)) -}}
 {{- end -}}

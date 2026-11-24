@@ -27,6 +27,7 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
 	"github.com/EduIDE/EduIDE-control-plane/internal/httpapi"
 	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
@@ -149,6 +150,14 @@ func run() error {
 		return errors.New("the admin API needs a non-empty telemetry.userSaltFile")
 	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
+	gitAccounts, err := gitaccount.NewFromConfig(writer, cfg)
+	if err != nil {
+		return err
+	}
+	if gitAccounts != nil {
+		api.EnableGitAccounts(gitAccounts)
+		go gitAccounts.RunSweep(ctx)
+	}
 	go api.RunSignInCheck(ctx)
 	servers := httpServers(ctx, api.Handler(auth.NewOIDC(cfg.OIDC)), ops)
 	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)
@@ -175,6 +184,6 @@ func run() error {
 func logStarting(cfg *config.Config, apiAddr, opsAddr string, salt []byte) {
 	slog.Info("starting", "version", logx.Version(), "deployment", cfg.Deployment, "namespace", cfg.Namespace,
 		"api_addr", apiAddr, "ops_addr", opsAddr, "service_host", cfg.Hosts.Service, "instance_host", cfg.Hosts.Instance,
-		"oidc_issuer", cfg.OIDC.IssuerURL, "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0,
+		"oidc_issuer", cfg.OIDC.IssuerURL, "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0, "git_providers", len(cfg.GitAccounts.Providers),
 		"sessions_per_user", cfg.SessionsPerUser, "launches_per_minute", cfg.RateLimit.LaunchesPerMinute, "log_level", logx.Level().String())
 }

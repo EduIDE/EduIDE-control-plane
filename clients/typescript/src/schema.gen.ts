@@ -203,6 +203,87 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Git providers the administrator configured, with the connection state of the calling user. Empty when the feature is off. */
+        get: operations["listGitProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/providers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Revokes the token at the Git host (best effort) and deletes it. Disconnecting an account that is not connected succeeds. */
+        delete: operations["disconnectGitProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/providers/{name}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Starts the OAuth flow. The answer holds the URL the browser opens at the Git host, and a short-lived cookie
+         *     (`HttpOnly`, `Secure`, `SameSite=Lax`, path `/api/v1/git/callback`) binds the flow to this browser.
+         *     The callback must therefore come back in the browser that received this answer.
+         */
+        post: operations["connectGitProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * @description Redirect target of the Git host, no bearer token (the browser arrives from the host). The service checks the
+         *     signed `state` and the flow cookie, exchanges the code, stores the account and redirects to the landing page.
+         *     The redirect carries `git=connected&provider=<name>` or `git=error&code=<code>` with one of `invalid-state`,
+         *     `expired`, `denied`, `provider-error`, `exchange-failed`, `account-failed`, `store-failed`. Provider error text never reaches the page.
+         */
+        get: operations["gitCallback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/status": {
         parameters: {
             query?: never;
@@ -395,6 +476,23 @@ export interface components {
             code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "workspace-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
             /** @description Running sessions of the user, only with `session-limit-reached`. */
             sessions?: components["schemas"]["Session"][];
+        };
+        GitProvider: {
+            name: string;
+            /** @enum {string} */
+            type: "github" | "gitlab";
+            host: string;
+            displayName: string;
+            connected: boolean;
+            /** @description Account login at the host, only when connected. */
+            login?: string;
+        };
+        GitConnectRequest: {
+            /** @description Relative path on the landing page the callback redirects to. Must start with a single `/`. */
+            returnTo?: string;
+        };
+        GitConnectResponse: {
+            authorizeUrl: string;
         };
         /** @enum {string} */
         PersistenceMode: "none" | "volume";
@@ -1240,6 +1338,127 @@ export interface operations {
                 };
             };
             default: components["responses"]["Problem"];
+        };
+    };
+    listGitProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Providers in configuration order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitProvider"][];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    disconnectGitProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No provider has this name (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    connectGitProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GitConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorize URL. */
+            200: {
+                headers: {
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitConnectResponse"];
+                };
+            };
+            /** @description No provider has this name (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    gitCallback: {
+        parameters: {
+            query?: {
+                state?: string;
+                code?: string;
+                error?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Redirect to the landing page. */
+            302: {
+                headers: {
+                    Location?: string;
+                    "Set-Cookie"?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The deployment configures no Git provider (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
         };
     };
     getAdminStatus: {

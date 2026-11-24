@@ -4,6 +4,13 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Added
+
+- Git accounts ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md)): users connect a GitHub or GitLab account through the new endpoints `GET /git/providers`, `POST /git/providers/{name}/connect`, `GET /git/callback` and `DELETE /git/providers/{name}` (OpenAPI 1.2.0). The token stays in the control plane, in one encrypted Secret per user and provider. The feature is off without `gitAccounts.providers` in the config; the Git proxy, the agent path and the landing page follow in later releases
+- Config `gitAccounts` (providers, `inactivityExpiry`, `encryptionKeyFile`); chart values `config.gitAccounts` and `gitAccounts.encryptionKey`, a generated key Secret, and the Secret rights of the service Role that the feature needs
+- Provider hosts count as allowed hosts for `HTTPSURL` keys such as `GIT_URI`
+- An hourly sweep revokes and deletes Git accounts that no session used for `inactivityExpiry`
+
 ## [0.2.3] - 2026-11-21
 
 ### Added

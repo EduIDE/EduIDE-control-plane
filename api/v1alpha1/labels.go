@@ -9,26 +9,30 @@ const (
 	LabelManagedBy      = "app.kubernetes.io/managed-by"
 	LabelManagedByValue = "eduide"
 
-	LabelComponent     = Prefix + "component" // session (IDE pod), workspace (PVC)
-	ComponentSession   = "session"
-	ComponentWorkspace = "workspace"
-	LabelTemplate      = Prefix + "template"
-	LabelPool          = Prefix + "pool"
-	LabelSession       = Prefix + "session"
-	LabelWorkspace     = Prefix + "workspace"
-	LabelInstance      = Prefix + "instance"   // random, unguessable instance id; also the URL path segment
-	LabelState         = Prefix + "state"      // StateIdle or StateClaimed on session pods
-	LabelOwnerHash     = Prefix + "owner-hash" // OwnerHash(owner), owner names are not label-safe
-	LabelLaunchKey     = Prefix + "launch-key" // idempotency key of a launch (G14)
-	LabelRoute         = Prefix + "route"      // RouteSession on session HTTPRoutes, selected by the SecurityPolicy
-	LabelNodePool      = Prefix + "node-pool"  // value of the configured node pool label of the pod's placement
-	StateIdle          = "idle"
-	StateClaimed       = "claimed"
-	RouteSession       = "session"
+	LabelComponent      = Prefix + "component" // session (IDE pod), workspace (PVC)
+	ComponentSession    = "session"
+	ComponentWorkspace  = "workspace"
+	ComponentGitAccount = "git-account" // token Secret of a connected Git account (ADR 0023)
+	LabelTemplate       = Prefix + "template"
+	LabelPool           = Prefix + "pool"
+	LabelSession        = Prefix + "session"
+	LabelWorkspace      = Prefix + "workspace"
+	LabelInstance       = Prefix + "instance"     // random, unguessable instance id; also the URL path segment
+	LabelState          = Prefix + "state"        // StateIdle or StateClaimed on session pods
+	LabelOwnerHash      = Prefix + "owner-hash"   // OwnerHash(owner), owner names are not label-safe
+	LabelLaunchKey      = Prefix + "launch-key"   // idempotency key of a launch (G14)
+	LabelRoute          = Prefix + "route"        // RouteSession on session HTTPRoutes, selected by the SecurityPolicy
+	LabelGitProvider    = Prefix + "git-provider" // name of the configured Git provider on a git-account Secret
+	LabelNodePool       = Prefix + "node-pool"    // value of the configured node pool label of the pod's placement
+	StateIdle           = "idle"
+	StateClaimed        = "claimed"
+	RouteSession        = "session"
 
-	AnnotationTraceparent = Prefix + "traceparent" // W3C trace context of the launch
-	AnnotationSpecHash    = Prefix + "spec-hash"   // hash of template spec and agent image a pool pod was built from
-	AnnotationRetain      = Prefix + "retain"      // "true" on an IDEWorkspace cancels expiry (G19)
+	AnnotationTraceparent    = Prefix + "traceparent"      // W3C trace context of the launch
+	AnnotationSpecHash       = Prefix + "spec-hash"        // hash of template spec and agent image a pool pod was built from
+	AnnotationGitLastUsed    = Prefix + "git-last-used"    // RFC 3339 time a session last used a git account, written at most once per 24h
+	AnnotationGitRefreshLock = Prefix + "git-refresh-lock" // RFC 3339 time until which one replica refreshes the token
+	AnnotationRetain         = Prefix + "retain"           // "true" on an IDEWorkspace cancels expiry (G19)
 
 	// Pool scaler annotations on IDEPool (G6).
 	AnnotationScalerMode     = Prefix + "scaler-mode"

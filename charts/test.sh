@@ -134,6 +134,17 @@ for v in "$cp"/ci/*-values.yaml; do
   grep -q 'scalerInterval: 30s' <<<"$cfg" || fail "scalerInterval is not rendered with the pool scaler ($v)"
   ok "admin API rules and config ($v)"
 
+  # Git accounts (ADR 0023): the config names files, never secrets; only the service mounts the key and the client
+  # secrets and may update Secrets; without providers the chart renders nothing for the feature.
+  ! grep -q 'clientSecretRef' <<<"$cfg" && grep -q 'encryptionKeyFile: /etc/eduide/git-accounts/encryption-key' <<<"$cfg" && grep -q 'clientSecretFile: /etc/eduide/git-accounts/client-secret-github' <<<"$cfg" || fail "git accounts config is wrong ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "Deployment" and (.spec.template.spec.volumes[].name == "git-accounts")) | .metadata.name')" = "r-eduide-control-plane-service" ] || fail "git-accounts volume is not only in the service ($v)"
+  echo "$out" | yq -e 'select(.kind == "Secret" and .metadata.name == "r-eduide-control-plane-git-accounts-key")' >/dev/null || fail "git accounts key Secret missing ($v)"
+  [ "$(echo "$svc" | yq -p=json '[.[] | select(.resources[0] == "secrets") | .verbs[]] | sort | join(",")')" = "create,delete,get,list,patch,update" ] || fail "service Secret verbs with git accounts ($v)"
+  nogit=$(helm template r "$cp" -f "$v" -n ns --set config.gitAccounts=null)
+  ! grep -q 'git-accounts\|gitAccounts' <<<"$nogit" || fail "chart renders git accounts without providers ($v)"
+  [ "$(echo "$nogit" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules[] | select(.resources[0] == "secrets") | .verbs | join(",")')" = '"create,get,delete"' ] || fail "service Secret verbs without git accounts ($v)"
+  ok "git accounts ($v)"
+
   # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
   total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
   [ "$total" -lt 150 ] || fail "memory requests are ${total}Mi, limit is 150Mi"

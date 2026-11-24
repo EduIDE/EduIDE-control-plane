@@ -57,7 +57,10 @@ Source: [api/v1alpha1/labels.go](../../api/v1alpha1/labels.go). Prefix `eduide.g
 | `eduide.github.io/traceparent` | W3C trace context of the launch, set by the service |
 | `eduide.github.io/retain` | `"true"` on an `IDEWorkspace` cancels expiry |
 | `eduide.github.io/scaler-mode`, `eduide.github.io/scaler-override` | Pool scaler control on `IDEPool` |
+| `eduide.github.io/git-last-used` | RFC 3339 time a session last used a Git account, written at most once per 24 hours. The inactivity expiry reads it |
+| `eduide.github.io/git-refresh-lock` | RFC 3339 time until which one service replica refreshes the token of the account |
 
+Git account Secrets carry `app.kubernetes.io/managed-by=eduide`, `eduide.github.io/component=git-account`, `eduide.github.io/git-provider=<provider name>` and `eduide.github.io/owner-hash`.
 Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer `eduide.github.io/session` on `IDESession`.
 
 ## Naming
@@ -71,6 +74,7 @@ Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer
 | Instance token Secret | `ide-<instance>-token`, key `token`, 32 random bytes hex |
 | Session | `s-<10 random [a-z0-9]>`, created by the service |
 | Launch data Secret | `<session>-data`, key set by the allowlist |
+| Git account Secret | `git-account-<first 32 hex of sha256(owner \n provider)>`, key `account` (ADR 0023) |
 | Workspace | `w-<first 16 hex of sha256(owner \x00 template \x00 source)>`; `source` is `GIT_URI` or `display.source`, and without both `template:<TEMPLATE>` (the starter template), so each starter template gets its own saved workspace. Get-or-create, so the same input gives the same workspace. |
 | Workspace PVC | same name as the workspace, also in `status.claimName` |
 
@@ -81,6 +85,7 @@ Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer
 | Pool pod | `IDEPool` (controller ref); on claim the controller ref moves to the `IDESession` |
 | Service, HTTPRoute, token Secret | the pod |
 | Launch data Secret | the `IDESession` |
+| Git account Secret | none. The service deletes it on disconnect, on a revocation at the host and after `inactivityExpiry` |
 | Workspace PVC | the `IDEWorkspace` |
 | `IDESession` with a workspace | the `IDEWorkspace` (no controller ref), set by the service at launch, so a session launched while its workspace is deleted goes with it (U14) |
 
@@ -100,4 +105,5 @@ Defaults: `sessionsPerUser` 3, `workspaces.perUser` 20, `oidc.userClaim` `prefer
 Optional admin API (U16, [0021](../adr/0021-admin-api-and-public-status.md)): `oidc.admin` (`rolePath` `realm_access.roles` or `resource_access.<client>.roles`, and `role`; no default, absent means the admin API is off), `admin.prometheusURL`, `admin.links` (`grafana`, `jaeger`, `traceUrlTemplate`), `admin.rateLimitPerMinute` (default 60) and `admin.scalerInterval` (set by the chart when the pool scaler runs).
 The admin API reads the objects above through the cache and shows owners only as the owner hash label value, launch data only as the key names of the data Secret.
 The pool scaler writes Events on `IDEPool` (reporting controller `pool-scaler`, reasons `ScaledUp`, `ScaledDown`, `Held`); the service reads them.
+Optional Git accounts (ADR 0023): `gitAccounts.providers` (`name`, `type` `github` or `gitlab`, `host`, `displayName`, `clientID`, `clientSecretFile`, `inactivityExpiry` default 2160 h) and `gitAccounts.encryptionKeyFile`. No providers means the feature is off. Provider hosts also count as allowed hosts of `HTTPSURL` keys.
 Secrets come from files or environment variables, never from flags or the config file.

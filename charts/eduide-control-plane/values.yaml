@@ -58,12 +58,30 @@ config:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 64Mi}
   rateLimit: {}
+  # Optional: connect GitHub and GitLab accounts (ADR 0023). Without providers the feature is off and the chart
+  # renders nothing for it. Each provider needs an OAuth application registered at the host with the callback URL
+  # https://<hosts.service>/api/v1/git/callback. The client secret comes from an existing Secret in this namespace.
+  gitAccounts:
+    providers: []
+    # - name: github                    # DNS label, unique
+    #   type: github                    # github (OAuth App) or gitlab
+    #   host: github.com                # bare host name
+    #   displayName: GitHub
+    #   clientID: ""
+    #   clientSecretRef: {name: git-oauth, key: github}
+    #   inactivityExpiry: 2160h         # default; an unused account is revoked and deleted after this time
   # Optional, read-only admin API (U16); all keys optional.
   # admin:
   #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials
   #   links: {grafana: "", jaeger: "", traceUrlTemplate: "https://jaeger.example.org/trace/{traceId}"}
   #   rateLimitPerMinute: 60                                      # per admin user
   #   scalerInterval: 30s                                         # set by the chart from poolScaler.config.interval; with prometheusURL it drives the scaler-silent warning
+
+# Key of the Git account token store (only used with config.gitAccounts.providers).
+gitAccounts:
+  encryptionKey:
+    # Use an own Secret with key "key" (at least 32 bytes) instead of the generated one.
+    secretName: ""
 
 oidc:
   # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID

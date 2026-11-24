@@ -79,8 +79,25 @@ spec:
           {{- include "ecp.containerSecurityContext" $ | nindent 10 }}
         volumeMounts:
           {{- include "ecp.mounts" $ | nindent 10 }}
+          {{- if and (eq $c.name "service") (include "ecp.gitEnabled" $) }}
+          - {name: git-accounts, mountPath: /etc/eduide/git-accounts, readOnly: true}
+          {{- end }}
       volumes:
         {{- include "ecp.volumes" $ | nindent 8 }}
+        {{- /* Only the service reads the Git account key and the OAuth client secrets. */}}
+        {{- if and (eq $c.name "service") (include "ecp.gitEnabled" $) }}
+        - name: git-accounts
+          projected:
+            sources:
+            - secret:
+                name: {{ include "ecp.gitKeySecret" $ }}
+                items: [{key: key, path: encryption-key}]
+            {{- range $p := $.Values.config.gitAccounts.providers }}
+            - secret:
+                name: {{ $p.clientSecretRef.name }}
+                items: [{key: {{ $p.clientSecretRef.key | quote }}, path: {{ printf "client-secret-%s" $p.name }}}]
+            {{- end }}
+        {{- end }}
       {{- with $c.v.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

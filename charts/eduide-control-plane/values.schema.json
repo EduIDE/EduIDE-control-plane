@@ -31,8 +31,37 @@
             "gatewayClientID": {"type": "string", "minLength": 1},
             "idTokenCookie": {"type": "string", "minLength": 1}
           }
+        },
+        "gitAccounts": {
+          "type": "object",
+          "properties": {
+            "providers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "type", "host", "clientID", "clientSecretRef"],
+                "properties": {
+                  "name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$"},
+                  "type": {"enum": ["github", "gitlab"]},
+                  "host": {"type": "string", "pattern": "^([A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?\\.)*[A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?$"},
+                  "displayName": {"type": "string"},
+                  "clientID": {"type": "string", "minLength": 1},
+                  "clientSecretRef": {
+                    "type": "object",
+                    "required": ["name", "key"],
+                    "properties": {"name": {"type": "string", "minLength": 1}, "key": {"type": "string", "minLength": 1}}
+                  },
+                  "inactivityExpiry": {"type": "string"}
+                }
+              }
+            }
+          }
         }
       }
+    },
+    "gitAccounts": {
+      "type": "object",
+      "properties": {"encryptionKey": {"type": "object", "properties": {"secretName": {"type": "string"}}}}
     },
     "oidc": {
       "type": "object",
