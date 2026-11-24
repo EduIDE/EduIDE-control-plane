@@ -32,13 +32,12 @@ const (
 	signInTimeout        = 3 * time.Second
 )
 
-// publicWithoutToken lets GET /status and the Git callback (the browser arrives from the Git host, with no token)
-// through without a bearer token and keeps the token check for all others.
+// publicWithoutToken lets GET /status through without a bearer token and keeps the token check for all others.
 func publicWithoutToken(authed func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		checked := authed(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Pattern == "GET "+basePath+"/status" || r.Pattern == "GET "+basePath+"/git/callback" {
+			if r.Pattern == "GET "+basePath+"/status" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -159,6 +158,13 @@ func (s *Server) publicStatus(ctx context.Context) ([]byte, *apiError) {
 			}
 		}
 		out.Templates = append(out.Templates, pt)
+	}
+	if s.git != nil { // the landing page shows the connect buttons from this; nothing else about Git accounts is public
+		gp := []PublicGitProvider{}
+		for _, p := range s.git.Providers() {
+			gp = append(gp, PublicGitProvider{Name: p.Name, Type: PublicGitProviderType(p.Type), Host: p.Host, DisplayName: p.DisplayName})
+		}
+		out.GitProviders = &gp
 	}
 	out.Overall = worse(worse(out.Parts.SignIn, out.Parts.Starting), out.Parts.Workspaces)
 	b, err := json.Marshal(out)

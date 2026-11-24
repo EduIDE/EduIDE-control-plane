@@ -16,6 +16,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
@@ -37,7 +38,7 @@ func (c *clock) add(d time.Duration) {
 
 type rig struct {
 	m    *Manager
-	k    client.Client
+	k    client.WithWatch
 	host *fakeHost
 	clk  *clock
 }
@@ -353,5 +354,154 @@ func TestNoTokenInLogs(t *testing.T) {
 	}
 	if buf.Len() == 0 {
 		t.Error("nothing was logged, the check proves nothing")
+	}
+}
+
+// The provider rotated the refresh token while the request ended. The new token must still reach the Secret,
+// or the next use sends the dead one, gets invalid_grant and deletes the account.
+func TestRefreshSurvivesACancelledRequest(t *testing.T) {
+	r := newRig(t)
+	r.save(t, "alice", "gl", time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.host.refreshAnswer = func(n int32) (int, string) {
+		cancel() // the client leaves after the provider answered
+		return 200, `{"access_token":"access-1","refresh_token":"refresh-1","expires_in":7200}`
+	}
+	if _, err := r.m.Token(ctx, "alice", "gl"); err != nil {
+		t.Fatalf("%v", err)
+	}
+	rec, err := r.m.Token(context.Background(), "alice", "gl")
+	if err != nil || rec.RefreshToken != "refresh-1" || r.host.refreshCalls.Load() != 1 {
+		t.Fatalf("%+v %v calls=%d", rec, err, r.host.refreshCalls.Load())
+	}
+}
+
+// Another replica took the lock over, refreshed and stored. Our refresh with the old token then fails with
+// invalid_grant, but the account is alive: it must stay, and the caller gets the other replica's token.
+func TestLockTakeoverThenInvalidGrantKeepsTheAccount(t *testing.T) {
+	r := newRig(t)
+	r.save(t, "alice", "gl", time.Second)
+	r.host.refreshAnswer = func(int32) (int, string) {
+		sec := r.secret(t, "alice", "gl")
+		rec := Record{AccessToken: "other-access", RefreshToken: "other-refresh", Expiry: r.clk.now().Add(time.Hour), Login: "gitty", ConnectedAt: r.clk.now()}
+		sec.Data = map[string][]byte{blobKey: r.m.encode(sec.Name, rec)}
+		delete(sec.Annotations, v1alpha1.AnnotationGitRefreshLock)
+		if err := r.k.Update(context.Background(), sec); err != nil {
+			t.Error(err)
+		}
+		return 400, `{"error":"invalid_grant"}`
+	}
+	rec, err := r.m.Token(context.Background(), "alice", "gl")
+	if err != nil || rec.AccessToken != "other-access" {
+		t.Fatalf("%+v %v", rec, err)
+	}
+	r.secret(t, "alice", "gl") // still there
+}
+
+// The user connected again while the refresh ran: the refresh must not delete the new account either.
+func TestInvalidGrantAfterReconnectKeepsTheNewAccount(t *testing.T) {
+	r := newRig(t)
+	r.save(t, "alice", "gl", time.Second)
+	r.host.refreshAnswer = func(int32) (int, string) {
+		sec := r.secret(t, "alice", "gl")
+		delete(sec.Annotations, v1alpha1.AnnotationGitRefreshLock) // a reconnect after an expired lock
+		sec.Data = map[string][]byte{blobKey: r.m.encode(sec.Name, Record{AccessToken: "new", RefreshToken: "new-refresh", Expiry: r.clk.now().Add(time.Hour), Login: "gitty"})}
+		_ = r.k.Update(context.Background(), sec)
+		return 400, `{"error":"invalid_grant"}`
+	}
+	if rec, err := r.m.Token(context.Background(), "alice", "gl"); err != nil || rec.AccessToken != "new" {
+		t.Fatalf("%+v %v", rec, err)
+	}
+}
+
+// An account used between the list and the delete of the sweep stays, and nothing is revoked.
+func TestSweepLeavesAnAccountThatWasUsedMeanwhile(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.save(t, "old", "gl", time.Hour)
+	r.clk.add(101 * time.Hour)
+	r.m.c = interceptor.NewClient(r.k, interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, l client.ObjectList, opts ...client.ListOption) error {
+		if err := c.List(ctx, l, opts...); err != nil {
+			return err
+		}
+		sec := r.secret(t, "old", "gl") // a use right after the list
+		sec.Annotations[v1alpha1.AnnotationGitLastUsed] = r.clk.now().UTC().Format(time.RFC3339)
+		return c.Update(ctx, sec)
+	}})
+	r.m.Sweep(ctx)
+	r.secret(t, "old", "gl")
+	if n := r.host.revokeCalls.Load(); n != 0 {
+		t.Errorf("revoked %d tokens of an account that stayed", n)
+	}
+}
+
+func TestSweepDeletesBeforeItRevokes(t *testing.T) {
+	r := newRig(t)
+	r.save(t, "old", "gl", time.Hour)
+	r.clk.add(101 * time.Hour)
+	var deleted bool
+	r.m.c = interceptor.NewClient(r.k, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.DeleteOption) error {
+		err := c.Delete(ctx, o, opts...)
+		deleted = err == nil
+		return err
+	}})
+	r.host.revokeStatus = 200
+	r.m.Sweep(context.Background())
+	if !deleted || r.host.revokeCalls.Load() != 1 {
+		t.Fatalf("deleted=%v revokes=%d", deleted, r.host.revokeCalls.Load())
+	}
+}
+
+func TestReconnectRevokesTheOldToken(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.save(t, "alice", "gl", time.Hour) // token tokAccess
+	acc := Account{ID: 7, Login: "gitty"}
+	if err := r.m.Save(ctx, "alice", "gl", Token{Access: "second-access", Refresh: "second-refresh"}, acc); err != nil {
+		t.Fatal(err)
+	}
+	if r.host.revokeCalls.Load() != 1 || r.host.lastForm.Get("token") != tokAccess {
+		t.Fatalf("old token not revoked: calls=%d form=%v", r.host.revokeCalls.Load(), r.host.lastForm)
+	}
+	if rec, _ := r.m.Token(ctx, "alice", "gl"); rec.AccessToken != "second-access" {
+		t.Errorf("%+v", rec)
+	}
+	// The same token again (a host that reuses it) must not be revoked.
+	if err := r.m.Save(ctx, "alice", "gl", Token{Access: "second-access"}, acc); err != nil || r.host.revokeCalls.Load() != 1 {
+		t.Errorf("%v revokes=%d", err, r.host.revokeCalls.Load())
+	}
+}
+
+func TestReconnectWhileRefreshingFails(t *testing.T) {
+	r := newRig(t)
+	r.save(t, "alice", "gl", time.Hour)
+	sec := r.secret(t, "alice", "gl")
+	sec.Annotations[v1alpha1.AnnotationGitRefreshLock] = r.clk.now().Add(time.Minute).Format(time.RFC3339Nano)
+	if err := r.k.Update(context.Background(), sec); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.m.Save(context.Background(), "alice", "gl", Token{Access: "x"}, Account{ID: 1, Login: "l"}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("%v", err)
+	}
+	// An expired lock does not block it.
+	r.clk.add(2 * time.Minute)
+	if err := r.m.Save(context.Background(), "alice", "gl", Token{Access: "x"}, Account{ID: 1, Login: "l"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIdentityForHost(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.save(t, "alice", "gl", time.Hour)
+	id, ok := r.m.IdentityForHost(ctx, "alice", "GitLab.Example.org")
+	if !ok || id.Login != "gitty" || id.DisplayName != "Gitty" || id.NoReplyEmail != "7-gitty@users.noreply.gitlab.example.org" {
+		t.Errorf("%+v %v", id, ok)
+	}
+	if _, ok := r.m.IdentityForHost(ctx, "bob", "gitlab.example.org"); ok {
+		t.Error("bob has an identity")
+	}
+	if _, ok := r.m.IdentityForHost(ctx, "alice", "other.example.org"); ok {
+		t.Error("unknown host")
 	}
 }

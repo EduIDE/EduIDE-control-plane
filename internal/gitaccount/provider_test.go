@@ -27,8 +27,11 @@ type fakeHost struct {
 	revokeCalls   atomic.Int32
 	revokeStatus  int
 	refreshAnswer func(n int32) (int, string)
-	lastForm      url.Values
-	lastBasic     [2]string
+	// challenge, when set, is the PKCE challenge the authorization code was issued for: the token endpoints
+	// accept the code only with a verifier that hashes to it.
+	challenge string
+	lastForm  url.Values
+	lastBasic [2]string
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -40,7 +43,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 	mux.HandleFunc("POST /login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		f.lastForm = r.PostForm
-		if r.PostForm.Get("code") != "good" {
+		if r.PostForm.Get("code") != "good" || !f.verifierOK(r.PostForm.Get("code_verifier")) {
 			_, _ = w.Write([]byte(`{"error":"bad_verification_code","error_description":"<script>alert(1)</script>"}`))
 			return
 		}
@@ -53,7 +56,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 		}
 		_, _ = w.Write([]byte(`{"id":42,"login":"octo","name":"Octo Cat"}`))
 	})
-	mux.HandleFunc("DELETE /applications/cid/grant", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /applications/cid/token", func(w http.ResponseWriter, r *http.Request) {
 		f.revokeCalls.Add(1)
 		f.lastBasic[0], f.lastBasic[1], _ = r.BasicAuth()
 		w.WriteHeader(f.revokeStatus)
@@ -63,7 +66,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 		f.lastForm = r.PostForm
 		switch r.PostForm.Get("grant_type") {
 		case "authorization_code":
-			if r.PostForm.Get("code") != "good" {
+			if r.PostForm.Get("code") != "good" || !f.verifierOK(r.PostForm.Get("code_verifier")) {
 				w.WriteHeader(400)
 				_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
 				return
@@ -88,6 +91,10 @@ func newFakeHost(t *testing.T) *fakeHost {
 	f.srv = httptest.NewServer(mux)
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+func (f *fakeHost) verifierOK(verifier string) bool {
+	return f.challenge == "" || ChallengeOf(verifier) == f.challenge
 }
 
 func (f *fakeHost) provider(typ, host string) Provider {
@@ -132,7 +139,8 @@ func TestExchangeAndAccount(t *testing.T) {
 		display   string
 	}{
 		{"github", "github.com", false, "octo", "42+octo@users.noreply.github.com", "Octo Cat"},
-		{"github", "ghe.example.org", false, "octo", "42+octo@users.noreply.ghe.example.org", "Octo Cat"},
+		// No guessed address for GitHub Enterprise Server: the launch falls back to the identity provider values.
+		{"github", "ghe.example.org", false, "octo", "", "Octo Cat"},
 		{"gitlab", "gitlab.example.org", true, "gitty", "7-gitty@users.noreply.gitlab.example.org", "gitty"},
 	} {
 		p := f.provider(tc.typ, tc.host)
@@ -200,7 +208,7 @@ func TestRevoke(t *testing.T) {
 		typ    string
 		status int
 		ok     bool
-	}{{"github", 204, true}, {"github", 404, true}, {"github", 500, false}, {"gitlab", 200, true}, {"gitlab", 500, false}} {
+	}{{"github", 204, true}, {"github", 404, true}, {"github", 422, true}, {"github", 500, false}, {"gitlab", 200, true}, {"gitlab", 500, false}} {
 		f.revokeStatus = tc.status
 		err := f.provider(tc.typ, "x.example.org").Revoke(ctx, Token{Access: tokAccess})
 		if (err == nil) != tc.ok {
@@ -230,6 +238,20 @@ func TestDefaultEndpoints(t *testing.T) {
 	} {
 		if e := DefaultEndpoints(tc.p); e.Web != tc.web || e.API != tc.api {
 			t.Errorf("%+v: %+v", tc.p, e)
+		}
+	}
+}
+
+func TestExchangeChecksPKCE(t *testing.T) {
+	f := newFakeHost(t)
+	f.challenge = ChallengeOf("the-verifier")
+	for _, typ := range []string{"github", "gitlab"} {
+		p := f.provider(typ, "x.example.org")
+		if _, err := p.Exchange(context.Background(), "good", "the-verifier", "r"); err != nil {
+			t.Errorf("%s: right verifier: %v", typ, err)
+		}
+		if _, err := p.Exchange(context.Background(), "good", "another", "r"); !errors.Is(err, ErrInvalidGrant) {
+			t.Errorf("%s: wrong verifier: %v", typ, err)
 		}
 	}
 }

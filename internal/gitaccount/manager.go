@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -30,10 +32,18 @@ const (
 	lastUsedEvery = 24 * time.Hour
 	// refreshSkew refreshes a token this long before it expires.
 	refreshSkew = time.Minute
+	// refreshTimeout bounds the provider call and the store of a refresh together.
+	refreshTimeout = 45 * time.Second
 )
 
 // ErrNotConnected means the user has no account for the provider (or it was revoked at the host).
 var ErrNotConnected = errors.New("git account not connected")
+
+// ErrBusy means a refresh of the account is running: a reconnect now would be overwritten by it. Retry shortly.
+var ErrBusy = errors.New("git account is being refreshed")
+
+// errRaced means the account changed while this replica refreshed it, so the caller reads it again.
+var errRaced = errors.New("git account changed during refresh")
 
 // Record is the encrypted content of a token Secret.
 type Record struct {
@@ -51,6 +61,9 @@ type Record struct {
 type Entry struct {
 	Config config.GitProvider
 	Client Provider
+	// HTTP reaches the provider host (private CA, no redirects) for calls other than OAuth, such as the preflight.
+	// Nil means a default client.
+	HTTP *http.Client
 }
 
 // Manager stores and refreshes the accounts of all users. It writes Secrets through c, which must not be a cache:
@@ -86,7 +99,8 @@ func NewFromConfig(c client.Client, cfg *config.Config) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
-	keys, err := NewKeys([]byte(strings.TrimSpace(string(material))))
+	// Only a trailing newline goes: the key is binary material, and trimming more could shorten it.
+	keys, err := NewKeys([]byte(strings.TrimSuffix(strings.TrimSuffix(string(material), "\n"), "\r")))
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +110,11 @@ func NewFromConfig(c client.Client, cfg *config.Config) (*Manager, error) {
 		if err != nil {
 			return nil, err
 		}
-		entries = append(entries, Entry{Config: p, Client: NewProvider(p, strings.TrimSpace(string(secret)), DefaultEndpoints(p), nil)})
+		hc, err := HTTPClient(p.CAFile, 15*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, Entry{Config: p, HTTP: hc, Client: NewProvider(p, strings.TrimSpace(string(secret)), DefaultEndpoints(p), hc)})
 	}
 	return NewManager(c, cfg.Namespace, keys, entries), nil
 }
@@ -157,8 +175,14 @@ func (m *Manager) read(ctx context.Context, owner, provider string) (*corev1.Sec
 	return sec, rec, nil
 }
 
-// Save stores the account of the user, replacing an earlier connection.
+// Save stores the account of the user. A reconnect replaces the earlier record and revokes the old token at the
+// host after the update succeeded. It fails with ErrBusy while a refresh holds the lock: the refresh would store
+// the old record over the new one.
 func (m *Manager) Save(ctx context.Context, owner, provider string, t Token, a Account) error {
+	e, ok := m.providers[provider]
+	if !ok {
+		return fmt.Errorf("unknown provider %q", provider)
+	}
 	name := SecretName(owner, provider)
 	rec := Record{AccessToken: t.Access, RefreshToken: t.Refresh, Expiry: t.Expiry, Login: a.Login, ID: a.ID,
 		DisplayName: a.DisplayName, NoReplyEmail: a.NoReplyEmail, ConnectedAt: m.now().UTC()}
@@ -174,14 +198,29 @@ func (m *Manager) Save(ctx context.Context, owner, provider string, t Token, a A
 	if !apierrors.IsAlreadyExists(err) {
 		return err
 	}
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	var old *Record
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cur := &corev1.Secret{}
 		if err := m.c.Get(ctx, client.ObjectKeyFromObject(sec), cur); err != nil {
 			return err
 		}
+		if until, err := time.Parse(time.RFC3339Nano, cur.Annotations[v1alpha1.AnnotationGitRefreshLock]); err == nil && m.now().Before(until) {
+			return ErrBusy
+		}
+		old = nil
+		if r, err := m.decode(cur); err == nil { // an unreadable record (key changed) has nothing to revoke
+			old = &r
+		}
 		cur.Data, cur.Annotations = sec.Data, sec.Annotations
 		return m.c.Update(ctx, cur)
 	})
+	if err != nil {
+		return err
+	}
+	if old != nil && old.AccessToken != rec.AccessToken {
+		m.revoke(ctx, e, *old)
+	}
+	return nil
 }
 
 // Connection reports the login of the connected account, if any. It does not count as a use.
@@ -207,7 +246,8 @@ func (m *Manager) Disconnect(ctx context.Context, owner, provider string) error 
 }
 
 func (m *Manager) revoke(ctx context.Context, e Entry, rec Record) {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	// A revoke that the request's end cuts off would leave a live token behind.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	if err := e.Client.Revoke(ctx, Token{Access: rec.AccessToken, Refresh: rec.RefreshToken}); err != nil {
 		slog.WarnContext(ctx, "git account revoke failed", "provider", e.Config.Name, "error", err.Error())
@@ -224,6 +264,23 @@ func (m *Manager) TokenForHost(ctx context.Context, owner, host string) (rec Rec
 		}
 	}
 	return Record{}, false, nil
+}
+
+// Identity is what the commit identity of a launch needs from an account. It holds no token.
+type Identity struct {
+	Login, DisplayName, NoReplyEmail string
+}
+
+// IdentityForHost returns the identity of the user's account on the provider with this host. It neither refreshes
+// the token nor counts as a use. ok is false without a provider for the host or without a readable account.
+func (m *Manager) IdentityForHost(ctx context.Context, owner, host string) (Identity, bool) {
+	for _, n := range m.order {
+		if strings.EqualFold(m.providers[n].Config.Host, host) {
+			_, rec, err := m.read(ctx, owner, n)
+			return Identity{Login: rec.Login, DisplayName: rec.DisplayName, NoReplyEmail: rec.NoReplyEmail}, err == nil
+		}
+	}
+	return Identity{}, false
 }
 
 func (m *Manager) expiring(rec Record) bool {
@@ -253,7 +310,11 @@ func (m *Manager) Token(ctx context.Context, owner, provider string) (Record, er
 			return Record{}, err
 		}
 		if locked {
-			return m.refresh(ctx, e, sec, rec)
+			rec, err := m.refresh(ctx, e, sec, rec)
+			if errors.Is(err, errRaced) && time.Now().Before(giveUp) {
+				continue
+			}
+			return rec, err
 		}
 		if time.Now().After(giveUp) {
 			return Record{}, errors.New("git account refresh is locked by another replica")
@@ -285,49 +346,106 @@ func (m *Manager) lock(ctx context.Context, sec *corev1.Secret) (bool, error) {
 	return true, nil
 }
 
-func (m *Manager) unlock(ctx context.Context, name string) {
+// unlock removes our own lock. A lock another replica took over stays.
+func (m *Manager) unlock(ctx context.Context, name, mine string) {
 	_ = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		cur := &corev1.Secret{}
 		if err := m.c.Get(ctx, types.NamespacedName{Namespace: m.ns, Name: name}, cur); err != nil {
 			return client.IgnoreNotFound(err)
+		}
+		if cur.Annotations[v1alpha1.AnnotationGitRefreshLock] != mine {
+			return nil
 		}
 		delete(cur.Annotations, v1alpha1.AnnotationGitRefreshLock)
 		return m.c.Update(ctx, cur)
 	})
 }
 
+// refresh runs under our lock. The provider rotates the refresh token on use, so from the call on the new token
+// must reach the Secret even when the request ends: both steps run detached from ctx, with an own deadline.
 func (m *Manager) refresh(ctx context.Context, e Entry, sec *corev1.Secret, rec Record) (Record, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), refreshTimeout)
+	defer cancel()
+	mine := sec.Annotations[v1alpha1.AnnotationGitRefreshLock]
 	t, err := e.Client.Refresh(ctx, rec.RefreshToken)
 	if errors.Is(err, ErrInvalidGrant) {
-		slog.InfoContext(ctx, "git account revoked at the host, deleting it", "provider", e.Config.Name)
-		if err := client.IgnoreNotFound(m.c.Delete(ctx, sec)); err != nil {
-			return Record{}, errors.Join(ErrNotConnected, err)
-		}
-		return Record{}, ErrNotConnected
+		return Record{}, m.revokedAtHost(ctx, e, sec.Name, rec.RefreshToken, mine)
 	}
 	if err != nil {
-		m.unlock(ctx, sec.Name)
+		m.unlock(ctx, sec.Name, mine)
 		return Record{}, fmt.Errorf("refresh for provider %s: %w", e.Config.Name, err)
 	}
 	rec.AccessToken, rec.Expiry = t.Access, t.Expiry
 	if t.Refresh != "" {
 		rec.RefreshToken = t.Refresh
 	}
-	// The provider rotated the refresh token: the new one must reach the Secret, so a conflict only retries.
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	if err := m.store(ctx, e, sec.Name, rec, mine); err != nil {
+		return Record{}, err
+	}
+	return rec, nil
+}
+
+// store writes the refreshed record. It retries every error: losing the rotated refresh token costs the account.
+// It stores even when our lock was taken over meanwhile, because the provider issued this token last, and it
+// leaves a lock that is not ours alone.
+func (m *Manager) store(ctx context.Context, e Entry, name string, rec Record, mine string) error {
+	backoff := wait.Backoff{Steps: 6, Duration: 200 * time.Millisecond, Factor: 2, Jitter: 0.1}
+	err := retry.OnError(backoff, func(err error) bool { return !apierrors.IsNotFound(err) }, func() error {
 		cur := &corev1.Secret{}
-		if err := m.c.Get(ctx, client.ObjectKeyFromObject(sec), cur); err != nil {
+		if err := m.c.Get(ctx, types.NamespacedName{Namespace: m.ns, Name: name}, cur); err != nil {
 			return err
 		}
-		cur.Data = map[string][]byte{blobKey: m.encode(sec.Name, rec)}
-		delete(cur.Annotations, v1alpha1.AnnotationGitRefreshLock)
+		cur.Data = map[string][]byte{blobKey: m.encode(name, rec)}
+		if cur.Annotations[v1alpha1.AnnotationGitRefreshLock] == mine {
+			delete(cur.Annotations, v1alpha1.AnnotationGitRefreshLock)
+		}
+		if cur.Annotations == nil {
+			cur.Annotations = map[string]string{}
+		}
 		cur.Annotations[v1alpha1.AnnotationGitLastUsed] = m.now().UTC().Format(time.RFC3339) // a refresh is a use
 		return m.c.Update(ctx, cur)
 	})
-	if err != nil {
-		return Record{}, fmt.Errorf("store refreshed token of provider %s: %w", e.Config.Name, err)
+	if apierrors.IsNotFound(err) { // disconnected meanwhile: do not leave the fresh token alive at the host
+		m.revoke(ctx, e, rec)
+		return ErrNotConnected
 	}
-	return rec, nil
+	if err != nil {
+		slog.ErrorContext(ctx, "git account: the rotated refresh token could not be stored, the user must connect again", "provider", e.Config.Name, "error", err.Error())
+		return fmt.Errorf("store refreshed token of provider %s: %w", e.Config.Name, err)
+	}
+	return nil
+}
+
+// revokedAtHost handles invalid_grant on a refresh. It deletes the account only if the Secret still holds the
+// refresh token we sent and our lock: otherwise another replica or a reconnect changed it, the grant may be
+// alive, and the caller reads the account again.
+func (m *Manager) revokedAtHost(ctx context.Context, e Entry, name, sent, mine string) error {
+	cur := &corev1.Secret{}
+	if err := m.c.Get(ctx, types.NamespacedName{Namespace: m.ns, Name: name}, cur); err != nil {
+		if apierrors.IsNotFound(err) {
+			return ErrNotConnected
+		}
+		return err
+	}
+	rec, err := m.decode(cur)
+	if err != nil {
+		return fmt.Errorf("git account %s cannot be decrypted", name)
+	}
+	if rec.RefreshToken != sent || cur.Annotations[v1alpha1.AnnotationGitRefreshLock] != mine {
+		return errRaced
+	}
+	rv := cur.ResourceVersion
+	if err := m.c.Delete(ctx, cur, client.Preconditions{ResourceVersion: &rv}); err != nil {
+		switch {
+		case apierrors.IsNotFound(err):
+			return ErrNotConnected
+		case apierrors.IsConflict(err):
+			return errRaced
+		}
+		return errors.Join(ErrNotConnected, err)
+	}
+	slog.InfoContext(ctx, "git account revoked at the host, deleted it", "provider", e.Config.Name)
+	return ErrNotConnected
 }
 
 // touch records the use, at most once per lastUsedEvery.
@@ -367,13 +485,18 @@ func (m *Manager) Sweep(ctx context.Context) {
 		if m.now().Sub(last) < e.Config.InactivityExpiry.Duration {
 			continue
 		}
-		if rec, err := m.decode(sec); err == nil {
-			m.revoke(ctx, e, rec)
-		}
+		// Delete first, with the precondition: a use or refresh since the list leaves the account alone, and
+		// nothing is revoked that someone still holds. The revoke follows only a successful delete.
+		rec, derr := m.decode(sec)
 		rv := sec.ResourceVersion
-		if err := m.c.Delete(ctx, sec, client.Preconditions{ResourceVersion: &rv}); client.IgnoreNotFound(err) != nil {
-			slog.WarnContext(ctx, "git account expiry delete failed", "provider", e.Config.Name, "error", err.Error())
+		if err := m.c.Delete(ctx, sec, client.Preconditions{ResourceVersion: &rv}); err != nil {
+			if !apierrors.IsNotFound(err) && !apierrors.IsConflict(err) {
+				slog.WarnContext(ctx, "git account expiry delete failed", "provider", e.Config.Name, "error", err.Error())
+			}
 			continue
+		}
+		if derr == nil {
+			m.revoke(ctx, e, rec)
 		}
 		slog.InfoContext(ctx, "git account expired", "provider", e.Config.Name)
 	}

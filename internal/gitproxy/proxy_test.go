@@ -82,7 +82,7 @@ func TestDecisionCache(t *testing.T) {
 	}
 	now = now.Add(shortTTL + time.Second)
 	if _, hit := c.get(key("a")); !hit {
-		t.Error("a credential answer is kept for up to 30s")
+		t.Error("a credential answer is kept for up to 5s")
 	}
 	if _, hit := c.get(key("b")); hit {
 		t.Error("an anonymous answer outlives the short TTL")
@@ -92,7 +92,7 @@ func TestDecisionCache(t *testing.T) {
 	}
 	now = now.Add(allowTTL)
 	if _, hit := c.get(key("a")); hit {
-		t.Error("an answer outlives 30s")
+		t.Error("an answer outlives 5s")
 	}
 }
 

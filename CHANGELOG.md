@@ -6,7 +6,7 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Added
 
-- Git accounts ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md)): users connect a GitHub or GitLab account through the new endpoints `GET /git/providers`, `POST /git/providers/{name}/connect`, `GET /git/callback` and `DELETE /git/providers/{name}` (OpenAPI 1.2.0). The token stays in the control plane, in one encrypted Secret per user and provider. The feature is off without `gitAccounts.providers` in the config; the landing page and the `eduide-session` extension follow in later releases
+- Git accounts ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md)): users connect a GitHub or GitLab account through the new endpoints `GET /git/providers`, `POST /git/providers/{name}/connect`, `POST /git/callback` and `DELETE /git/providers/{name}` (OpenAPI 1.2.0). The flow needs no cookie: the Git host redirects to the landing page route `https://<hosts.service>/git/callback`, and the landing page posts `code` and `state` with the user's token. The token stays in the control plane, in one encrypted Secret per user and provider. The feature is off without `gitAccounts.providers` in the config; the landing page and the `eduide-session` extension follow in later releases
 - Config `gitAccounts` (providers, `inactivityExpiry`, `encryptionKeyFile`); chart values `config.gitAccounts` and `gitAccounts.encryptionKey`, a generated key Secret, and the Secret rights of the service Role that the feature needs
 - Provider hosts count as allowed hosts for the key `GIT_URI` only, not for other `HTTPSURL` keys such as `ARTEMIS_URL`
 - `git-proxy` (new binary and image `git-proxy`, chart Deployment with 2 replicas, PodDisruptionBudget and ClusterIP Service, only with `config.gitAccounts.providers`): streams Git smart HTTP from session pods to the provider hosts. The token of the user stays in the control plane and is used for the repository the session was started with; other repositories are read anonymously, and a push to any other repository is refused. Errors reach the user as `fatal: remote error: ...` messages. Runbook: `docs/operations/git-proxy.md`
@@ -14,7 +14,18 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 - Agent: `/git/<host>/...` on the loopback listener (only while claimed) and `GET /v1/git/hosts` (`api/agent/v1.yaml`); the operator passes `AGENT_GIT_PROXY_URL`, `AGENT_GIT_HOSTS` and `AGENT_GIT_LANDING_URL` to new session pods. Idle pods built before a config change keep their old settings
 - Config `gitAccounts.proxyURL` and `gitAccounts.internalURL` (set by the chart); chart values `gitProxy.*`; NetworkPolicies `session-to-git-proxy`, `git-proxy` and `service-internal`
 - Metrics `eduide_gitproxy_requests_total`, `eduide_gitproxy_bytes_total`, `eduide_gitproxy_upstream_seconds`
+- `POST /git/preflight` (does a launch with this repository need a step first), the commit identity of a launch on a provider repository (`GIT_USER` and `GIT_MAIL` from the account), and `gitProviders` in the public `GET /status` ([ADR 0023](docs/adr/0023-git-accounts-and-git-proxy.md), [ADR 0021](docs/adr/0021-admin-api-and-public-status.md))
+- Repository approval: a user approves further repositories for one session outside the pod (`GET`, `PUT` and `DELETE /sessions/{name}/git/repositories`). Config `gitAccounts.approval.mode` (`off`, `read`, `write`; default `write`) and `maxPerSession` (default 20); chart value `config.gitAccounts.approval`. git-proxy messages carry an approval link. Approvals live in a Secret owned by the session
+- Config `gitAccounts.providers[].caFile` and chart value `caConfigMapRef` for a self-hosted Git host with a private CA
+- Chart value `networkPolicy.gitProxyEgressExtra` (default empty) for git-proxy egress to a provider inside the cluster (used by the e2e)
+- E2E: a fake Git provider (`test/fake-git`), a Git capable fake IDE and the test `TestGitAccounts` (`docs/development/testing.md`)
 - An hourly sweep revokes and deletes Git accounts that no session used for `inactivityExpiry`
+
+### Changed
+
+- git-proxy reuses an allowed answer with a credential for at most 5 seconds (was 30), so a disconnect or a removed approval takes effect at once
+- A reconnect revokes the replaced token; GitHub tokens are revoked one by one (`DELETE /applications/{client_id}/token`), a 422 counts as already revoked; no no-reply address is guessed for GitHub Enterprise Server hosts
+- A token refresh survives the end of the request, and an `invalid_grant` deletes the account only if the Secret still holds the refresh token that was sent
 
 ## [0.2.3] - 2026-11-21
 

@@ -115,11 +115,39 @@ func (p *provider) auths() []string {
 
 func (p *provider) reset() { p.mu.Lock(); p.seen = nil; p.mu.Unlock() }
 
-// authorizeFake implements the service side of the contract with the push rule and a switchable account.
+// authorizeFake implements the service side of the contract with the push rule, a switchable account and the
+// approvals of one session (mode "" means off).
 type authorizeFake struct {
 	connected   atomic.Bool
 	sessionRepo atomic.Value // string, "host/path" or ""
 	calls       atomic.Int64
+	mu          sync.Mutex
+	mode        string
+	approved    map[string]string // "host/path" -> "read" or "write"
+}
+
+func (a *authorizeFake) approve(repo, access string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.approved == nil {
+		a.approved = map[string]string{}
+	}
+	if access == "" {
+		delete(a.approved, repo)
+		return
+	}
+	a.approved[repo] = access
+}
+
+func (a *authorizeFake) access(host, repo string) string {
+	sr, _ := a.sessionRepo.Load().(string)
+	sh, sp, _ := strings.Cut(sr, "/")
+	if sr != "" && gitapi.SameRepository(host, repo, sh, sp) {
+		return "write"
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.approved[host+"/"+gitapi.NormalizeRepo(repo)]
 }
 
 func (a *authorizeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -130,34 +158,45 @@ func (a *authorizeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var req gitapi.AuthorizeRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	resp := gitapi.AuthorizeResponse{Allow: true, User: "u-123", Session: "s-1"}
+	sr, _ := a.sessionRepo.Load().(string)
 	acct := a.connected.Load()
-	if req.Kind == gitapi.KindPush {
-		sr, _ := a.sessionRepo.Load().(string)
-		sh, sp, _ := strings.Cut(sr, "/")
-		if sr == "" || !gitapi.SameRepository(req.Host, req.Repository, sh, sp) {
+	a.mu.Lock()
+	mode := a.mode
+	a.mu.Unlock()
+	have := a.access(req.Host, req.Repository)
+	if mode == "" {
+		have = ""
+		if sr != "" && gitapi.SameRepository(req.Host, req.Repository, strings.SplitN(sr, "/", 2)[0], strings.SplitN(sr, "/", 2)[1]) {
+			have = "write"
+		}
+	}
+	resp := gitapi.AuthorizeResponse{Allow: true, User: "u-123", Session: "s-1", Connected: acct, SessionRepository: sr}
+	switch {
+	case have == "" || have == "read" && req.Kind == gitapi.KindPush:
+		approvable := acct && (mode == "write" || mode == "read" && req.Kind == gitapi.KindRead)
+		switch {
+		case req.Kind == gitapi.KindPush && approvable:
+			resp = gitapi.AuthorizeResponse{Reason: gitapi.ReasonPushRule, User: "u-123", Session: "s-1",
+				Message: gitapi.ApproveMessage(landing, "s-1", req.Host, req.Repository, "write")}
+		case req.Kind == gitapi.KindPush:
 			shown := "none"
 			if sr != "" {
 				shown = sr
 			}
 			resp = gitapi.AuthorizeResponse{Reason: gitapi.ReasonPushRule, User: "u-123", Session: "s-1",
 				Message: "EduIDE only pushes to the repository this session was started with (" + shown + "). Start a session from " + req.Host + "/" + req.Repository + " to push there."}
-		} else if !acct {
-			resp = gitapi.AuthorizeResponse{Reason: gitapi.ReasonConnect, User: "u-123", Session: "s-1", Message: gitapi.ConnectMessage(displayName, landing)}
-		}
-	}
-	if resp.Allow {
-		sr, _ := a.sessionRepo.Load().(string)
-		sh, sp, _ := strings.Cut(sr, "/")
-		resp.Connected, resp.SessionRepository = acct, sr
-		switch {
-		case sr == "" || !gitapi.SameRepository(req.Host, req.Repository, sh, sp):
-			resp.Reason = gitapi.ReasonAnonymousOther
-		case acct:
-			resp.Reason, resp.Upstream = gitapi.ReasonOK, &gitapi.Upstream{Username: "x-access-token", Password: upstreamTok}
 		default:
-			resp.Reason = gitapi.ReasonAnonymous
+			resp.Reason = gitapi.ReasonAnonymousOther
+			if approvable {
+				resp.ApprovalMode = mode
+			}
 		}
+	case acct:
+		resp.Reason, resp.Upstream = gitapi.ReasonOK, &gitapi.Upstream{Username: "x-access-token", Password: upstreamTok}
+	case req.Kind == gitapi.KindPush:
+		resp = gitapi.AuthorizeResponse{Reason: gitapi.ReasonConnect, User: "u-123", Session: "s-1", Message: gitapi.ConnectMessage(displayName, landing)}
+	default:
+		resp.Reason = gitapi.ReasonAnonymous
 	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -604,6 +643,71 @@ func (r *rig) seedCommit(name, file, content string) {
 	r.mustRun(work, "clone", bare, "w")
 	r.commit(filepath.Join(work, "w"), file, content)
 	r.mustRun(filepath.Join(work, "w"), "push", "origin", "main")
+}
+
+// A second private repository fails with the approval link; after the approval the clone works, and a push works
+// only with access write. A removed approval ends it again.
+func TestApprovedRepository(t *testing.T) {
+	r := newRig(t)
+	r.seed("priv/secret", map[string][]byte{"README": []byte("private\n")})
+	r.seed("priv/second", map[string][]byte{"README": []byte("second\n")})
+	r.az.sessionRepo.Store(host + "/priv/secret")
+	r.az.mode = "write"
+	r.connect(true)
+	dir := t.TempDir()
+	second := "https://" + host + "/priv/second.git"
+
+	out, err := r.run(dir, "clone", second, "c")
+	want := "remote error: " + gitapi.ApproveMessage(landing, "s-1", host, "priv/second", "read")
+	if err == nil || !strings.Contains(out, want) {
+		t.Fatalf("clone before approval: err=%v\n%s", err, out)
+	}
+	if !strings.Contains(out, "approveRepo=https%3A%2F%2F"+host+"%2Fpriv%2Fsecond") || !strings.Contains(out, "session=s-1") || strings.Contains(out, upstreamTok) {
+		t.Errorf("the link is not as documented, or a token shows:\n%s", out)
+	}
+
+	r.az.approve(host+"/priv/second", "read")
+	r.connect(true) // ends the proxy cache, as the passing of time would
+	r.prov.reset()
+	r.mustRun(dir, "clone", second, "c")
+	sawBasic := false
+	for _, a := range r.prov.auths() {
+		sawBasic = sawBasic || a == "Basic "+base64.StdEncoding.EncodeToString([]byte("x-access-token:"+upstreamTok))
+	}
+	if !sawBasic {
+		t.Error("an approved repository is read without the credential")
+	}
+
+	r.commit(filepath.Join(dir, "c"), "f", "f")
+	out, err = r.run(filepath.Join(dir, "c"), "push", "origin", "main")
+	wantPush := "remote error: " + gitapi.ApproveMessage(landing, "s-1", host, "priv/second", "write")
+	if err == nil || !strings.Contains(out, wantPush) {
+		t.Fatalf("push with read access: err=%v\n%s", err, out)
+	}
+
+	r.az.approve(host+"/priv/second", "write")
+	r.connect(true)
+	r.mustRun(filepath.Join(dir, "c"), "push", "origin", "main")
+	if want := strings.TrimSpace(r.mustRun(filepath.Join(dir, "c"), "rev-parse", "HEAD")); r.head("priv/second") != want {
+		t.Error("the push did not land")
+	}
+
+	r.az.approve(host+"/priv/second", "")
+	r.connect(true)
+	if _, err := r.run(dir, "clone", second, "again"); err == nil {
+		t.Error("a removed approval still opens the repository")
+	}
+
+	// Mode read: the push refusal carries no link.
+	r.az.approve(host+"/priv/second", "read")
+	r.az.mu.Lock()
+	r.az.mode = "read"
+	r.az.mu.Unlock()
+	r.connect(true)
+	out, err = r.run(filepath.Join(dir, "c"), "push", "origin", "main")
+	if err == nil || strings.Contains(out, "approveRepo") {
+		t.Errorf("mode read: err=%v\n%s", err, out)
+	}
 }
 
 func TestUnclaimedInstanceGetsNoGitPath(t *testing.T) {

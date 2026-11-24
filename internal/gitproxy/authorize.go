@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	// allowTTL is how long an allowed answer with a credential is reused. The credential may be a token that
-	// the service refreshes, so it stays well below the token lifetime.
-	allowTTL = 30 * time.Second
+	// allowTTL is how long an allowed answer with a credential is reused. It bounds how long a disconnected account
+	// or a removed approval keeps working in a running session, and it stays far below the token lifetime
+	// (the service refreshes a token a minute before it expires). One authorize call per five seconds and
+	// repository is cheap.
+	allowTTL = 5 * time.Second
 	// shortTTL covers denials and anonymous answers: a user who connects an account must not wait long.
 	shortTTL     = 3 * time.Second
 	maxCacheSize = 4096

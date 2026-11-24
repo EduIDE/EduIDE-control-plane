@@ -2,6 +2,7 @@
 // It listens on loopback like a real IDE, echoes WebSocket frames, shows the
 // request header names it received and mimics the eduide-session extension:
 // it long-polls the agent local API and keeps the launch data in memory.
+// With providers configured it also routes Git through the agent and offers POST /git-test (git.go).
 // The data is never returned: /data-state shows key names and a hash only.
 package main
 
@@ -35,12 +36,15 @@ type ide struct {
 	agent string
 	mu    sync.Mutex
 	state localSession
+	// gitHosts are the provider hosts the agent reported (git.go).
+	gitHosts []string
 }
 
 func main() {
 	addr := env("FAKE_IDE_ADDR", "127.0.0.1:3000")
 	i := &ide{agent: env("FAKE_IDE_AGENT", "http://127.0.0.1:8082")}
 	go i.poll(context.Background())
+	go i.setupGit(context.Background())
 	log.Printf("fake-ide listening on %s", addr)
 	srv := &http.Server{Addr: addr, Handler: i.handler(), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.ListenAndServe())
@@ -97,6 +101,8 @@ func (i *ide) handler() http.Handler {
 		_ = resp.Body.Close()
 		w.WriteHeader(resp.StatusCode)
 	})
+	mux.HandleFunc("POST /git-test", i.gitTest)
+	mux.HandleFunc("POST /try-approve", i.tryApprove)
 	return mux
 }
 

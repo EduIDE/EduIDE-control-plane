@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -58,10 +60,7 @@ func New(providers []config.GitProvider, landingURL string, az Authorizer, rt ht
 		h.providers[strings.ToLower(p.Host)] = Provider{Name: p.Name, DisplayName: p.DisplayName}
 	}
 	if rt == nil {
-		tr := http.DefaultTransport.(*http.Transport).Clone()
-		tr.Proxy = nil // the provider hosts are reached directly; an environment proxy would see the credential
-		tr.MaxIdleConnsPerHost = 32
-		rt = tr
+		rt = Transport(nil)
 	}
 	// No timeout of the whole request: a clone or push of gigabytes must not be cut off.
 	h.rp = &httputil.ReverseProxy{
@@ -75,6 +74,17 @@ func New(providers []config.GitProvider, landingURL string, az Authorizer, rt ht
 	return h
 }
 
+// Transport reaches the provider hosts directly over HTTPS. pool holds the roots to trust; nil means the system roots.
+func Transport(pool *x509.CertPool) http.RoundTripper {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil // the provider hosts are reached directly; an environment proxy would see the credential
+	tr.MaxIdleConnsPerHost = 32
+	if pool != nil {
+		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	}
+	return tr
+}
+
 // reqState travels with one forwarded request.
 type reqState struct {
 	t       Target
@@ -85,6 +95,7 @@ type reqState struct {
 	// connected and sessionRepo come from the authorize answer; they only shape the message of an anonymous failure.
 	connected   bool
 	sessionRepo string
+	approval    string
 	start       time.Time
 	in, out     atomic.Int64
 	result      string
@@ -156,6 +167,9 @@ func (h *Handler) upstreamDeniedMessage(st *reqState) string {
 	if st.cred == nil && !st.connected {
 		return gitapi.ConnectMessage(st.prov.DisplayName, h.landingURL)
 	}
+	if st.cred == nil && st.approval != "" { // an account exists: the user can approve the repository for this session
+		return gitapi.ApproveMessage(h.landingURL, st.session, st.t.Host, st.t.Repo, gitapi.KindRead)
+	}
 	if st.cred == nil { // an account exists, but this session uses it for its own repository only
 		return gitapi.OtherRepositoryMessage(st.prov.DisplayName, st.sessionRepo, st.t.Host, st.t.Repo)
 	}
@@ -221,7 +235,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.finish(st, "")
 		return
 	}
-	st.user, st.session, st.cred, st.connected, st.sessionRepo = resp.User, resp.Session, resp.Upstream, resp.Connected, resp.SessionRepository
+	st.user, st.session, st.cred, st.connected, st.sessionRepo, st.approval = resp.User, resp.Session, resp.Upstream, resp.Connected, resp.SessionRepository, resp.ApprovalMode
 	if !resp.Allow {
 		st.result = resultDenied
 		msg := resp.Message

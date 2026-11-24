@@ -8,7 +8,7 @@ Design: [ADR 0023](../adr/0023-git-accounts-and-git-proxy.md).
 With `config.gitAccounts.providers` the chart renders two `git-proxy` pods and a ClusterIP Service.
 The IDE container reaches a provider host through the agent (`127.0.0.1:8082/git/<host>/...`), which adds the instance name and the instance token.
 The git-proxy asks the service (`:8083`, `POST /internal/v1/git/authorize`) what is allowed, then streams the request to `https://<host>/...`.
-The user's token is used for the session repository only (its `GIT_URI`).
+The user's token is used for the session repository (its `GIT_URI`) and for repositories the user approved for the session.
 Other repositories are read anonymously, and a push to them is refused.
 Nothing is buffered, so a clone of any size uses little memory.
 
@@ -44,8 +44,9 @@ Tokens and bodies are never logged.
 | 502 `git proxy unavailable` | git-proxy is down, or a NetworkPolicy blocks session pods | `kubectl -n <ns> get pods -l app.kubernetes.io/component=git-proxy`. Check the policy `session-to-git-proxy` and that the CNI enforces it. Agent log: `git proxy unreachable` |
 | `remote error: EduIDE cannot check your access right now` | The service internal port is not reachable, or the service returns errors (git-proxy log: `git authorize unavailable`) | Check the policy `service-internal`, the service `internal` port (`kubectl -n <ns> get svc <release>-eduide-control-plane-service`), and the service logs. Both service replicas serve it |
 | `remote error: <displayName> is not reachable right now` | The provider host is down or egress is blocked | Check the policy `git-proxy` egress (DNS, HTTPS, deny list) and the provider status page |
-| `remote error: Connect your <displayName> account ...` | No account, or the account was revoked at the host | The user connects on the landing page. The answer is cached for up to 3 seconds |
-| `remote error: EduIDE uses your <displayName> account only for the repository this session was started with` | A private repository other than the session repository | Start a session from that repository. This is the credential rule, not a fault |
+| `remote error: Connect your <displayName> account ...` | No account, or the account was revoked at the host | The user connects on the landing page. A new connection takes effect within 3 seconds, a disconnect within 5 |
+| `remote error: EduIDE uses your <displayName> account only for the repository this session was started with` | A private repository other than the session repository, with approvals off (`gitAccounts.approval.mode: off`) | Start a session from that repository, or turn approvals on. This is the credential rule, not a fault |
+| `remote error: This session may not use <host>/<repo> yet. Approve it here: <link>` | A repository the user has not approved for this session | The user opens the link on the landing page and confirms. A push needs access `write`. The change takes effect within 5 seconds |
 | `remote error: EduIDE only pushes to the repository ...` | A push to a repository other than the session repository, or from a session without one | Start a session from the repository to push |
 | `remote error: EduIDE could not verify this session` | The service rejected the instance token: the session ended, or the token Secret is gone | Start a new session |
 | `remote error: ... not found, or your <displayName> account has no access` | The provider answered 404, 403 or 401 for the account | The repository does not exist or the account lacks access. Revoked tokens are detected on the next use and the account is deleted |
@@ -65,3 +66,20 @@ If a session can push to or read private repositories it should not, check in th
 Replicas are stateless; the Deployment has a PodDisruptionBudget (`minAvailable: 1`).
 A pod finishes running transfers for up to 60 seconds on shutdown (`terminationGracePeriodSeconds: 70`).
 A longer clone or push during a rollout can break and the user retries.
+
+## Repository approvals
+
+Users approve further repositories per session on the landing page (ADR 0023, API `PUT /sessions/{name}/git/repositories`).
+The approvals of a session are in the Secret `<session>-git-repos`, owned by the session, so they go when the session goes.
+Read them as an operator (repository names and access, no credentials):
+
+```bash
+kubectl -n <ns> get secret <session>-git-repos -o jsonpath='{.data.approvals}' | base64 -d | jq
+```
+
+Every approval and every removal writes one service log line (`git repository approved`, `git repository approval removed`) with the salted user id, session, provider and repository.
+A change, a disconnect or a removed approval takes effect within 5 seconds, because the git-proxy reuses an allowed answer for at most that long.
+
+Turn the feature off with `config.gitAccounts.approval.mode: off` (the credential is then used for the session repository only; stored approvals stop counting at once).
+Use `read` to allow approvals for reading only, which makes a push to another repository impossible.
+`config.gitAccounts.approval.maxPerSession` bounds the approvals of one session.

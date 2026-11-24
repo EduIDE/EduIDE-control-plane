@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitproxy"
 	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
@@ -54,7 +55,15 @@ func run(cfgPath string) error {
 	defer stop()
 
 	az := &gitproxy.ServiceClient{URL: g.InternalURL, HTTP: &http.Client{Timeout: 10 * time.Second}}
-	handler := gitproxy.New(g.Providers, "https://"+cfg.Hosts.Service, az, nil, slog.Default())
+	var cas []string
+	for _, p := range g.Providers {
+		cas = append(cas, p.CAFile)
+	}
+	pool, err := gitaccount.RootCAs(cas...)
+	if err != nil {
+		return err
+	}
+	handler := gitproxy.New(g.Providers, "https://"+cfg.Hosts.Service, az, gitproxy.Transport(pool), slog.Default())
 
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(collectors.NewGoCollector(), collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))

@@ -31,7 +31,8 @@ type Account struct {
 	ID          int64
 	Login       string
 	DisplayName string
-	// NoReplyEmail is the commit address the platform offers to hide the private one.
+	// NoReplyEmail is the commit address the platform offers to hide the private one. Empty when the format of
+	// the host is not known.
 	NoReplyEmail string
 }
 

@@ -60,6 +60,7 @@ Source: [api/v1alpha1/labels.go](../../api/v1alpha1/labels.go). Prefix `eduide.g
 | `eduide.github.io/git-last-used` | RFC 3339 time a session last used a Git account, written at most once per 24 hours. The inactivity expiry reads it |
 | `eduide.github.io/git-refresh-lock` | RFC 3339 time until which one service replica refreshes the token of the account |
 
+The repositories a user approved for one session live in the Secret `<session>-git-repos` (label `eduide.github.io/component=git-approvals`, owned by the session, no `managed-by` label); see ADR 0023.
 Git account Secrets carry `eduide.github.io/component=git-account`, `eduide.github.io/git-provider=<provider name>` and `eduide.github.io/owner-hash`. They have no `managed-by` label, so the operator's Secret cache does not hold them.
 Other constants: header `X-EduIDE-Instance-Token`, Secret key `token`, finalizer `eduide.github.io/session` on `IDESession`.
 

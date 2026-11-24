@@ -40,6 +40,8 @@ type Server struct {
 
 	// git is nil without configured Git providers (ADR 0023).
 	git *gitaccount.Manager
+	// gitProbeBase returns the base URL the preflight asks for a provider host; nil means https://<host>. Tests only.
+	gitProbeBase func(host string) string
 
 	// prom is nil without admin.prometheusURL (U16).
 	prom *promClient
@@ -204,6 +206,21 @@ func (s *Server) allowLaunch(owner string) (ok bool) {
 		slog.Debug("launch rate limit", "user", s.userID(owner), "allowed", ok, "tokens_left", int(l.Tokens()))
 	}
 	return ok
+}
+
+// allowGit rate limits the Git account calls of one user per kind ("connect", "callback", "preflight"), with the
+// per-user launch rate. The kinds have separate buckets, so the landing page's preflight cannot starve a connect.
+func (s *Server) allowGit(kind, owner string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := kind + "\x00" + owner
+	l, ok := s.limiters[key]
+	if !ok {
+		n := s.cfg.RateLimit.LaunchesPerMinute
+		l = rate.NewLimiter(rate.Limit(float64(n)/60), n)
+		s.limiters[key] = l
+	}
+	return l.Allow()
 }
 
 // ownedSessions lists through rd: the cache, or s.w where a decision must not miss a session created just now.

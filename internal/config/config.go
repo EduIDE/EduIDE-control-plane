@@ -56,9 +56,27 @@ type GitAccounts struct {
 	// ProxyURL is the git-proxy Service the operator hands to the agents of new session pods (the chart sets it).
 	// Empty means session pods get no path for Git traffic.
 	ProxyURL string `json:"proxyURL,omitempty"`
+	// Approval lets a user approve further repositories for the credential, per session, on the landing page.
+	Approval GitApproval `json:"approval,omitempty"`
 	// InternalURL is the internal listener of the service, which the git-proxy calls (the chart sets it).
 	InternalURL string `json:"internalURL,omitempty"`
 }
+
+// GitApproval tunes the approval of repositories other than the session repository (ADR 0023).
+type GitApproval struct {
+	// Mode is "off" (no approvals), "read" (approve for reading only) or "write" (for reading, or reading and
+	// pushing). Default "write".
+	Mode string `json:"mode,omitempty"`
+	// MaxPerSession bounds the approved repositories of one session. Default 20.
+	MaxPerSession int `json:"maxPerSession,omitempty"`
+}
+
+// Approval modes.
+const (
+	ApprovalOff   = "off"
+	ApprovalRead  = "read"
+	ApprovalWrite = "write"
+)
 
 // GitProvider is one Git host with its own OAuth application.
 type GitProvider struct {
@@ -72,6 +90,9 @@ type GitProvider struct {
 	ClientID    string `json:"clientID"`
 	// ClientSecretFile holds the OAuth client secret; the chart mounts it from a Secret.
 	ClientSecretFile string `json:"clientSecretFile"`
+	// CAFile is a PEM bundle with the CA of the host, for a self-hosted instance with a private CA. It is added to
+	// the system roots for the service (OAuth, preflight) and the git-proxy. The chart mounts it from a ConfigMap.
+	CAFile string `json:"caFile,omitempty"`
 	// InactivityExpiry revokes and deletes an account that no session used for this long. Default 2160h.
 	InactivityExpiry *metav1.Duration `json:"inactivityExpiry,omitempty"`
 }
@@ -297,6 +318,15 @@ func (c *Config) defaults() {
 	if c.Admin.RateLimitPerMinute == 0 {
 		c.Admin.RateLimitPerMinute = 60
 	}
+	if c.GitAccounts.Approval.Mode == "false" { // an unquoted `off` is a boolean in YAML 1.1
+		c.GitAccounts.Approval.Mode = ApprovalOff
+	}
+	if c.GitAccounts.Approval.Mode == "" {
+		c.GitAccounts.Approval.Mode = ApprovalWrite
+	}
+	if c.GitAccounts.Approval.MaxPerSession == 0 {
+		c.GitAccounts.Approval.MaxPerSession = 20
+	}
 	if c.RateLimit.LaunchesPerMinute == 0 {
 		c.RateLimit.LaunchesPerMinute = 10
 	}
@@ -403,6 +433,12 @@ func (c *Config) validateGitAccounts() []error {
 		if u != "" && !httpURL(u) {
 			errs = append(errs, fmt.Errorf("config: gitAccounts.%s must be an http(s) URL", name))
 		}
+	}
+	if m := g.Approval.Mode; m != ApprovalOff && m != ApprovalRead && m != ApprovalWrite {
+		errs = append(errs, errors.New("config: gitAccounts.approval.mode must be off, read or write"))
+	}
+	if g.Approval.MaxPerSession < 1 {
+		errs = append(errs, errors.New("config: gitAccounts.approval.maxPerSession must be positive"))
 	}
 	names, hosts := map[string]bool{}, map[string]bool{}
 	for i, p := range g.Providers {

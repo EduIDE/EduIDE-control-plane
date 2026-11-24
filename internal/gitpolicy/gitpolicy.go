@@ -64,6 +64,12 @@ type Handler struct {
 	LandingURL string
 	// Salt keys the user id of the answer; empty leaves it out.
 	Salt []byte
+	// ApprovalMode is config.ApprovalOff, ApprovalRead or ApprovalWrite; empty means off.
+	ApprovalMode string
+	// Approvals reads the repositories approved for a session; nil means none.
+	Approvals interface {
+		List(ctx context.Context, session string) ([]Approval, error)
+	}
 
 	mu       sync.Mutex
 	limiters map[string]*limiterEntry
@@ -203,8 +209,20 @@ func (h *Handler) decide(ctx context.Context, req gitapi.AuthorizeRequest) (gita
 	if sessionRepo != "" {
 		shown = sessionHost + "/" + sessionRepo
 	}
-	if !mayUseCredential(sessionHost, sessionRepo, req.Host, req.Repository) {
+	var approved []Approval
+	if h.ApprovalMode != "" && h.ApprovalMode != config.ApprovalOff && h.Approvals != nil {
+		if approved, err = h.Approvals.List(ctx, sess.Name); err != nil {
+			return gitapi.AuthorizeResponse{}, err
+		}
+	}
+	if !mayUseCredential(h.ApprovalMode, sessionHost, sessionRepo, approved, req.Host, req.Repository, req.Kind) {
+		_, connected := h.Accounts.Connection(ctx, owner, p.Name)
+		// An approval can help only with an account, and only as far as the mode goes: a push needs mode write.
+		approvable := connected && (h.ApprovalMode == config.ApprovalWrite || h.ApprovalMode == config.ApprovalRead && req.Kind == gitapi.KindRead)
 		if req.Kind == gitapi.KindPush {
+			if approvable {
+				return deny(gitapi.ReasonPushRule, gitapi.ApproveMessage(h.LandingURL, sess.Name, req.Host, req.Repository, config.ApprovalWrite)), nil
+			}
 			s := shown
 			if s == "" {
 				s = "none"
@@ -213,9 +231,11 @@ func (h *Handler) decide(ctx context.Context, req gitapi.AuthorizeRequest) (gita
 				"). Start a session from "+p.Host+"/"+gitapi.NormalizeRepo(req.Repository)+" to push there."), nil
 		}
 		// Anonymous: code in the session must not read the user's other private repositories.
-		_, connected := h.Accounts.Connection(ctx, owner, p.Name)
 		resp := deny(gitapi.ReasonAnonymousOther, "")
 		resp.Allow, resp.Connected, resp.SessionRepository = true, connected, shown
+		if approvable {
+			resp.ApprovalMode = h.ApprovalMode
+		}
 		return resp, nil
 	}
 	rec, _, err := h.Accounts.TokenForHost(ctx, owner, req.Host)
@@ -230,19 +250,26 @@ func (h *Handler) decide(ctx context.Context, req gitapi.AuthorizeRequest) (gita
 	case err != nil:
 		return gitapi.AuthorizeResponse{}, err
 	default:
-		resp.Reason, resp.Connected, resp.Upstream = gitapi.ReasonOK, true, &gitapi.Upstream{Username: upstreamUser(p.Type), Password: rec.AccessToken}
+		resp.Reason, resp.Connected, resp.Upstream = gitapi.ReasonOK, true, &gitapi.Upstream{Username: UpstreamUser(p.Type), Password: rec.AccessToken}
 	}
 	return resp, nil
 }
 
-// mayUseCredential answers whether the session may use the user's credential for a repository. Today that is
-// the session repository only. A later list of approved repositories changes this function and nothing else.
-func mayUseCredential(sessionHost, sessionRepo, host, repo string) bool {
-	return sessionRepo != "" && gitapi.SameRepository(host, repo, sessionHost, sessionRepo)
+// mayUseCredential answers whether the session may use the user's credential for a repository: always for the
+// session repository, for an approved one as far as the approval mode and the approval allow (read, or push only
+// with write). It is the one place that decides this.
+func mayUseCredential(mode, sessionHost, sessionRepo string, approved []Approval, host, repo, kind string) bool {
+	switch credentialAccess(mode, sessionHost, sessionRepo, approved, host, repo) {
+	case config.ApprovalWrite:
+		return true
+	case config.ApprovalRead:
+		return kind == gitapi.KindRead
+	}
+	return false
 }
 
-// upstreamUser is the basic auth user name each platform expects with an OAuth access token.
-func upstreamUser(providerType string) string {
+// UpstreamUser is the basic auth user name each platform expects with an OAuth access token.
+func UpstreamUser(providerType string) string {
 	if providerType == config.GitLab {
 		return "oauth2"
 	}

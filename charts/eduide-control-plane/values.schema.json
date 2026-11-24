@@ -35,6 +35,13 @@
         "gitAccounts": {
           "type": "object",
           "properties": {
+            "approval": {
+              "type": "object",
+              "properties": {
+                "mode": {"enum": ["off", "read", "write"]},
+                "maxPerSession": {"type": "integer", "minimum": 1}
+              }
+            },
             "providers": {
               "type": "array",
               "items": {
@@ -47,6 +54,11 @@
                   "displayName": {"type": "string"},
                   "clientID": {"type": "string", "minLength": 1},
                   "clientSecretRef": {
+                    "type": "object",
+                    "required": ["name", "key"],
+                    "properties": {"name": {"type": "string", "minLength": 1}, "key": {"type": "string", "minLength": 1}}
+                  },
+                  "caConfigMapRef": {
                     "type": "object",
                     "required": ["name", "key"],
                     "properties": {"name": {"type": "string", "minLength": 1}, "key": {"type": "string", "minLength": 1}}

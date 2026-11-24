@@ -9,7 +9,7 @@
 #   E2E_INFRA_ONLY=1 stop after the infrastructure and run only the infrastructure smoke test
 #   E2E_SKIP_IMAGES=1 do not build and load images
 #   E2E_SKIP_BROWSER=1 skip the Playwright test
-#   E2E_RUN          go test -run expression
+#   E2E_RUN          go test -run expression. Tests named TestGit* run in their own phase, with the Git providers on.
 #   EG_VERSION       Envoy Gateway version (default v1.8.3, the version of the test cluster)
 set -euo pipefail
 
@@ -22,6 +22,7 @@ NS=eduide-e2e
 EG_VERSION=${EG_VERSION:-v1.8.3}
 CALICO_VERSION=v3.33.1
 KIND_VERSION=v0.33.0
+GIT_HOST=fake-git.$NS.svc
 HOSTS=ide.e2e.test,instance.ide.e2e.test,webview.instance.ide.e2e.test,keycloak.e2e.test,smoke.e2e.test
 IMG=ghcr.io/eduide/eduide-control-plane
 export PATH="$REPO/bin:$PATH"
@@ -35,6 +36,10 @@ source "$REPO/test/e2e/safe.sh"
 log "certificates"
 if [[ ! -f .e2e/certs/ca.crt ]]; then
   go run ./test/e2e/tools/certgen -out .e2e/certs -hosts "$HOSTS"
+fi
+# The fake Git provider has a CA of its own, so the tests prove that caConfigMapRef works.
+if [[ ! -f .e2e/certs-git/ca.crt ]]; then
+  go run ./test/e2e/tools/certgen -out .e2e/certs-git -hosts "$GIT_HOST"
 fi
 
 log "kind cluster $CLUSTER"
@@ -65,6 +70,9 @@ for n in envoy-gateway-system "$NS"; do
 done
 kubectl -n "$NS" create secret tls e2e-tls --cert=.e2e/certs/tls.crt --key=.e2e/certs/tls.key --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create secret generic e2e-gateway-client --from-literal=client-secret=e2e-gateway-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create secret tls fake-git-tls --cert=.e2e/certs-git/tls.crt --key=.e2e/certs-git/tls.key --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create configmap fake-git-ca --from-file=ca.crt=.e2e/certs-git/ca.crt --dry-run=client -o yaml | kubectl apply -f - >/dev/null
+kubectl -n "$NS" create secret generic e2e-git-oauth --from-literal=client-secret=e2e-secret --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create configmap keycloak-realm --from-file=realm.json=test/e2e/realm.json --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 log "Envoy Gateway $EG_VERSION (also installs the Gateway API CRDs)"
@@ -78,6 +86,9 @@ helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm --version "$EG
 log "fake IDE image"
 docker build -q -t "$IMG/fake-ide:e2e" test/fake-ide >/dev/null
 kind load docker-image "$IMG/fake-ide:e2e" --name "$CLUSTER"
+log "fake Git provider image"
+docker build -q -t "$IMG/fake-git:e2e" test/fake-git >/dev/null
+kind load docker-image "$IMG/fake-git:e2e" --name "$CLUSTER"
 
 log "CoreDNS: *.e2e.test resolves to the gateway entry Service"
 corefile=$(kubectl -n kube-system get cm coredns -o jsonpath='{.data.Corefile}')
@@ -89,11 +100,13 @@ if [[ $(grep -cF gateway-entry <<<"$corefile") != 1 ]]; then
   kubectl -n kube-system rollout status deploy/coredns --timeout=120s
 fi
 
-log "Gateway, Keycloak, smoke route"
+log "Gateway, Keycloak, smoke route, fake Git provider"
 kubectl apply -f test/e2e/manifests/gateway.yaml >/dev/null
 kubectl apply -f test/e2e/manifests/keycloak.yaml >/dev/null
+kubectl apply -f test/e2e/manifests/fake-git.yaml >/dev/null
 kubectl -n "$NS" wait --for=condition=Programmed gateway/eduide --timeout=180s
 kubectl -n "$NS" rollout status deploy/keycloak --timeout=300s
+kubectl -n "$NS" rollout status deploy/fake-git --timeout=120s
 # Envoy Gateway reads the OIDC discovery document when it sees the SecurityPolicy, so Keycloak and DNS must work first.
 # A policy that was rejected earlier is not retried: recreate it.
 if [[ "$(kubectl -n "$NS" get securitypolicy smoke -o 'jsonpath={.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == False ]]; then
@@ -104,11 +117,27 @@ kubectl -n "$NS" rollout status deploy/smoke --timeout=120s
 kubectl -n "$NS" wait securitypolicy/smoke --timeout=120s \
   --for='jsonpath={.status.ancestors[0].conditions[?(@.type=="Accepted")].status}=True'
 
+# service and authz verify tokens of the Keycloak at its https issuer URL: they need the test CA.
+# A helm upgrade can drop the patch, so every install is followed by this call.
+trust_e2e_ca() {
+  for d in $(kubectl -n "$NS" get deploy -o name | grep -E '(service|authz)$' || true); do
+    c=$(kubectl -n "$NS" get "$d" -o jsonpath='{.spec.template.spec.containers[0].name}')
+    kubectl -n "$NS" patch "$d" --type strategic -p "$(jq -n --arg c "$c" '{spec:{template:{spec:{
+      volumes:[{name:"e2e-ca",configMap:{name:"e2e-ca"}}],
+      containers:[{name:$c,env:[{name:"SSL_CERT_FILE",value:"/etc/e2e-ca/ca.crt"}],
+        volumeMounts:[{name:"e2e-ca",mountPath:"/etc/e2e-ca",readOnly:true}]}]}}}}')" >/dev/null
+  done
+  for d in $(kubectl -n "$NS" get deploy -o name); do
+    kubectl -n "$NS" rollout status "$d" --timeout=300s
+  done
+  kubectl -n "$NS" wait --for=condition=Available deploy --all --timeout=300s
+}
+
 if [[ "${E2E_INFRA_ONLY:-}" != 1 ]]; then
   if [[ "${E2E_SKIP_IMAGES:-}" != 1 ]]; then
     log "images (make images TAG=$TAG)"
     make images TAG="$TAG"
-    for i in operator service authz agent landing-page; do
+    for i in operator service authz agent git-proxy landing-page; do
       kind load docker-image "$IMG/$i:$TAG" --name "$CLUSTER"
     done
   fi
@@ -120,29 +149,41 @@ if [[ "${E2E_INFRA_ONLY:-}" != 1 ]]; then
   helm upgrade --install eduide-landing charts/eduide-landing-page -n "$NS" -f test/e2e/values-landing.yaml \
     --set image.tag="$TAG" >/dev/null
 
-  # service and authz verify tokens of the Keycloak at its https issuer URL: they need the test CA.
-  for d in $(kubectl -n "$NS" get deploy -o name | grep -E '(service|authz)$' || true); do
-    c=$(kubectl -n "$NS" get "$d" -o jsonpath='{.spec.template.spec.containers[0].name}')
-    kubectl -n "$NS" patch "$d" --type strategic -p "$(jq -n --arg c "$c" '{spec:{template:{spec:{
-      volumes:[{name:"e2e-ca",configMap:{name:"e2e-ca"}}],
-      containers:[{name:$c,env:[{name:"SSL_CERT_FILE",value:"/etc/e2e-ca/ca.crt"}],
-        volumeMounts:[{name:"e2e-ca",mountPath:"/etc/e2e-ca",readOnly:true}]}]}}}}')" >/dev/null
-  done
-  kubectl -n "$NS" wait --for=condition=Available deploy --all --timeout=300s
+  trust_e2e_ca
 fi
+
+# The Git accounts run installs the same chart again with values-git.yaml (providers on, one egress rule for
+# git-proxy), so the default run stays free of the feature. A run without E2E_RUN does both.
+run_git_phase() {
+  log "charts with the Git providers (values-git.yaml)"
+  helm upgrade --install eduide charts/eduide-control-plane -n "$NS" -f test/e2e/values.yaml -f test/e2e/values-git.yaml \
+    --set image.tag="$TAG" >/dev/null
+  trust_e2e_ca
+  E2E_GIT_CA_FILE="$REPO/.e2e/certs-git/ca.crt" go test -tags e2e ./test/e2e/... -run "${E2E_RUN:-^TestGit}" -count=1 -v -timeout 40m
+}
 
 log "tests"
+export E2E_PORT="$PORT" E2E_CA_FILE="$REPO/.e2e/certs/ca.crt" E2E_NAMESPACE="$NS"
+RUN_GIT=1
 if [[ "${E2E_INFRA_ONLY:-}" == 1 ]]; then
   RUN='^TestInfra'
+  RUN_GIT=0
+elif [[ -z "${E2E_RUN:-}" ]]; then
+  RUN=.
+elif [[ "$E2E_RUN" == *TestGit* ]]; then
+  RUN=''
 else
-  RUN=${E2E_RUN:-.}
+  RUN=$E2E_RUN
+  RUN_GIT=0
 fi
-export E2E_PORT="$PORT" E2E_CA_FILE="$REPO/.e2e/certs/ca.crt" E2E_NAMESPACE="$NS"
-go test -tags e2e ./test/e2e/... -run "$RUN" -count=1 -v -timeout 40m
+[[ -n "$RUN" ]] && go test -tags e2e ./test/e2e/... -run "$RUN" -skip '^TestGit' -count=1 -v -timeout 40m
 
-if [[ "${E2E_SKIP_BROWSER:-}" != 1 ]]; then
+if [[ "${E2E_SKIP_BROWSER:-}" != 1 && -n "$RUN" ]]; then
   log "browser tests (Playwright; skip with E2E_SKIP_BROWSER=1)"
   grep=()
   [[ "${E2E_INFRA_ONLY:-}" == 1 ]] && grep=(--grep infra)
   (cd test/e2e/browser && npm ci --silent && npx playwright install chromium && npx playwright test ${grep[@]+"${grep[@]}"})
 fi
+
+[[ "$RUN_GIT" == 1 ]] && run_git_phase
+exit 0

@@ -60,7 +60,8 @@ config:
   rateLimit: {}
   # Optional: connect GitHub and GitLab accounts (ADR 0023). Without providers the feature is off and the chart
   # renders nothing for it. Each provider needs an OAuth application registered at the host with the callback URL
-  # https://<hosts.service>/api/v1/git/callback. The client secret comes from an existing Secret in this namespace.
+  # https://<hosts.service>/git/callback (a landing page route, so the landing page must be served on hosts.service).
+  # The client secret comes from an existing Secret in this namespace.
   gitAccounts:
     providers: []
     # - name: github                    # DNS label, unique
@@ -69,7 +70,11 @@ config:
     #   displayName: GitHub
     #   clientID: ""
     #   clientSecretRef: {name: git-oauth, key: github}
+    #   caConfigMapRef: {name: git-ca, key: ca.crt}   # optional: PEM CA of a self-hosted host with a private CA
     #   inactivityExpiry: 2160h         # default; an unused account is revoked and deleted after this time
+    # approval:                         # repositories a user approves for one session on the landing page (ADR 0023)
+    #   mode: write                     # off, read (approve for reading only) or write (reading, or reading and pushing); default write
+    #   maxPerSession: 20
   # Optional, read-only admin API (U16); all keys optional.
   # admin:
   #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials
@@ -178,6 +183,9 @@ networkPolicy:
   - fe80::/10
   # Cluster specific ranges to deny as well, for example the pod CIDR and the node network when they are public.
   sessionEgressExtraDeny: []
+  # Extra egress rules (NetworkPolicyEgressRule list) of git-proxy, for a Git host on a private address (a self-hosted
+  # GitLab in the cluster network). Session pods get no such path. Empty by default.
+  gitProxyEgressExtra: []
   # Where session pods may resolve names.
   dnsNamespaceSelector:
     matchLabels:

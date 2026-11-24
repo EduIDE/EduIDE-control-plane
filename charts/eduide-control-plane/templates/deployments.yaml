@@ -99,6 +99,10 @@ spec:
           {{- if and (eq $c.name "service") (include "ecp.gitEnabled" $) }}
           - {name: git-accounts, mountPath: /etc/eduide/git-accounts, readOnly: true}
           {{- end }}
+          {{- /* CA bundles of Git hosts with a private CA: public certificates, read by the service and the git-proxy. */}}
+          {{- if and (or (eq $c.name "service") (eq $c.name "git-proxy")) (include "ecp.gitCA" $) }}
+          - {name: git-ca, mountPath: /etc/eduide/git-ca, readOnly: true}
+          {{- end }}
       volumes:
         {{- if eq $c.name "git-proxy" }}
         - name: config
@@ -121,6 +125,18 @@ spec:
             - secret:
                 name: {{ $p.clientSecretRef.name }}
                 items: [{key: {{ $p.clientSecretRef.key | quote }}, path: {{ printf "client-secret-%s" $p.name }}}]
+            {{- end }}
+        {{- end }}
+        {{- if and (or (eq $c.name "service") (eq $c.name "git-proxy")) (include "ecp.gitCA" $) }}
+        - name: git-ca
+          projected:
+            sources:
+            {{- range $p := $.Values.config.gitAccounts.providers }}
+            {{- if $p.caConfigMapRef }}
+            - configMap:
+                name: {{ $p.caConfigMapRef.name }}
+                items: [{key: {{ $p.caConfigMapRef.key | quote }}, path: {{ printf "%s.pem" $p.name }}}]
+            {{- end }}
             {{- end }}
         {{- end }}
       {{- with $c.v.nodeSelector }}

@@ -54,11 +54,12 @@ func (k *Keys) open(blob, aad []byte) ([]byte, error) {
 	return k.aead.Open(nil, blob[:n], blob[n:], aad)
 }
 
-// State is the signed content of the OAuth state parameter. It holds no secret: the browser and the provider see it.
+// State is the content of the OAuth state parameter. It is sealed with the same AEAD as the token store, so
+// the browser, the Git host, access logs and browser history see an opaque value and never the user name.
 type State struct {
 	Owner    string `json:"o"`
 	Provider string `json:"p"`
-	// Nonce also sits in the flow cookie, which binds the flow to the browser that started it.
+	// Nonce keys the PKCE verifier of the flow (see Verifier).
 	Nonce    string `json:"n"`
 	Expires  int64  `json:"e"` // unix seconds
 	ReturnTo string `json:"r,omitempty"`
@@ -66,6 +67,8 @@ type State struct {
 
 // StateTTL is how long a connect flow may take.
 const StateTTL = 10 * time.Minute
+
+const stateAAD = "state"
 
 var (
 	ErrStateInvalid = errors.New("state is not valid")
@@ -85,24 +88,22 @@ func (k *Keys) mac(parts ...string) []byte {
 	return m.Sum(nil)
 }
 
-// Sign returns payload.signature, both base64url.
-func (k *Keys) Sign(s State) string {
+// SealState returns the state parameter: the encrypted and authenticated State, base64url.
+func (k *Keys) SealState(s State) string {
 	b, _ := json.Marshal(s)
-	p := base64.RawURLEncoding.EncodeToString(b)
-	return p + "." + base64.RawURLEncoding.EncodeToString(k.mac("state", p))
+	return base64.RawURLEncoding.EncodeToString(k.seal(b, []byte(stateAAD)))
 }
 
-// ParseState checks signature and expiry.
-func (k *Keys) ParseState(raw string, now time.Time) (State, error) {
-	p, sig, ok := strings.Cut(raw, ".")
-	if !ok || len(raw) > 2048 {
+// OpenState decrypts the state parameter and checks the expiry. It never panics on foreign input.
+func (k *Keys) OpenState(raw string, now time.Time) (State, error) {
+	if len(raw) > 2048 {
 		return State{}, ErrStateInvalid
 	}
-	got, err := base64.RawURLEncoding.DecodeString(sig)
-	if err != nil || !hmac.Equal(got, k.mac("state", p)) {
+	blob, err := base64.RawURLEncoding.DecodeString(raw)
+	if err != nil {
 		return State{}, ErrStateInvalid
 	}
-	b, err := base64.RawURLEncoding.DecodeString(p)
+	b, err := k.open(blob, []byte(stateAAD))
 	var s State
 	if err != nil || json.Unmarshal(b, &s) != nil || s.Owner == "" || s.Provider == "" || s.Nonce == "" {
 		return State{}, ErrStateInvalid

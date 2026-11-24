@@ -50,6 +50,11 @@ seccompProfile:
   type: RuntimeDefault
 {{- end }}
 
+{{/* "true" when a Git provider names a CA bundle (a self-hosted host with a private CA) */}}
+{{- define "ecp.gitCA" -}}
+{{- range $p := dig "gitAccounts" "providers" (list) .Values.config }}{{ if $p.caConfigMapRef }}true{{ end }}{{ end -}}
+{{- end }}
+
 {{/* config.yaml: the values as given, agent image and salt file filled in */}}
 {{- define "ecp.config" -}}
 {{- $c := deepCopy .Values.config -}}
@@ -59,12 +64,13 @@ seccompProfile:
 {{- /* The client secrets and the key are files of a projected volume in the service pod; the config names the paths only. */ -}}
 {{- $provs := list -}}
 {{- range $p := $c.gitAccounts.providers -}}
-{{- $q := omit $p "clientSecretRef" -}}
+{{- $q := omit $p "clientSecretRef" "caConfigMapRef" -}}
 {{- $_ := set $q "clientSecretFile" (printf "/etc/eduide/git-accounts/client-secret-%s" $p.name) -}}
+{{- if $p.caConfigMapRef }}{{ $_ := set $q "caFile" (printf "/etc/eduide/git-ca/%s.pem" $p.name) }}{{ end -}}
 {{- $provs = append $provs $q -}}
 {{- end -}}
 {{- $full := include "ecp.fullname" . -}}
-{{- $_ := set $c "gitAccounts" (dict "providers" $provs "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key"
+{{- $_ := set $c "gitAccounts" (dict "providers" $provs "approval" ($c.gitAccounts.approval | default dict) "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key"
   "proxyURL" (printf "http://%s-git-proxy.%s.svc:8080" $full .Release.Namespace)
   "internalURL" (printf "http://%s-service.%s.svc:8083" $full .Release.Namespace)) -}}
 {{- else -}}

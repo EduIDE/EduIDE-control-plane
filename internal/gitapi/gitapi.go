@@ -51,9 +51,12 @@ type AuthorizeResponse struct {
 	Session string `json:"session,omitempty"`
 	// Connected tells whether the owner has an account on the host. SessionRepository is "host/path" of the
 	// session's GIT_URI, empty without one. The git-proxy needs both for its message after an anonymous 401, 403 or 404.
-	Connected         bool      `json:"connected,omitempty"`
-	SessionRepository string    `json:"sessionRepository,omitempty"`
-	Upstream          *Upstream `json:"upstream,omitempty"`
+	Connected         bool   `json:"connected,omitempty"`
+	SessionRepository string `json:"sessionRepository,omitempty"`
+	// ApprovalMode is the deployment's repository approval mode ("read" or "write"); empty when approvals are off.
+	// With it and Connected the git-proxy builds the approval link in its message.
+	ApprovalMode string    `json:"approvalMode,omitempty"`
+	Upstream     *Upstream `json:"upstream,omitempty"`
 }
 
 // Upstream is a basic auth credential for the provider host. The git-proxy never logs it or hands it to a client.
@@ -86,6 +89,23 @@ func SplitURL(raw string) (host, repo string, ok bool) {
 // ConnectMessage is what a user sees when a repository needs a connected account.
 func ConnectMessage(displayName, landingURL string) string {
 	return "Connect your " + displayName + " account to open this repository: " + landingURL
+}
+
+// ApproveURL is the landing page link that lets the user approve a repository for one session. The landing page
+// shows session and repository and needs an explicit click and the user's login. The link holds no secret.
+// access is "read" or "write".
+func ApproveURL(landingURL, session, host, repo, access string) string {
+	return strings.TrimRight(landingURL, "/") + "/?session=" + url.QueryEscape(session) +
+		"&approveRepo=" + url.QueryEscape("https://"+host+"/"+NormalizeRepo(repo)) + "&access=" + access
+}
+
+// ApproveMessage is what a user sees when approving the repository for the session could help.
+func ApproveMessage(landingURL, session, host, repo, access string) string {
+	verb := "use"
+	if access == "write" {
+		verb = "push to"
+	}
+	return "This session may not " + verb + " " + host + "/" + NormalizeRepo(repo) + " yet. Approve it here: " + ApproveURL(landingURL, session, host, repo, access)
 }
 
 // OtherRepositoryMessage is shown when an anonymous read of a repository other than the session's fails at the

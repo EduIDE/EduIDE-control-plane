@@ -176,6 +176,7 @@ func run() error {
 		servers = append(servers, internalServer(&gitpolicy.Handler{
 			Sessions: gitpolicy.CacheSessions{Cache: c, Namespace: cfg.Namespace}, Secrets: writer, Accounts: gitAccounts,
 			Namespace: cfg.Namespace, LandingURL: "https://" + cfg.Hosts.Service, Salt: salt,
+			ApprovalMode: cfg.GitAccounts.Approval.Mode, Approvals: gitpolicy.Store{C: writer, Namespace: cfg.Namespace},
 		}))
 	}
 	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)

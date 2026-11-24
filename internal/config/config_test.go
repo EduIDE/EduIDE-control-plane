@@ -150,3 +150,28 @@ func TestGitAccounts(t *testing.T) {
 		}
 	}
 }
+
+func TestGitApproval(t *testing.T) {
+	base := minimal + "gitAccounts:\n  encryptionKeyFile: /k\n  providers: [{name: a, type: github, host: github.com, clientID: c, clientSecretFile: /s, caFile: /ca.pem}]\n"
+	c, err := Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.GitAccounts.Approval; a.Mode != "write" || a.MaxPerSession != 20 {
+		t.Errorf("defaults %+v", a)
+	}
+	if c.GitAccounts.Providers[0].CAFile != "/ca.pem" {
+		t.Error("caFile is not read")
+	}
+	for _, mode := range []string{"off", "read", "write"} {
+		c, err := Parse([]byte(base + "  approval: {mode: " + mode + ", maxPerSession: 5}\n"))
+		if err != nil || c.GitAccounts.Approval.Mode != mode || c.GitAccounts.Approval.MaxPerSession != 5 {
+			t.Errorf("%s: %+v %v", mode, c.GitAccounts.Approval, err)
+		}
+	}
+	for name, extra := range map[string]string{"unknown mode": "  approval: {mode: all}\n", "negative limit": "  approval: {maxPerSession: -1}\n"} {
+		if _, err := Parse([]byte(base + extra)); err == nil || !strings.Contains(err.Error(), "approval") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
