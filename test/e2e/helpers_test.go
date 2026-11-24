@@ -19,7 +19,9 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -106,7 +108,36 @@ var formAction = regexp.MustCompile(`<form[^>]*id="kc-form-login"[^>]*action="([
 // The returned client holds the cookies of the gateway and of Keycloak.
 func browserLogin(t testing.TB, u user, startURL string) *http.Client {
 	t.Helper()
+	c, _ := browserLoginRecording(t, u, startURL)
+	return c
+}
+
+// cookieRecorder keeps every Set-Cookie line of the answers, with the host that sent it.
+type cookieRecorder struct {
+	http.RoundTripper
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *cookieRecorder) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := r.RoundTripper.RoundTrip(req)
+	if err == nil {
+		r.mu.Lock()
+		for _, l := range resp.Header.Values("Set-Cookie") {
+			r.lines = append(r.lines, req.URL.Host+" "+l)
+		}
+		r.mu.Unlock()
+	}
+	return resp, err
+}
+
+// browserLoginRecording is browserLogin that also returns the Set-Cookie lines it saw, as "host cookie-line".
+func browserLoginRecording(t testing.TB, u user, startURL string) (*http.Client, func() []string) {
+	t.Helper()
 	c := testHTTPClient(t, true, true)
+	rec := &cookieRecorder{RoundTripper: c.Transport}
+	c.Transport = rec
+	lines := func() []string { rec.mu.Lock(); defer rec.mu.Unlock(); return slices.Clone(rec.lines) }
 	resp, err := c.Get(startURL)
 	if err != nil {
 		t.Fatalf("login start: %v", err)
@@ -125,7 +156,7 @@ func browserLogin(t testing.TB, u user, startURL string) *http.Client {
 	if resp.Request.URL.Host == keycloakHost {
 		t.Fatalf("login of %s did not leave Keycloak (status %d)", u.name, resp.StatusCode)
 	}
-	return c
+	return c, lines
 }
 
 // ---- REST API -------------------------------------------------------------------------------

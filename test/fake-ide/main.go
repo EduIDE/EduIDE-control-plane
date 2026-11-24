@@ -87,6 +87,15 @@ func (i *ide) handler() http.Handler {
 		sort.Strings(names)
 		writeJSON(w, map[string]any{"headers": names})
 	})
+	// Cookie names only, never values: the e2e checks that the gateway's login cookies do not reach the IDE.
+	mux.HandleFunc("/cookies", func(w http.ResponseWriter, r *http.Request) {
+		names := []string{}
+		for _, c := range r.Cookies() {
+			names = append(names, c.Name)
+		}
+		sort.Strings(names)
+		writeJSON(w, map[string]any{"cookies": names})
+	})
 	mux.HandleFunc("/data-state", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, i.dataState())
 	})
