@@ -21,6 +21,11 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 - E2E: a fake Git provider (`test/fake-git`), a Git capable fake IDE and the test `TestGitAccounts` (`docs/development/testing.md`)
 - An hourly sweep revokes and deletes Git accounts that no session used for `inactivityExpiry`
 
+- Landing page: a "Git accounts" section (connect, disconnect with a confirmation), the route `/git/callback`, a repository check before a launch with a `gitUri` (`connect` and `no-access` stop the launch with a clear message, any failing request launches as before), a template picker for a link with `gitUri` and no usable `appDef`, and the repository approval page for the git-proxy link (`/?session=...&approveRepo=...&access=...`, nothing is approved without a click on "Allow"). English and German. The committed API client is synced with the Git endpoints
+- `eduide-session` 0.2.0: writes the `url.<agent>/git/<host>/.insteadOf` entries from `GET /v1/git/hosts` before it hands launch data to other extensions, and removes entries of hosts that left the list. The IDE image must ship this version for the feature to reach real IDEs
+- E2E: Playwright spec `git-accounts.spec.ts` in the Git phase (connect through the page, start link to a private repository, approval page)
+- Developer page `docs/development/git-accounts.md`; runbook notes for rotating a client secret, removing a provider and a provider on a private address (`docs/operations/git-proxy.md`)
+
 ### Changed
 
 - git-proxy reuses an allowed answer with a credential for at most 5 seconds (was 30), so a disconnect or a removed approval takes effect at once

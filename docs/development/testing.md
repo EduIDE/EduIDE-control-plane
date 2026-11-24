@@ -26,6 +26,7 @@ Matrix of the e2e suite: `none` cold, `none` warm (pool), `volume` cold, `volume
 
 The Git accounts feature (ADR 0023) has its own run inside `make e2e`.
 `run.sh` first runs the whole suite with the feature off, then installs the chart again with `test/e2e/values-git.yaml` (one provider, one extra egress rule for git-proxy) and runs the tests named `TestGit*` (`test/e2e/git_test.go`).
+After the Go tests, the same phase runs the Playwright spec `test/e2e/browser/git-accounts.spec.ts` (connect, a start link to a private repository, approval page). The browser cannot resolve the fake's cluster address, so `run.sh` starts a `kubectl port-forward` (`E2E_FAKE_GIT_PORT`, default 18444) and the spec answers the authorize step through it. `E2E_SKIP_BROWSER=1` skips it.
 `E2E_RUN=TestGitAccounts make e2e` runs only that phase.
 
 The provider is `test/fake-git`, a Go program (standard library only, image with `git`) behind the Service `fake-git` in the e2e namespace.

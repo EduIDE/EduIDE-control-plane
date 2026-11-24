@@ -43,7 +43,7 @@ flowchart LR
 | agent | `cmd/agent` | Sidecar in every session pod. Proxy to the IDE for requests with a valid instance token, receives launch data once per claim, serves it on localhost to the IDE extension, reports activity. With Git providers it also forwards `/git/<host>/...` of the IDE container to the git-proxy, with the instance token. |
 | git-proxy | `cmd/git-proxy` | Only with Git providers ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)). Streams Git smart HTTP between session pods and the provider hosts. Asks the service per request what is allowed and which credential to use. Stateless, two replicas. Runbook: [git-proxy.md](../operations/git-proxy.md). |
 | pool-scaler | `pool-scaler/` | Sets `targetIdle` of an `IDEPool` through `/scale`. Reads pool status and metrics. Own Go module. |
-| landing page | `landing-page/` | Launch page and overview of sessions and workspaces. Uses the generated TypeScript client. Host `hosts.service`. |
+| landing page | `landing-page/` | Launch page and overview of sessions and workspaces. Uses the generated TypeScript client. Host `hosts.service`. With Git providers it also connects Git accounts (route `/git/callback`), checks a repository before a launch and shows the repository approval page. |
 | `eduide-session` | `extensions/eduide-session/` | IDE extension. Long-polls the agent on `127.0.0.1:8082`, sends heartbeats on real input, exposes `dataBridge.getEnv` and `dataBridge.getEnvState`. |
 | CRD chart | `charts/eduide-control-plane-crds` | The four CRDs, once per cluster. |
 | control plane chart | `charts/eduide-control-plane` | Per deployment: operator, service, authz, git-proxy (with Git providers), RBAC, SecurityPolicy, NetworkPolicies, config. |

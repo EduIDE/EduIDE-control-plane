@@ -83,3 +83,10 @@ A change, a disconnect or a removed approval takes effect within 5 seconds, beca
 Turn the feature off with `config.gitAccounts.approval.mode: off` (the credential is then used for the session repository only; stored approvals stop counting at once).
 Use `read` to allow approvals for reading only, which makes a push to another repository impossible.
 `config.gitAccounts.approval.maxPerSession` bounds the approvals of one session.
+
+## Provider changes
+
+- **Rotate a client secret.** Update the Secret that `clientSecretRef` names, then restart the service: `kubectl -n <ns> rollout restart deploy/<service>`. The service reads the client secret files and the encryption key once at start and never again. A wrong secret shows as `git-provider-error` on connect and as a failed refresh. The git-proxy holds no client secret.
+- **Remove a provider.** Stored accounts of a provider that is no longer in the config stay: the sweep skips them. Delete them with `kubectl -n <ns> delete secret -l eduide.github.io/component=git-account,eduide.github.io/git-provider=<name>`, and delete the OAuth application at the host, which revokes the tokens. Without that, the tokens stay valid at the host.
+- **Provider on a private address** (a self-managed GitLab in the cluster network). The service calls the provider for OAuth, the account lookup and the preflight. The chart sets no egress NetworkPolicy for the service, so only the cluster network limits it. The git-proxy excludes private ranges by default: add a rule with `networkPolicy.gitProxyEgressExtra`. Session pods never get such a rule.
+- **The Artemis host is also a provider.** Launches keep working. Git does not rewrite a URL with credentials (`https://user:token@host/...`), so the clone with the VCS token goes to the host directly. Requests without credentials for that host go through the proxy ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md), operation notes).
