@@ -175,13 +175,18 @@ func (s *Server) GitCallback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, GitCallbackResponse{Provider: st.Provider, Login: acc.Login, ReturnTo: cmpOr(st.ReturnTo, "/")})
 }
 
-// validReturnTo accepts a relative path on the landing page: one leading slash, no host, no backslash, no control characters.
+// validReturnTo accepts a path on the landing page: it starts with a single slash, the second character is neither a
+// slash nor a backslash (browsers read "//host" and "/\host" as another host), and there is no scheme, host or
+// control character.
 func validReturnTo(s string) bool {
-	if s == "" || len(s) > 512 || s[0] != '/' || strings.HasPrefix(s, "//") || strings.ContainsAny(s, "\\") {
+	if len(s) == 0 || len(s) > 512 || s[0] != '/' {
+		return false
+	}
+	if len(s) > 1 && (s[1] == '/' || s[1] == '\\') {
 		return false
 	}
 	for _, c := range s {
-		if c < 0x20 || c == 0x7f {
+		if c < 0x20 || c == 0x7f || c == '\\' {
 			return false
 		}
 	}

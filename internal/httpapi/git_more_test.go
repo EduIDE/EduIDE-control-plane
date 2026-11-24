@@ -380,3 +380,34 @@ func TestGitApprovalAuditLineAndNoSecretInLogs(t *testing.T) {
 		t.Errorf("log shows a secret or the user name:\n%s", out)
 	}
 }
+
+func TestValidReturnTo(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
+		{"/", true},
+		{"/status", true},
+		{"/?appDef=java&gitUri=https%3A%2F%2Fgithub.com%2Fa%2Fb", true},
+		{"/a/b?x=1#f", true},
+		{"", false},
+		{"status", false},
+		{"//evil.example", false},
+		{"//", false},
+		{"/\\evil.example", false},
+		{"/a\\b", false},
+		{"https://evil.example/", false},
+		{"javascript:alert(1)", false},
+		{"/a\nb", false},
+		{"/a\rb", false},
+		{"/a\x00b", false},
+		{"/a\x7fb", false},
+		{"/" + strings.Repeat("x", 512), false},
+		{"http://evil.example", false},
+		{"/%2F%2Fevil.example", true}, // percent-encoded slashes are no host separator for the browser
+	} {
+		if got := validReturnTo(tc.in); got != tc.want {
+			t.Errorf("validReturnTo(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
