@@ -4,6 +4,12 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Added
+
+- Usage archive: `usageArchive.enabled` in the control plane chart adds a daily CronJob and a kept PersistentVolumeClaim; `usage-export --archive` writes every `eduide:usage:*` sample of a day as gzipped OpenMetrics (loadable with `promtool`) and catches up missed days, so the usage data outlives the Prometheus retention
+- Alert `EduIDEUsageArchiveStale` when the usage archive has not succeeded for 36 hours
+- Image `usage-export`
+
 ## [0.2.3] - 2026-11-21
 
 ### Added

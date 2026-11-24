@@ -2,6 +2,11 @@
 {{- if contains .Chart.Name .Release.Name }}{{ .Release.Name | trunc 40 | trimSuffix "-" }}{{ else }}{{ printf "%s-%s" .Release.Name .Chart.Name | trunc 40 | trimSuffix "-" }}{{ end }}
 {{- end }}
 
+{{- /* CronJob names may have 52 characters; the alert selects the same name. */ -}}
+{{- define "ecp.usageArchiveName" -}}
+{{- printf "%s-usage-archive" (include "ecp.fullname" . | trunc 38 | trimSuffix "-") }}
+{{- end }}
+
 {{- define "ecp.labels" -}}
 app.kubernetes.io/name: eduide-control-plane
 app.kubernetes.io/instance: {{ .Release.Name }}

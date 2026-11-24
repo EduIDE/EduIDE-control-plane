@@ -1,0 +1,88 @@
+{{- with .Values.usageArchive }}
+{{- if .enabled }}
+{{- $name := include "ecp.usageArchiveName" $ }}
+{{- if not .prometheusURL }}{{ fail "usageArchive.prometheusURL is required when usageArchive.enabled is true" }}{{ end }}
+{{- if not $.Values.monitoring.rules.enabled }}{{ fail "usageArchive needs monitoring.rules.enabled: it archives the eduide:usage:* recording rules" }}{{ end }}
+---
+# Kept on uninstall: the archive outlives the Prometheus retention and must not go with the release.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: usage-archive
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .persistence.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .persistence.size }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "ecp.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: usage-archive
+spec:
+  schedule: {{ .schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            {{- include "ecp.labels" $ | nindent 12 }}
+            app.kubernetes.io/component: usage-archive
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          {{- with .nodeSelector }}
+          nodeSelector:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .tolerations }}
+          tolerations:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- include "ecp.podSecurityContext" $ | nindent 12 }}
+            fsGroup: 65532
+          {{- with $.Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+          - name: usage-export
+            image: {{ .image.repository }}:{{ .image.tag | default $.Values.image.tag | default $.Chart.AppVersion }}
+            imagePullPolicy: {{ $.Values.image.pullPolicy }}
+            args:
+            - --prometheus={{ .prometheusURL }}
+            - --namespace={{ $.Release.Namespace }}
+            - --installation={{ .installation | default $.Release.Namespace }}
+            - --release={{ .release | default $.Chart.AppVersion }}
+            - --chart-version={{ $.Chart.Version }}
+            - --archive=/archive/raw
+            - --archive-days={{ .days }}
+            - --out=/archive/weekly
+            securityContext:
+              {{- include "ecp.containerSecurityContext" $ | nindent 14 }}
+            resources:
+              {{- toYaml .resources | nindent 14 }}
+            volumeMounts:
+            - {name: archive, mountPath: /archive}
+          volumes:
+          - name: archive
+            persistentVolumeClaim:
+              claimName: {{ $name }}
+{{- end }}
+{{- end }}

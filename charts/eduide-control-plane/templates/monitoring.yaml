@@ -33,7 +33,7 @@ metadata:
     {{- include "ecp.labels" $ | nindent 4 }}
     {{- with .labels }}{{ toYaml . | nindent 4 }}{{ end }}
 spec:
-  {{- $.Files.Get "files/alerts.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__FULLNAME__" $full | replace "__EXTRA_LABELS__" $extra | nindent 2 }}
+  {{- $.Files.Get "files/alerts.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__USAGE_ARCHIVE__" (include "ecp.usageArchiveName" $) | replace "__FULLNAME__" $full | replace "__EXTRA_LABELS__" $extra | nindent 2 }}
   {{- $.Files.Get "files/usage-rules.yaml" | replace "__NAMESPACE__" $.Release.Namespace | nindent 2 }}
   {{- if .certificates }}
   {{- $.Files.Get "files/alerts-certificates.yaml" | replace "__NAMESPACE__" $.Release.Namespace | replace "__EXTRA_LABELS__" $extra | nindent 2 }}

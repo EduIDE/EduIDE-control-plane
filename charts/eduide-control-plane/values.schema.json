@@ -46,6 +46,7 @@
     "operator": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
     "service": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
     "authz": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}, "replicas": {"type": "integer", "minimum": 1}}},
-    "poolScaler": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}}}
+    "poolScaler": {"type": "object", "properties": {"logLevel": {"enum": ["debug", "info", "warn"]}}},
+    "usageArchive": {"type": "object", "properties": {"enabled": {"type": "boolean"}, "prometheusURL": {"type": "string", "pattern": "^(https?://.+)?$"}, "schedule": {"type": "string", "minLength": 1}, "days": {"type": "integer", "minimum": 1}}}
   }
 }
