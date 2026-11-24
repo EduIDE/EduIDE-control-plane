@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -37,6 +38,8 @@ func run(args []string) error {
 	out := fs.String("out", "", "output directory")
 	partial := fs.Bool("partial-weeks", false, "also export the incomplete current week (rows carry days below 7)")
 	check := fs.String("check", "", "scan this directory for identifiers and exit")
+	archive := fs.String("archive", "", "keep the raw samples of eduide:usage:* in this directory, one file per day")
+	archiveN := fs.Int("archive-days", 7, "with --archive: archive the missing days among the last N days")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -53,6 +56,20 @@ func run(args []string) error {
 		}
 		fmt.Println("no identifiers found")
 		return nil
+	}
+	var archErr error
+	if *archive != "" {
+		if *promURL == "" || !safeName.MatchString(*ns) || *archiveN < 1 {
+			return fmt.Errorf("--archive needs --prometheus, --namespace and --archive-days of at least 1")
+		}
+		ap, err := newProm(*promURL)
+		if err != nil {
+			return err
+		}
+		archErr = archiveDays(context.Background(), ap, *ns, *archive, *archiveN, time.Now())
+		if *out == "" {
+			return archErr
+		}
 	}
 	if *release == "" || *chart == "" {
 		return fmt.Errorf("--release and --chart-version are required")
@@ -83,7 +100,8 @@ func run(args []string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the export is meant to be shared
 		return err
 	}
-	return export(context.Background(), p, *ns, *install, *release, *chart, from, to, period, *partial, now, dir)
+	// The weekly export runs even when a day could not be archived; both errors are reported.
+	return errors.Join(archErr, export(context.Background(), p, *ns, *install, *release, *chart, from, to, period, *partial, now, dir))
 }
 
 func parseDay(s string, def time.Time) (time.Time, error) {

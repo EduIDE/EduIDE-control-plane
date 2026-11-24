@@ -142,7 +142,44 @@ The allowlist is a manual patch: a rancher-monitoring upgrade drops it (see abov
 Rules and exports that need the labels give empty M5 rows after such an upgrade until the flag is back.
 
 Recorded series exist only from the moment the rules are deployed, and they expire with the same retention as the raw series.
+The usage archive keeps them beyond that (next section).
 Keep the exported directories in a Git repository or in the replication package.
+
+### Usage archive
+
+`usageArchive.enabled` in the control plane chart (needs `monitoring.rules.enabled`) adds a daily CronJob `<release>-usage-archive` and a PersistentVolumeClaim of the same name.
+Each run of `usage-export` writes two things to the volume:
+
+| Path | Content |
+|---|---|
+| `/archive/raw/<namespace>/YYYY-MM-DD.om.gz` | Every sample of every `eduide:usage:*` series of the namespace for that UTC day, as gzipped OpenMetrics |
+| `/archive/weekly/<installation>/<week>/` | The weekly export of the last complete week, as described above |
+
+A run archives every day among the last `usageArchive.days` (default 85, keep it close to the retention) that has no file yet, so missed nights are caught up on the next run.
+Days without samples get no file and are tried again; an empty yesterday fails the job, because then the rules do not reach this Prometheus.
+A failed day fails the job, the other days are still written.
+The alert `EduIDEUsageArchiveStale` fires when the CronJob has not succeeded for 36 hours.
+`helm uninstall` keeps the volume (`helm.sh/resource-policy: keep`); delete it by hand only after copying the files.
+
+The volume alone is not a backup: deleting the namespace or losing the cluster deletes it, and with the reclaim policy `Delete` of most storage classes the data goes with it.
+Copy the archive off the cluster regularly (command below) and keep the copies with the replication package.
+Point `prometheusURL` at a single Prometheus: behind a Service with several replicas a query can hit one with a gap, and that day is then archived with the gap.
+
+The flags are usable without the chart: `usage-export --prometheus <url> --namespace <ns> --archive <dir> --archive-days 90` archives only; add `--out` and the export flags for both.
+
+Read the files with a pod that mounts the volume while no job runs (the image has no shell):
+
+```sh
+kubectl -n <ns> run usage-archive-read --rm -i --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"volumes":[{"name":"a","persistentVolumeClaim":{"claimName":"<release>-usage-archive"}}],"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"r","image":"busybox:1.37","command":["tar","czf","-","-C","/archive","."],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"volumeMounts":[{"name":"a","mountPath":"/archive"}]}]}}' > usage-archive.tgz
+```
+
+Load raw days back into a TSDB, for example a local Prometheus for a new export:
+
+```sh
+gunzip -c 2026-11-22.om.gz > day.om
+promtool tsdb create-blocks-from openmetrics day.om blocks/
+```
 
 ### Backfill
 

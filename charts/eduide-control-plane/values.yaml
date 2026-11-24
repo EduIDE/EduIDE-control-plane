@@ -202,3 +202,33 @@ monitoring:
     namespace: ""
     labels:
       grafana_dashboard: "1"
+
+# Daily CronJob that keeps the usage data beyond the Prometheus retention (docs/operations/usage-export.md).
+# It writes the raw samples of eduide:usage:* (one OpenMetrics file per day, loadable with promtool) and the
+# weekly export to a PersistentVolumeClaim that helm uninstall keeps. Needs monitoring.rules.enabled.
+usageArchive:
+  enabled: false
+  # Required when enabled: Prometheus that evaluates the recording rules of this namespace.
+  prometheusURL: ""
+  schedule: "17 3 * * *"
+  # Missing days among the last N are archived on every run, so set it close to the Prometheus retention:
+  # days that fall out of the retention before they are archived are lost.
+  days: 85
+  # Installation name in the weekly export. Default: release namespace.
+  installation: ""
+  # EduIDE release written into context.json. Default: chart appVersion.
+  release: ""
+  image:
+    repository: ghcr.io/eduide/eduide-control-plane/usage-export
+    # Defaults to image.tag, then the chart appVersion, like the other components.
+    tag: ""
+  persistence:
+    # About 250 KB per day for one installation.
+    size: 2Gi
+    # Empty: the cluster default.
+    storageClassName: ""
+  nodeSelector: {}
+  tolerations: []
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 256Mi}

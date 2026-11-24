@@ -73,3 +73,11 @@ groups:
     annotations:
       summary: More than 10% of operator calls to agents fail
       description: The operator cannot reach the agents of {{ $value | humanizePercentage }} of its calls. Check session pods, their NetworkPolicies and the agent logs.
+  - alert: EduIDEUsageArchiveStale
+    # Only fires where usageArchive is enabled: without its CronJob neither side has a series.
+    expr: (time() - max(kube_job_status_completion_time{namespace="__NAMESPACE__", job_name=~"__FULLNAME__-usage-archive-.*"}) > 129600) or ((time() - max(kube_cronjob_created{namespace="__NAMESPACE__", cronjob="__FULLNAME__-usage-archive"}) > 129600) unless on() max(kube_job_status_completion_time{namespace="__NAMESPACE__", job_name=~"__FULLNAME__-usage-archive-.*"}))
+    for: 1h
+    labels: {severity: warning, eduide_namespace: __NAMESPACE____EXTRA_LABELS__}
+    annotations:
+      summary: The usage archive has not run successfully for 36 hours
+      description: Usage data older than the Prometheus retention is lost for every day the archive misses. Check the logs of the latest job of the CronJob __FULLNAME__-usage-archive.

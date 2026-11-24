@@ -1,0 +1,54 @@
+rule_files: [alerts.yml]
+evaluation_interval: 1m
+tests:
+# The last successful job finished at minute 0; 36 hours plus the hold of one hour later the alert fires.
+- interval: 1m
+  input_series:
+  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-1"}'
+    values: '0x3000'
+  - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
+    values: '0x3000'
+  alert_rule_test:
+  - eval_time: 36h
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts: []
+  - eval_time: 37h30m
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts:
+    - exp_labels: {severity: warning, eduide_namespace: ns}
+      exp_annotations:
+        summary: The usage archive has not run successfully for 36 hours
+        description: Usage data older than the Prometheus retention is lost for every day the archive misses. Check the logs of the latest job of the CronJob rel-usage-archive.
+# The CronJob exists for two days and never succeeded.
+- interval: 1m
+  input_series:
+  - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
+    values: '0x3000'
+  alert_rule_test:
+  - eval_time: 38h
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts:
+    - exp_labels: {severity: warning, eduide_namespace: ns}
+      exp_annotations:
+        summary: The usage archive has not run successfully for 36 hours
+        description: Usage data older than the Prometheus retention is lost for every day the archive misses. Check the logs of the latest job of the CronJob rel-usage-archive.
+# Daily successes: no alert.
+- interval: 1m
+  input_series:
+  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-1"}'
+    values: '0x1440 86400x1440 172800x1000'
+  - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
+    values: '0x3880'
+  alert_rule_test:
+  - eval_time: 64h
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts: []
+# Without the CronJob nothing fires.
+- interval: 1m
+  input_series:
+  - series: 'up{namespace="ns"}'
+    values: '1x3000'
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts: []
