@@ -101,7 +101,8 @@ type reqState struct {
 	connected   bool
 	sessionRepo string
 	approval    string
-	// progress is called whenever bytes move; it keeps the idle deadline away.
+	// progress is called whenever bytes arrive (from the client or from the provider). It moves the idle timer and the
+	// connection deadlines, so a write to a client that stopped reading ends after the idle time.
 	progress func()
 	start    time.Time
 	in, out  atomic.Int64
@@ -282,7 +283,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	st.progress()
 	defer func() { _ = rc.SetReadDeadline(time.Time{}); _ = rc.SetWriteDeadline(time.Time{}) }()
-	h.rp.ServeHTTP(&progressWriter{ResponseWriter: w, progress: st.progress}, r.WithContext(context.WithValue(ctx, stateKey{}, st)))
+	h.rp.ServeHTTP(w, r.WithContext(context.WithValue(ctx, stateKey{}, st)))
 	if st.result == "" { // the client went away before an answer
 		st.result = resultUpstreamError
 	}
@@ -296,22 +297,6 @@ func clientIP(r *http.Request) string {
 	}
 	return h
 }
-
-// progressWriter reports every write that reached the client.
-type progressWriter struct {
-	http.ResponseWriter
-	progress func()
-}
-
-func (p *progressWriter) Write(b []byte) (int, error) {
-	n, err := p.ResponseWriter.Write(b)
-	if n > 0 {
-		p.progress()
-	}
-	return n, err
-}
-
-func (p *progressWriter) Unwrap() http.ResponseWriter { return p.ResponseWriter }
 
 func (h *Handler) authorize(ctx context.Context, instance, token string, t Target) (gitapi.AuthorizeResponse, error) {
 	req := gitapi.AuthorizeRequest{Instance: instance, Host: t.Host, Repository: gitapi.NormalizeRepo(t.Repo), Kind: t.Kind()}
