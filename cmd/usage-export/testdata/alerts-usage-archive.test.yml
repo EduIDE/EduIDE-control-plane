@@ -4,7 +4,7 @@ tests:
 # The last successful job finished at minute 0; 36 hours plus the hold of one hour later the alert fires.
 - interval: 1m
   input_series:
-  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-1"}'
+  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-29384170"}'
     values: '0x3000'
   - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
     values: '0x3000'
@@ -35,7 +35,7 @@ tests:
 # Daily successes: no alert.
 - interval: 1m
   input_series:
-  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-1"}'
+  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-29384170"}'
     values: '0x1440 86400x1440 172800x1000'
   - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
     values: '0x3880'
@@ -43,6 +43,21 @@ tests:
   - eval_time: 64h
     alertname: EduIDEUsageArchiveStale
     exp_alerts: []
+# A Job of another CronJob whose name starts the same does not hide a stale archive.
+- interval: 1m
+  input_series:
+  - series: 'kube_job_status_completion_time{namespace="ns", job_name="rel-usage-archive-other-29384170"}'
+    values: '0+60x3000'
+  - series: 'kube_cronjob_created{namespace="ns", cronjob="rel-usage-archive"}'
+    values: '0x3000'
+  alert_rule_test:
+  - eval_time: 38h
+    alertname: EduIDEUsageArchiveStale
+    exp_alerts:
+    - exp_labels: {severity: warning, eduide_namespace: ns}
+      exp_annotations:
+        summary: The usage archive has not run successfully for 36 hours
+        description: Usage data older than the Prometheus retention is lost for every day the archive misses. Check the logs of the latest job of the CronJob rel-usage-archive.
 # Without the CronJob nothing fires.
 - interval: 1m
   input_series:

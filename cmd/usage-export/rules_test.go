@@ -52,7 +52,7 @@ func TestUsageArchiveAlert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := strings.NewReplacer("__NAMESPACE__", "ns", "__FULLNAME__", "rel", "__EXTRA_LABELS__", "")
+	r := strings.NewReplacer("__NAMESPACE__", "ns", "__USAGE_ARCHIVE__", "rel-usage-archive", "__FULLNAME__", "rel", "__EXTRA_LABELS__", "")
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "alerts.yml"), []byte(r.Replace(string(src))), 0o600); err != nil {
 		t.Fatal(err)

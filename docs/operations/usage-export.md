@@ -147,7 +147,7 @@ Keep the exported directories in a Git repository or in the replication package.
 
 ### Usage archive
 
-`usageArchive.enabled` in the control plane chart (needs `monitoring.rules.enabled`) adds a daily CronJob `<release>-usage-archive` and a PersistentVolumeClaim of the same name.
+`usageArchive.enabled` in the control plane chart (needs `monitoring.rules.enabled`) adds a daily CronJob and a PersistentVolumeClaim, both named `<fullname>-usage-archive` (for release `eduide`: `eduide-eduide-control-plane-usage-archive`; long names are shortened).
 Each run of `usage-export` writes two things to the volume:
 
 | Path | Content |
@@ -167,11 +167,18 @@ Point `prometheusURL` at a single Prometheus: behind a Service with several repl
 
 The flags are usable without the chart: `usage-export --prometheus <url> --namespace <ns> --archive <dir> --archive-days 90` archives only; add `--out` and the export flags for both.
 
-Read the files with a pod that mounts the volume while no job runs (the image has no shell):
+Copy the files with a pod that mounts the volume while no job runs (the image has no shell).
+The chart shortens long release names, so look the claim name up instead of building it:
 
 ```sh
-kubectl -n <ns> run usage-archive-read --rm -i --restart=Never --image=busybox:1.37 \
-  --overrides='{"spec":{"volumes":[{"name":"a","persistentVolumeClaim":{"claimName":"<release>-usage-archive"}}],"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"r","image":"busybox:1.37","command":["tar","czf","-","-C","/archive","."],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"volumeMounts":[{"name":"a","mountPath":"/archive"}]}]}}' > usage-archive.tgz
+NS=<namespace>
+PVC=$(kubectl -n $NS get pvc -l app.kubernetes.io/component=usage-archive -o jsonpath='{.items[0].metadata.name}')
+kubectl -n $NS run usage-archive-read --restart=Never --image=busybox:1.37 \
+  --overrides='{"spec":{"volumes":[{"name":"a","persistentVolumeClaim":{"claimName":"'$PVC'"}}],"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"r","image":"busybox:1.37","command":["sleep","600"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"volumeMounts":[{"name":"a","mountPath":"/archive","readOnly":true}]}]}}'
+kubectl -n $NS wait --for=condition=Ready pod/usage-archive-read
+kubectl -n $NS exec usage-archive-read -- tar czf - -C /archive . > usage-archive.tgz
+kubectl -n $NS delete pod usage-archive-read
+gzip -t usage-archive.tgz && tar tzf usage-archive.tgz | wc -l
 ```
 
 Load raw days back into a TSDB, for example a local Prometheus for a new export:

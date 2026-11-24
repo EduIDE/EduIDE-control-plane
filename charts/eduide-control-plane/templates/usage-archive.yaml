@@ -1,6 +1,6 @@
 {{- with .Values.usageArchive }}
 {{- if .enabled }}
-{{- $name := printf "%s-usage-archive" (include "ecp.fullname" $ | trunc 38 | trimSuffix "-") }}
+{{- $name := include "ecp.usageArchiveName" $ }}
 {{- if not .prometheusURL }}{{ fail "usageArchive.prometheusURL is required when usageArchive.enabled is true" }}{{ end }}
 {{- if not $.Values.monitoring.rules.enabled }}{{ fail "usageArchive needs monitoring.rules.enabled: it archives the eduide:usage:* recording rules" }}{{ end }}
 ---

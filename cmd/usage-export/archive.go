@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,7 +26,12 @@ func archiveDays(ctx context.Context, p *prom, ns, dir string, days int, now tim
 	for i := days; i >= 1; i-- {
 		day := today.AddDate(0, 0, -i)
 		path := filepath.Join(dir, ns, day.Format("2006-01-02")+".om.gz")
-		if fi, err := os.Stat(path); err == nil && fi.Size() > 0 {
+		fi, err := os.Stat(path)
+		if err == nil && fi.Size() > 0 {
+			continue
+		}
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("%s: %w", day.Format("2006-01-02"), err))
 			continue
 		}
 		n, err := archiveDay(ctx, p, ns, day, path)
