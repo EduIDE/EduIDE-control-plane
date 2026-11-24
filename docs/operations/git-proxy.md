@@ -39,7 +39,7 @@ Tokens and bodies are never logged.
 | Symptom in the session | Cause | Check and fix |
 |---|---|---|
 | `fatal: unable to access 'http://127.0.0.1:8082/...': Failed to connect` | The agent listener is down, or the `insteadOf` entry is wrong | `kubectl logs <pod> -c agent`. Check `git config --global --get-regexp insteadof` in the session |
-| 404 on `/git/...` | The pod has no Git settings: it was built before the feature was on, or `gitAccounts.proxyURL` is empty | `kubectl get pod <pod> -o yaml` shows `AGENT_GIT_PROXY_URL` in the agent container. Idle pods keep old settings until the pool replaces them: delete them, or start a new session |
+| 404 on `/git/...` | The pod has no Git settings: it was claimed before the pool replaced it after a config change, or `gitAccounts.proxyURL` is empty | `kubectl get pod <pod> -o yaml` shows `AGENT_GIT_PROXY_URL` in the agent container. The pool replaces idle pods after a change of the Git settings (they are part of the pod hash), so wait for the roll or start a new session. A deployment without providers keeps its hash, so an upgrade replaces nothing |
 | 403 on `/git/...` | The instance is not claimed | Expected for idle warm pods |
 | 502 `git proxy unavailable` | git-proxy is down, or a NetworkPolicy blocks session pods | `kubectl -n <ns> get pods -l app.kubernetes.io/component=git-proxy`. Check the policy `session-to-git-proxy` and that the CNI enforces it. Agent log: `git proxy unreachable` |
 | `remote error: EduIDE cannot check your access right now` | The service internal port is not reachable, or the service returns errors (git-proxy log: `git authorize unavailable`) | Check the policy `service-internal`, the service `internal` port (`kubectl -n <ns> get svc <release>-eduide-control-plane-service`), and the service logs. Both service replicas serve it |
@@ -48,6 +48,9 @@ Tokens and bodies are never logged.
 | `remote error: EduIDE uses your <displayName> account only for the repository this session was started with` | A private repository other than the session repository, with approvals off (`gitAccounts.approval.mode: off`) | Start a session from that repository, or turn approvals on. This is the credential rule, not a fault |
 | `remote error: This session may not use <host>/<repo> yet. Approve it here: <link>` | A repository the user has not approved for this session | The user opens the link on the landing page and confirms. A push needs access `write`. The change takes effect within 5 seconds |
 | `remote error: EduIDE only pushes to the repository ...` | A push to a repository other than the session repository, or from a session without one | Start a session from the repository to push |
+| `remote error: Too many Git requests of this session run at the same time` | More than 16 requests of one instance in flight | Wait and retry; one Git command uses a few. Tools that fetch many repositories in parallel should run fewer at a time |
+| HTTP 429 from the git-proxy (`RPC failed; HTTP 429`) | More than 100 requests per second from one pod IP (burst 400) | Not reached by Git commands. A script that loops over Git requests, or a network that rewrites pod addresses so many pods share one source address (check the source IP in the git-proxy request) |
+| `remote error: The transfer stalled and EduIDE cancelled it` | No byte moved for 5 minutes in either direction | A dead link or a provider that hangs. Retry. A slow but moving transfer is never cut |
 | `remote error: EduIDE could not verify this session` | The service rejected the instance token: the session ended, or the token Secret is gone | Start a new session |
 | `remote error: ... not found, or your <displayName> account has no access` | The provider answered 404, 403 or 401 for the account | The repository does not exist or the account lacks access. Revoked tokens are detected on the next use and the account is deleted |
 | Git LFS prints `Git LFS is not supported through EduIDE.` | LFS is not proxied | Limitation. Do not use LFS in sessions |
@@ -63,7 +66,7 @@ If a session can push to or read private repositories it should not, check in th
 
 ## Scaling and rollout
 
-Replicas are stateless; the Deployment has a PodDisruptionBudget (`minAvailable: 1`).
+Replicas are stateless; the Deployment has a PodDisruptionBudget (`maxUnavailable: 1`, so a node drain also works with `gitProxy.replicas: 1`, with a short break of Git while the pod moves).
 A pod finishes running transfers for up to 60 seconds on shutdown (`terminationGracePeriodSeconds: 70`).
 A longer clone or push during a rollout can break and the user retries.
 

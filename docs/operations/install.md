@@ -62,8 +62,16 @@ Create two clients in the realm of the deployment.
 
 | Client | Type | Settings |
 |---|---|---|
-| Landing page (for example `eduide`) | public, standard flow | Valid redirect URI `https://<service host>/*`, web origin `https://<service host>`. Its id goes into the landing page config and into `oidc.clientIDs`. |
-| Gateway (for example `eduide-gateway`) | **confidential** | Valid redirect URI `https://<instance host>/oauth2/callback`. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
+| Landing page (for example `eduide`) | public, standard flow only, PKCE method `S256` required | Valid redirect URI `https://<service host>/*` and nothing else, web origin `https://<service host>`. Direct access grants, implicit flow and service accounts off. Its id goes into the landing page config and into `oidc.clientIDs`. |
+| Gateway (for example `eduide-gateway`) | **confidential**, standard flow only | Valid redirect URIs, exactly, with no wildcard: `https://<instance host>/oauth2/callback` and `https://<webview host>/oauth2/callback`. Web origins: none, or these two origins. Direct access grants, implicit flow and service accounts off. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
+
+**Use two clients, and never list the gateway client in `oidc.clientIDs`.**
+Code in a session and script in the IDE's browser origin (the instance and webview host) must not be able to get a token the API accepts, because the API, including the approval of Git repositories, trusts that token as the user.
+With a confidential gateway client, script cannot finish a login for it (it has no secret), and the API rejects the gateway's ID token (its `azp` is not in `oidc.clientIDs`).
+With one client for both roles, the client has to be public for the landing page, and script in the IDE origin can run its own authorization code flow against Keycloak and call the API as the user.
+That setup is not supported.
+The landing page client must have no redirect URI on the instance or webview host, for the same reason.
+See [session access](../architecture/session-access.md#api-tokens-and-the-ide-origin) and [ADR 0023](../adr/0023-git-accounts-and-git-proxy.md).
 
 The tokens must carry the claim named in `oidc.userClaim` (default `preferred_username`), plus `name` and `email`.
 The gateway client secret is a Secret in the deployment namespace that the SecurityPolicy references. Create it from a file or a pipe; never print it and never put it in `values.yaml` in Git:

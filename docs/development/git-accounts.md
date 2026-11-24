@@ -36,6 +36,10 @@ IDE ---- 127.0.0.1:8082/git ---> agent   +--- provider host (Git smart HTTP, use
 | A preflight never blocks a launch | `preflight` in `landing-page/src/git.ts` returns `undefined` on any failure, `startChecked` in `App.tsx` then launches |
 | Nothing is approved without a click | `GitApproval.tsx` calls `PUT` only from the "Allow" handler; `parseApproval` validates the link |
 | Provider hosts count as allowed hosts for `GIT_URI` only | `internal/httpapi/validate.go` |
+| What a repository path may look like (git-proxy, approval API, preflight) | `gitapi.CanonicalRepo`, the only place. The git-proxy builds the upstream path from its result |
+| Limits of the git-proxy (per IP, per instance, idle deadline, ERR length) | `internal/gitproxy/limits.go`, used by `Handler.ServeHTTP` |
+| Limiter and token cache of the authorize endpoint | `internal/gitpolicy/gitpolicy.go` (`tokenOK` before `allow`) |
+| Commit identity from the provider's values | `identityName`, `validIdentityMail` in `internal/httpapi/git.go` |
 
 ## Run it locally
 
