@@ -167,9 +167,11 @@ describe('GitGate', () => {
         screen.getByText(/your GitHub account alex has no access/);
         fireEvent.click(screen.getByRole('button', { name: 'Back' }));
         expect(onBack).toHaveBeenCalled();
-        fireEvent.click(screen.getByRole('button', { name: 'Disconnect and connect another account' }));
+        screen.getByText(/sign out at GitHub first/);
+        fireEvent.click(screen.getByRole('button', { name: 'Connect another account' }));
         await waitFor(() => expect(POST).toHaveBeenCalled());
-        expect(DELETE).toHaveBeenCalledWith('/git/providers/{name}', { params: { path: { name: 'gh' } } });
+        // the working account stays until the new one is saved
+        expect(DELETE).not.toHaveBeenCalled();
     });
 });
 
@@ -229,7 +231,7 @@ describe('GitApproval', () => {
         expect(screen.getByTestId('approve-repository').textContent).toBe('https://github.com/org/repo');
         expect(screen.getByTestId('approve-access').textContent).toBe('Read and push');
         screen.getByText('Only allow this if you just ran a Git command in this environment yourself.');
-        await screen.findByText('https://github.com/org/start');
+        expect((await screen.findByTestId('approve-session-repository')).textContent).toBe('https://github.com/org/start');
         expect(client.PUT).not.toHaveBeenCalled();
         fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
         expect(client.PUT).not.toHaveBeenCalled();
@@ -239,7 +241,7 @@ describe('GitApproval', () => {
     it('approves on Allow and tells the student to repeat the Git command', async () => {
         const client = clientWith();
         render(wrap(<GitApproval api={apiWith(client)} request={request} providers={[]} />));
-        await screen.findByText('https://github.com/org/start');
+        await screen.findByTestId('approve-session-repository');
         fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
         await screen.findByText(/Repeat the Git command in your IDE/);
         expect(client.PUT).toHaveBeenCalledWith('/sessions/{name}/git/repositories', {
@@ -271,7 +273,7 @@ describe('GitApproval', () => {
     ])('shows %s as a clear message', async (code, text) => {
         const client = clientWith({ PUT: vi.fn(async () => ({ error: { code } })) });
         render(wrap(<GitApproval api={apiWith(client)} request={request} providers={[]} />));
-        await screen.findByText('https://github.com/org/start');
+        await screen.findByTestId('approve-session-repository');
         fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
         expect((await screen.findByRole('alert')).textContent).toMatch(text);
     });
@@ -279,7 +281,7 @@ describe('GitApproval', () => {
     it('offers Connect when no account exists, for the provider of the repository host', async () => {
         const client = clientWith({ PUT: vi.fn(async () => ({ error: { code: 'git-not-connected' } })) });
         render(wrap(<GitApproval api={apiWith(client)} request={request} providers={[gh, gl]} />));
-        await screen.findByText('https://github.com/org/start');
+        await screen.findByTestId('approve-session-repository');
         fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
         fireEvent.click(await screen.findByRole('button', { name: 'Connect GitHub' }));
         await waitFor(() =>

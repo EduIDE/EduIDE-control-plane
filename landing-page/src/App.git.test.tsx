@@ -118,7 +118,7 @@ describe('preflight before a launch with a repository', () => {
             preflight: async () => ({ data: { result: 'no-access', provider: { name: 'gh', displayName: 'GitHub' } } })
         });
         await screen.findByText(/GitHub account alex has no access/);
-        screen.getByRole('button', { name: 'Disconnect and connect another account' });
+        screen.getByRole('button', { name: 'Connect another account' });
         expect(launch).not.toHaveBeenCalled();
     });
 

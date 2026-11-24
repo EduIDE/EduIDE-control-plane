@@ -2,7 +2,7 @@ import { ArrowLeft, Link2 } from 'lucide-react';
 import { useState } from 'react';
 
 import type { Api } from '../api';
-import { disconnectProvider, startConnect } from '../git';
+import { startConnect } from '../git';
 import { useI18n } from '../i18n';
 import { gitErrorText } from './gitError';
 
@@ -37,14 +37,11 @@ export const GitGate = ({ api, gate, onBack }: GitGateProps): React.JSX.Element 
         );
     }
     const { provider } = gate;
-    const connect = async (switchAccount: boolean): Promise<void> => {
+    // A switch connects first: saving the new account replaces and revokes the old one, so a failed or cancelled
+    // connect leaves the working account in place.
+    const connect = async (): Promise<void> => {
         setBusy(true);
         setError(undefined);
-        if (switchAccount && !(await disconnectProvider(api, provider.name))) {
-            setError(t('git.error.generic'));
-            setBusy(false);
-            return;
-        }
         const code = await startConnect(api, provider.name);
         if (code) {
             setError(gitErrorText(t, code));
@@ -62,6 +59,7 @@ export const GitGate = ({ api, gate, onBack }: GitGateProps): React.JSX.Element 
                       ? t('git.gate.noAccessLogin', { name: provider.displayName, login: gate.login })
                       : t('git.gate.noAccess', { name: provider.displayName })}
             </div>
+            {!connecting && <p className='sub'>{t('git.gate.switchHint', { name: provider.displayName })}</p>}
             {error && (
                 <div className='alert danger' role='alert'>
                     {error}
@@ -72,7 +70,7 @@ export const GitGate = ({ api, gate, onBack }: GitGateProps): React.JSX.Element 
                     <ArrowLeft aria-hidden />
                     {t('back')}
                 </button>
-                <button className='btn primary' disabled={busy} onClick={() => connect(!connecting).catch(console.error)}>
+                <button className='btn primary' disabled={busy} onClick={() => connect().catch(console.error)}>
                     <Link2 aria-hidden />
                     {connecting ? t('git.connect') : t('git.gate.switch')}
                 </button>

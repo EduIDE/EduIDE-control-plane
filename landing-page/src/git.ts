@@ -174,6 +174,23 @@ export function parseApproval(search: string): ApprovalRequest | 'invalid' | und
     return { session, repository, access };
 }
 
+const PATH_SEGMENT = /^[A-Za-z0-9._~-]+$/;
+
+/** The rule of the service (`CanonicalRepo` in `internal/gitapi`): 2 to 10 plain segments, none starting with a dot, `.git` only at the end. */
+function canonicalRepository(pathname: string): string | undefined {
+    const segs = pathname.replace(/^\/+|\/+$/g, '').split('/');
+    const last = segs.length - 1;
+    if (
+        segs.length < 2 ||
+        segs.length > 10 ||
+        segs.some((s, i) => !PATH_SEGMENT.test(s) || s.startsWith('.') || (i < last && s.endsWith('.git')))
+    ) {
+        return undefined;
+    }
+    segs[last] = segs[last].replace(/\.git$/, '');
+    return segs[last].endsWith('.git') ? undefined : segs.join('/');
+}
+
 /** https, no credentials, query, fragment or port (the rules of `GIT_URI`), then host and path the way the service compares them. */
 export function normalizeRepository(value: string): string | undefined {
     try {
@@ -186,12 +203,12 @@ export function normalizeRepository(value: string): string | undefined {
             u.hash ||
             u.port ||
             hasControl(value) ||
-            /[\\\s]/.test(value)
+            /[\\\s%]/.test(value) // a percent escape would show another path than the service approves
         ) {
             return undefined;
         }
-        const path = u.pathname.replace(/\/+$/, '').replace(/\.git$/, '');
-        return path && path !== '/' ? `https://${u.hostname}${path}` : undefined;
+        const path = canonicalRepository(u.pathname);
+        return path ? `https://${u.hostname}/${path}` : undefined;
     } catch {
         return undefined;
     }

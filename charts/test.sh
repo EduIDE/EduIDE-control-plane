@@ -150,6 +150,9 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$(echo "$out" | yq 'select(.kind == "Deployment" and .metadata.name == "'$gp'") | .spec.replicas')" = "2" ] || fail "git-proxy does not run 2 replicas ($v)"
   [ "$(echo "$out" | yq 'select(.kind == "Service" and .metadata.name == "'$gp'") | .spec.type // "ClusterIP"')" = "ClusterIP" ] || fail "git-proxy Service is not ClusterIP ($v)"
   echo "$out" | yq -e 'select(.kind == "PodDisruptionBudget" and .metadata.name == "'$gp'")' >/dev/null || fail "git-proxy PodDisruptionBudget missing ($v)"
+  [ "$(echo "$out" | yq 'select(.kind == "PodDisruptionBudget" and .metadata.name == "'$gp'") | .spec.maxUnavailable')" = "1" ] || fail "git-proxy PodDisruptionBudget must use maxUnavailable (minAvailable blocks drains with one replica) ($v)"
+  one=$(helm template r "$cp" -f "$v" -n ns --set gitProxy.replicas=1)
+  [ "$(echo "$one" | yq 'select(.kind == "PodDisruptionBudget" and .metadata.name == "'$gp'") | .spec.minAvailable')" = "null" ] || fail "git-proxy PodDisruptionBudget blocks drains with one replica ($v)"
   [ "$(echo "$out" | yq 'select(.kind == "HTTPRoute") | .spec.rules[].backendRefs[].name' | grep -c git-proxy || true)" -eq 0 ] || fail "an HTTPRoute points to git-proxy ($v)"
   ! echo "$out" | yq 'select(.kind == "HTTPRoute") | .spec.hostnames[]' | grep -q git-proxy || fail "git-proxy has a hostname ($v)"
   for np in session-to-git-proxy git-proxy service-internal; do

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -503,5 +504,62 @@ func TestIdentityForHost(t *testing.T) {
 	}
 	if _, ok := r.m.IdentityForHost(ctx, "alice", "other.example.org"); ok {
 		t.Error("unknown host")
+	}
+}
+
+// A reconnect during the revoke of a disconnect must not be deleted: the disconnect deletes first (with the
+// version it read) and revokes afterwards.
+func TestDisconnectDeletesBeforeItRevokesAndKeepsAReconnect(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.save(t, "alice", "gl", time.Hour)
+	var order []string
+	r.m.c = interceptor.NewClient(r.k, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.DeleteOption) error {
+		err := c.Delete(ctx, o, opts...)
+		order = append(order, fmt.Sprintf("delete:%v", err == nil))
+		return err
+	}})
+	r.host.onRevoke = func() {
+		order = append(order, "revoke")
+		// the user connects again while the old token is being revoked
+		if err := r.m.Save(ctx, "alice", "gl", Token{Access: "second-access", Refresh: "second-refresh"}, Account{ID: 7, Login: "gitty"}); err != nil {
+			t.Errorf("reconnect: %v", err)
+		}
+	}
+	if err := r.m.Disconnect(ctx, "alice", "gl"); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(order, ",") != "delete:true,revoke" {
+		t.Errorf("order %v", order)
+	}
+	if rec, err := r.m.Token(ctx, "alice", "gl"); err != nil || rec.AccessToken != "second-access" {
+		t.Errorf("the reconnect was deleted: %+v %v", rec, err)
+	}
+}
+
+// A change between the read and the delete (a refresh, a reconnect) makes the delete fail on its precondition; the
+// disconnect reads again and revokes the token of the record it really deleted.
+func TestDisconnectRetriesAfterAConflict(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.save(t, "alice", "gl", time.Hour)
+	first := true
+	r.m.c = interceptor.NewClient(r.k, interceptor.Funcs{Delete: func(ctx context.Context, c client.WithWatch, o client.Object, opts ...client.DeleteOption) error {
+		if first {
+			first = false
+			if err := r.m.Save(ctx, "alice", "gl", Token{Access: "second-access"}, Account{ID: 7, Login: "gitty"}); err != nil {
+				t.Errorf("reconnect: %v", err)
+			}
+		}
+		return c.Delete(ctx, o, opts...)
+	}})
+	if err := r.m.Disconnect(ctx, "alice", "gl"); err != nil {
+		t.Fatal(err)
+	}
+	if r.host.lastForm.Get("token") != "second-access" {
+		t.Errorf("revoked %q, want the token of the record that was deleted", r.host.lastForm.Get("token"))
+	}
+	if err := r.k.Get(ctx, r.m.key("alice", "gl"), &corev1.Secret{}); err == nil {
+		t.Error("the account stays")
 	}
 }

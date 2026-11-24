@@ -235,14 +235,34 @@ func (m *Manager) Disconnect(ctx context.Context, owner, provider string) error 
 	if !ok {
 		return fmt.Errorf("unknown provider %q", provider)
 	}
-	_, rec, err := m.read(ctx, owner, provider)
-	if errors.Is(err, ErrNotConnected) {
+	// Delete first, with the resourceVersion that was read, and revoke only after the delete succeeded (the order of
+	// the sweep). A reconnect or a refresh in between changes the version: the delete fails, and the next round
+	// reads the new record. So a new account is never deleted unrevoked and a revoked token never stays valid.
+	var rec Record
+	var readable, deleted bool
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sec := &corev1.Secret{}
+		if err := m.c.Get(ctx, m.key(owner, provider), sec); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		r, derr := m.decode(sec) // an account that cannot be decrypted is deleted without a revoke
+		rv := sec.ResourceVersion
+		if err := m.c.Delete(ctx, sec, client.Preconditions{ResourceVersion: &rv}); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		rec, readable, deleted = r, derr == nil, true
 		return nil
+	})
+	if err != nil {
+		return err
 	}
-	if err == nil { // an account that cannot be decrypted is deleted without a revoke
+	if deleted && readable {
 		m.revoke(ctx, e, rec)
 	}
-	return client.IgnoreNotFound(m.c.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: SecretName(owner, provider), Namespace: m.ns}}))
+	return nil
 }
 
 func (m *Manager) revoke(ctx context.Context, e Entry, rec Record) {

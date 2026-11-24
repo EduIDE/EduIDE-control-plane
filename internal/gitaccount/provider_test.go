@@ -26,6 +26,7 @@ type fakeHost struct {
 	refreshCalls  atomic.Int32
 	revokeCalls   atomic.Int32
 	revokeStatus  int
+	onRevoke      func() // runs while a revoke is being answered
 	refreshAnswer func(n int32) (int, string)
 	// challenge, when set, is the PKCE challenge the authorization code was issued for: the token endpoints
 	// accept the code only with a verifier that hashes to it.
@@ -86,6 +87,9 @@ func newFakeHost(t *testing.T) *fakeHost {
 		f.revokeCalls.Add(1)
 		_ = r.ParseForm()
 		f.lastForm = r.PostForm
+		if f.onRevoke != nil {
+			f.onRevoke()
+		}
 		w.WriteHeader(f.revokeStatus)
 	})
 	f.srv = httptest.NewServer(mux)

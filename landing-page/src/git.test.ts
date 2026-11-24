@@ -177,7 +177,14 @@ describe('parseApproval', () => {
         ['no path', 'https://h/'],
         ['backslash', 'https://h/a\\b'],
         ['control character', 'https://h/a\nb'],
-        ['space', 'https://h/a b']
+        ['space', 'https://h/a b'],
+        ['percent escape', 'https://h/a/%73ecret'],
+        ['dot git segment', 'https://h/a/b/.git/info'],
+        ['double git suffix', 'https://h/a/b.git.git'],
+        ['git suffix in the middle', 'https://h/a.git/b'],
+        ['one segment', 'https://h/a'],
+        ['hidden segment', 'https://h/a/.b'],
+        ['too deep', 'https://h/a/b/c/d/e/f/g/h/i/j/k']
     ])('refuses a repository with %s', (_n, repo) => {
         expect(parseApproval(link(repo))).toBe('invalid');
     });

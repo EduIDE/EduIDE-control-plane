@@ -119,6 +119,12 @@ export const GitApproval = ({ api, request, providers }: GitApprovalProps): Reac
                     {title}
                     {info && <span className='sub'> ({t('git.approve.started', { time: formatAgo(info.createdAt, now, lang) })})</span>}
                 </dd>
+                {repos?.sessionRepository && (
+                    <>
+                        <dt>{t('git.approve.sessionRepo')}</dt>
+                        <dd data-testid='approve-session-repository'>{repos.sessionRepository}</dd>
+                    </>
+                )}
                 <dt>{t('git.approve.repo')}</dt>
                 <dd data-testid='approve-repository'>{request.repository}</dd>
                 <dt>{t('git.approve.access')}</dt>
