@@ -191,3 +191,28 @@ func TestSeededReposClone(t *testing.T) {
 		t.Errorf("clone with token: %v", err)
 	}
 }
+
+func TestAuthorizeRefusesAnotherRedirectURI(t *testing.T) {
+	s := newServer("id", "sec", time.Minute, t.TempDir())
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for uri, want := range map[string]int{
+		"https://landing.test/git/callback": http.StatusFound,
+		"https://evil.test/git/callback":    http.StatusBadRequest,
+		"https://landing.test/other":        http.StatusBadRequest,
+	} {
+		q := url.Values{"client_id": {"id"}, "redirect_uri": {uri}, "state": {"st"}, "response_type": {"code"}, "code_challenge": {"c"}, "code_challenge_method": {"S256"}}
+		resp, err := hc.Get(srv.URL + "/oauth/authorize?" + q.Encode())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Errorf("%s: %d, want %d", uri, resp.StatusCode, want)
+		}
+		if want == http.StatusFound && !strings.HasPrefix(resp.Header.Get("Location"), "https://landing.test/git/callback?") {
+			t.Errorf("Location %q", resp.Header.Get("Location"))
+		}
+	}
+}

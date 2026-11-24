@@ -3,9 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -178,30 +180,52 @@ type attempt struct {
 	Error  bool `json:"error"`
 }
 
-// tryApprove is POST /try-approve: code in a session pod tries to approve a repository the way a user would,
-// without a bearer token, at the API of the service and at the Git path of the agent. It reports status codes
-// only. A connection that fails (NetworkPolicy, TLS) counts as blocked: error true. The targets are fixed.
+// tryApprove is POST /try-approve with {"session","repository"}: code in a session pod tries to approve a
+// repository the way a user would, without a bearer token. It PUTs to the public route of the service (the
+// gateway, reached by its cluster address with the service host name, as any pod can) and to the Git path of the
+// agent, and reports status codes only. A connection that fails counts as blocked: error true. The targets are
+// fixed; only the session name and the repository come from the test, and the session must be a real one so a
+// 401 cannot hide a 404 for a made-up session.
 func (i *ide) tryApprove(w http.ResponseWriter, r *http.Request) {
-	svc := env("FAKE_IDE_SERVICE_URL", "http://eduide-eduide-control-plane-service.eduide-e2e.svc:8080")
+	var in struct{ Session, Repository string }
+	if json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in) != nil || !sessionNameRE.MatchString(in.Session) || !strings.HasPrefix(in.Repository, "https://") {
+		http.Error(w, "want {session, repository}", http.StatusBadRequest)
+		return
+	}
+	svc, hc := os.Getenv("FAKE_IDE_SERVICE_URL"), &http.Client{Timeout: 5 * time.Second}
+	if svc == "" {
+		// The e2e default: the service host name through the gateway. The certificate is the test CA's and this
+		// container does not trust it; the answer carries no secret and the call has no credential.
+		svc = "https://ide.e2e.test"
+		hc.Transport = &http.Transport{
+			DialContext: func(ctx context.Context, n, _ string) (net.Conn, error) {
+				return (&net.Dialer{}).DialContext(ctx, n, "gateway-entry.envoy-gateway-system.svc:443")
+			},
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}, // #nosec G402 -- test fake
+		}
+	}
 	i.mu.Lock()
 	hosts := slices.Clone(i.gitHosts)
 	i.mu.Unlock()
+	body, _ := json.Marshal(map[string]string{"repository": in.Repository, "access": "read"})
 	put := func(u string) attempt {
-		req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, u, strings.NewReader(`{"repository":"https://example.invalid/a/b","access":"read"}`))
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPut, u, bytes.NewReader(body))
 		if err != nil {
 			return attempt{Error: true}
 		}
 		req.Header.Set("Content-Type", "application/json")
-		resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+		resp, err := hc.Do(req)
 		if err != nil {
 			return attempt{Error: true}
 		}
 		_ = resp.Body.Close()
 		return attempt{Status: resp.StatusCode}
 	}
-	out := map[string]attempt{"service": put(svc + "/api/v1/sessions/s-none/git/repositories")}
+	out := map[string]attempt{"service": put(svc + "/api/v1/sessions/" + in.Session + "/git/repositories")}
 	if len(hosts) > 0 {
 		out["agent"] = put(i.agent + "/git/" + hosts[0] + "/course/other.git/info/refs")
 	}
 	writeJSON(w, out)
 }
+
+var sessionNameRE = regexp.MustCompile(`^[a-z0-9-]{1,63}$`)

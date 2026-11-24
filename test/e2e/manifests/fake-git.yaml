@@ -21,6 +21,8 @@ spec:
           imagePullPolicy: Never
           env:
             - {name: FAKE_GIT_CLIENT_ID, value: e2e-client}
+            # The redirect URI registered for the application: https://<hosts.service>/git/callback.
+            - {name: FAKE_GIT_REDIRECT_URI, value: "https://ide.e2e.test/git/callback"}
             - name: FAKE_GIT_CLIENT_SECRET
               valueFrom: {secretKeyRef: {name: e2e-git-oauth, key: client-secret}}
             # The service refreshes a token one minute before it expires, so the refresh test waits a few seconds only.

@@ -118,9 +118,9 @@ func TestScrub(t *testing.T) {
 }
 
 func TestTryApproveSendsNoCredentialsAndReportsStatusOnly(t *testing.T) {
-	var sawAuth, sawMethod string
+	var sawAuth, sawMethod, sawPath string
 	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		sawAuth, sawMethod = r.Header.Get("Authorization"), r.Method
+		sawAuth, sawMethod, sawPath = r.Header.Get("Authorization"), r.Method, r.URL.Path
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer svc.Close()
@@ -130,7 +130,7 @@ func TestTryApproveSendsNoCredentialsAndReportsStatusOnly(t *testing.T) {
 	i := &ide{agent: agent.URL, gitHosts: []string{"git.test"}}
 	srv := httptest.NewServer(i.handler())
 	defer srv.Close()
-	resp, err := http.Post(srv.URL+"/try-approve", "", nil)
+	resp, err := http.Post(srv.URL+"/try-approve", "application/json", strings.NewReader(`{"session":"s-1","repository":"https://git.test/a/b"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +139,11 @@ func TestTryApproveSendsNoCredentialsAndReportsStatusOnly(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
 		t.Fatal(err)
 	}
-	if got["service"].Status != 401 || got["agent"].Status != 404 || sawAuth != "" || sawMethod != http.MethodPut {
+	if sawPath != "/api/v1/sessions/s-1/git/repositories" || got["service"].Status != 401 || got["agent"].Status != 404 || sawAuth != "" || sawMethod != http.MethodPut {
 		t.Fatalf("result %+v, service saw %q %q", got, sawMethod, sawAuth)
 	}
 	svc.Close()
-	resp2, err := http.Post(srv.URL+"/try-approve", "", nil)
+	resp2, err := http.Post(srv.URL+"/try-approve", "application/json", strings.NewReader(`{"session":"s-1","repository":"https://git.test/a/b"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,5 +152,21 @@ func TestTryApproveSendsNoCredentialsAndReportsStatusOnly(t *testing.T) {
 	_ = json.NewDecoder(resp2.Body).Decode(&got)
 	if !got["service"].Error {
 		t.Fatalf("unreachable service: %+v", got)
+	}
+}
+
+func TestTryApproveRefusesOtherInput(t *testing.T) {
+	i := &ide{}
+	srv := httptest.NewServer(i.handler())
+	defer srv.Close()
+	for _, body := range []string{``, `{}`, `{"session":"../x","repository":"https://h/a/b"}`, `{"session":"s-1","repository":"http://h/a/b"}`} {
+		resp, err := http.Post(srv.URL+"/try-approve", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%q: %d", body, resp.StatusCode)
+		}
 	}
 }

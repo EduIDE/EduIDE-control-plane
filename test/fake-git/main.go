@@ -79,8 +79,10 @@ type push struct {
 
 type server struct {
 	clientID, clientSecret string
-	ttl                    time.Duration
-	root, httpCGI          string
+	// redirectURI is the one registered redirect URI of the application. A real provider refuses any other.
+	redirectURI   string
+	ttl           time.Duration
+	root, httpCGI string
 
 	mu       sync.Mutex
 	codes    map[string]*code
@@ -98,6 +100,7 @@ func main() {
 		log.Fatal(err)
 	}
 	s := newServer(env("FAKE_GIT_CLIENT_ID", "e2e-client"), env("FAKE_GIT_CLIENT_SECRET", "e2e-secret"), ttl, env("FAKE_GIT_ROOT", "/data"))
+	s.redirectURI = env("FAKE_GIT_REDIRECT_URI", s.redirectURI)
 	if err := s.seed(); err != nil {
 		log.Fatal(err)
 	}
@@ -117,7 +120,7 @@ func env(k, def string) string {
 }
 
 func newServer(id, secret string, ttl time.Duration, root string) *server {
-	return &server{clientID: id, clientSecret: secret, ttl: ttl, root: root, now: time.Now,
+	return &server{clientID: id, clientSecret: secret, redirectURI: "https://landing.test/git/callback", ttl: ttl, root: root, now: time.Now,
 		codes: map[string]*code{}, access: map[string]*accessToken{}, refresh: map[string]*refreshToken{},
 		counters: map[string]int{}, stats: map[string]*repoStats{}}
 }
@@ -155,15 +158,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // authorize answers like a user who is logged in at the provider and clicks "Authorize".
 func (s *server) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	redirect, err := url.Parse(q.Get("redirect_uri"))
-	if q.Get("client_id") != s.clientID || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" ||
+	redirect, err := url.Parse(s.redirectURI)
+	if q.Get("client_id") != s.clientID || q.Get("redirect_uri") != s.redirectURI || q.Get("response_type") != "code" || q.Get("code_challenge_method") != "S256" ||
 		q.Get("code_challenge") == "" || q.Get("state") == "" || err != nil || redirect.Host == "" {
 		http.Error(w, "invalid authorization request", http.StatusBadRequest)
 		return
 	}
 	c := random("gc-")
 	s.mu.Lock()
-	s.codes[c] = &code{challenge: q.Get("code_challenge"), redirect: q.Get("redirect_uri")}
+	s.codes[c] = &code{challenge: q.Get("code_challenge"), redirect: s.redirectURI}
 	s.issued.Codes = append(s.issued.Codes, c)
 	s.counters["authorizes"]++
 	s.mu.Unlock()

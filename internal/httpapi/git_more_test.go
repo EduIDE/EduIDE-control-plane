@@ -416,3 +416,58 @@ func TestValidReturnTo(t *testing.T) {
 		}
 	}
 }
+
+func TestIdentityNameIsSanitised(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		max  int
+		want string
+	}{
+		{"Gitty G", 100, "Gitty G"},
+		{"Zoë Müller", 100, "Zoë Müller"},
+		{"  two   blanks\t", 100, "two blanks"},
+		{"Evil\nuser.email=x@y", 100, "Evil user.email=x@y"},
+		{"a\r\nb\x00c\x1b[31m", 100, "a b c [31m"},
+		{"line\u2028sep\u2029para", 100, "line sep para"},
+		{"<script>x</script>", 100, "script x /script"},
+		{"Name <victim@example.org>", 100, "Name victim@example.org"},
+		{"bad\xffutf8", 100, "bad utf8"},
+		{strings.Repeat("ä", 300), 100, strings.Repeat("ä", 100)},
+		{strings.Repeat("x", 300), 20, strings.Repeat("x", 20)},
+		{"\n\t ", 100, ""},
+		{"", 100, ""},
+	} {
+		if got := identityName(tc.in, tc.max); got != tc.want {
+			t.Errorf("identityName(%q, %d) = %q, want %q", tc.in, tc.max, got, tc.want)
+		}
+	}
+}
+
+func TestIdentityMail(t *testing.T) {
+	for in, want := range map[string]bool{
+		"7-gitty@users.noreply.gitlab.example.org": true, "42+octo@users.noreply.github.com": true, "n@x": true,
+		"": false, "a@b@c": false, "a b@c": false, "a\n@c": false, "<a@b>": false, "@x": false, "x@": false, "ä@b": false,
+	} {
+		if validIdentityMail(in) != want {
+			t.Errorf("validIdentityMail(%q) = %v", in, !want)
+		}
+	}
+}
+
+func TestGitIdentityDropsUnsafeProviderValues(t *testing.T) {
+	tpl := &v1alpha1.IDETemplate{Spec: v1alpha1.IDETemplateSpec{InjectableKeys: []v1alpha1.InjectableKey{
+		{Name: "GIT_USER", Source: v1alpha1.SourceUserName, MaxLength: 12}, {Name: "GIT_MAIL", Source: v1alpha1.SourceUserEmail}}}}
+	in := map[string]string{"GIT_USER": "Idp Name", "GIT_MAIL": "idp@example.org"}
+	got := gitIdentity(tpl, in, gitaccount.Identity{DisplayName: "A\nvery long display name", Login: "gitty", NoReplyEmail: "bad\n@x.org"})
+	if got["GIT_USER"] != "A very long" || strings.ContainsAny(got["GIT_USER"], "\n") || got["GIT_MAIL"] != "idp@example.org" {
+		t.Errorf("%q", got)
+	}
+	got = gitIdentity(tpl, in, gitaccount.Identity{DisplayName: "\n\x00", Login: "gitty"})
+	if got["GIT_USER"] != "gitty" {
+		t.Errorf("login fallback: %q", got["GIT_USER"])
+	}
+	got = gitIdentity(tpl, in, gitaccount.Identity{DisplayName: "\n", Login: "\n"})
+	if got["GIT_USER"] != "Idp Name" {
+		t.Errorf("nothing usable keeps the identity provider value: %q", got["GIT_USER"])
+	}
+}

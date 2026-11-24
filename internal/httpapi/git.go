@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
@@ -213,6 +214,44 @@ func (s *Server) withGitIdentity(ctx context.Context, owner string, tpl *v1alpha
 	return gitIdentity(tpl, data, id)
 }
 
+// maxIdentityName bounds a commit name (Git itself accepts more, but no real name is longer).
+const maxIdentityName = 100
+
+func maxIdentityRunes(k v1alpha1.InjectableKey) int {
+	if k.MaxLength > 0 && int(k.MaxLength) < maxIdentityName {
+		return int(k.MaxLength)
+	}
+	return maxIdentityName
+}
+
+// identityName makes a provider's display name or login fit for GIT_USER: no control characters, line or paragraph
+// separators, no angle brackets (Git strips them from an ident and a mail header would end there), blanks collapsed,
+// at most max characters. It returns "" when nothing is left.
+func identityName(s string, max int) string {
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsControl(r) || r == '\u2028' || r == '\u2029' || r == '<' || r == '>' || r == unicode.ReplacementChar:
+			return ' '
+		}
+		return r
+	}, strings.ToValidUTF8(s, " "))
+	r := []rune(strings.Join(strings.Fields(s), " "))
+	if len(r) > max {
+		r = r[:max]
+	}
+	return strings.TrimSpace(string(r))
+}
+
+// validIdentityMail accepts a plain address for GIT_MAIL: one "@", no blanks, control characters or angle brackets.
+func validIdentityMail(m string) bool {
+	if len(m) < 3 || len(m) > 254 || strings.Count(m, "@") != 1 || strings.HasPrefix(m, "@") || strings.HasSuffix(m, "@") {
+		return false
+	}
+	return !strings.ContainsFunc(m, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r) || r == '<' || r == '>' || r > 0x7e
+	})
+}
+
 // gitIdentity overrides GIT_USER and GIT_MAIL where the template takes them from the token. The no-reply address
 // is empty for hosts whose format is unknown; GIT_MAIL then stays as it is.
 func gitIdentity(tpl *v1alpha1.IDETemplate, data map[string]string, id gitaccount.Identity) map[string]string {
@@ -220,8 +259,15 @@ func gitIdentity(tpl *v1alpha1.IDETemplate, data map[string]string, id gitaccoun
 	for _, k := range tpl.Spec.InjectableKeys {
 		switch {
 		case k.Name == "GIT_USER" && k.Source == v1alpha1.SourceUserName:
-			out["GIT_USER"] = cmpOr(id.DisplayName, id.Login)
-		case k.Name == "GIT_MAIL" && k.Source == v1alpha1.SourceUserEmail && id.NoReplyEmail != "":
+			// A name the provider returns is not trusted: it ends up in the Git config of the pod.
+			name := identityName(id.DisplayName, maxIdentityRunes(k))
+			if name == "" {
+				name = identityName(id.Login, maxIdentityRunes(k))
+			}
+			if name != "" {
+				out["GIT_USER"] = name
+			}
+		case k.Name == "GIT_MAIL" && k.Source == v1alpha1.SourceUserEmail && validIdentityMail(id.NoReplyEmail):
 			out["GIT_MAIL"] = id.NoReplyEmail
 		}
 	}

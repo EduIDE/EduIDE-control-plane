@@ -128,10 +128,22 @@ func secureAndProblemFallback(hsts string, next http.Handler) http.Handler {
 
 type fallbackWriter struct {
 	http.ResponseWriter
-	swallow bool
+	swallow, wrote bool
 }
 
 func (f *fallbackWriter) WriteHeader(code int) {
+	if code < 200 && code != http.StatusSwitchingProtocols { // informational, the final header follows
+		f.ResponseWriter.WriteHeader(code)
+		return
+	}
+	if f.wrote {
+		return
+	}
+	f.wrote = true
+	// Every handler sets a content type. Should one forget, a body must not be sniffed into HTML.
+	if f.Header().Get("Content-Type") == "" && code >= 200 && code != http.StatusNoContent && code != http.StatusNotModified {
+		f.Header().Set("Content-Type", "application/octet-stream")
+	}
 	if (code == http.StatusNotFound || code == http.StatusMethodNotAllowed) && strings.HasPrefix(f.Header().Get("Content-Type"), "text/plain") {
 		f.swallow = true
 		f.Header().Del("Content-Length")
@@ -147,6 +159,9 @@ func (f *fallbackWriter) WriteHeader(code int) {
 }
 
 func (f *fallbackWriter) Write(p []byte) (int, error) {
+	if !f.wrote {
+		f.WriteHeader(http.StatusOK)
+	}
 	if f.swallow {
 		return len(p), nil
 	}

@@ -589,6 +589,8 @@ func TestGitAccounts(t *testing.T) {
 				{"http://" + gitHost + "/a/b", "invalid-input"},
 				{"https://user:pw@" + gitHost + "/a/b", "invalid-input"},
 				{"https://" + gitHost + "/a/b?x=1", "invalid-input"},
+				{"https://" + gitHost + "/a/b/.git/info", "invalid-input"},
+				{"https://" + gitHost + "/a/b.git.git", "invalid-input"},
 				{"https://git.example.org/a/b", "git-not-a-provider"},
 			} {
 				status, body := a.do(http.MethodPut, repoPath, map[string]string{"repository": c.repo, "access": "read"})
@@ -601,7 +603,10 @@ func TestGitAccounts(t *testing.T) {
 		})
 
 		t.Run("pod cannot approve", func(t *testing.T) {
-			resp, err := hc.Post(s.URL+"try-approve", "", nil)
+			// A real session name, the provider host of the approved repository and the public route of the service:
+			// the only thing between the pod and an approval is that it has no bearer token.
+			req, _ := json.Marshal(map[string]string{"session": s.Name, "repository": otherURL})
+			resp, err := hc.Post(s.URL+"try-approve", "application/json", bytes.NewReader(req))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -613,9 +618,8 @@ func TestGitAccounts(t *testing.T) {
 			if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&got) != nil {
 				t.Fatalf("try-approve: status %d", resp.StatusCode)
 			}
-			// The service answers 401 or the NetworkPolicy blocks the connection; the agent path is no approval API.
-			if svc := got["service"]; !svc.Error && svc.Status != 401 && svc.Status != 403 {
-				t.Errorf("service answered %+v to a call without a token", svc)
+			if svc := got["service"]; svc.Error || svc.Status != 401 {
+				t.Errorf("service answered %+v to an approval without a token, want 401 (a blocked connection would prove nothing)", svc)
 			}
 			if ag := got["agent"]; ag.Error || ag.Status < 400 {
 				t.Errorf("agent answered %+v to a PUT on the Git path", ag)

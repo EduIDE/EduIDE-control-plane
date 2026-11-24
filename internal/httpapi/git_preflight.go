@@ -84,13 +84,12 @@ func parseGitRepoURL(raw string, strict bool) (*url.URL, *apiError) {
 func (s *Server) probe(ctx context.Context, owner string, e *gitaccount.Entry, u *url.URL) GitPreflightResponseResult {
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
-	target := *u
+	// Scheme and host come from the configured provider, never from the request; only the canonical repository path does.
+	target := url.URL{Scheme: "https", Host: e.Config.Host, Path: u.Path + "/info/refs", RawQuery: "service=git-upload-pack"}
 	if s.gitProbeBase != nil {
 		b, _ := url.Parse(s.gitProbeBase(e.Config.Host))
 		target.Scheme, target.Host = b.Scheme, b.Host
 	}
-	target.Path += "/info/refs"
-	target.RawQuery = "service=git-upload-pack"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
 		return preflightUnknown
