@@ -316,12 +316,12 @@ func milestoneSpans(ms []agentapi.Milestone) []phaseSpan {
 	return out
 }
 
-// exportMilestones adds the spans of new milestones under the trace of the launch. The state is in memory:
-// after an operator restart a milestone may become a span a second time, which Jaeger shows as a duplicate.
+// exportMilestones adds the spans and phase metrics of new milestones, under the trace of the launch when the
+// session has one. Without tracing (no traceparent) the metrics are still recorded: the usage export reads them.
+// The state is in memory: after an operator restart a milestone may be recorded a second time.
 func (r *sessionReconciler) exportMilestones(ctx context.Context, s *v1.IDESession, tmpl *v1.IDETemplate, pod *corev1.Pod, ms []agentapi.Milestone) {
 	st := &s.Status
-	if len(ms) == 0 || st.Timestamps.Ready == nil || s.Annotations[v1.AnnotationTraceparent] == "" ||
-		r.clock.Now().Sub(st.Timestamps.Ready.Time) > milestoneWindow {
+	if len(ms) == 0 || st.Timestamps.Ready == nil || r.clock.Now().Sub(st.Timestamps.Ready.Time) > milestoneWindow {
 		return
 	}
 	v, _ := r.exported.LoadOrStore(sessionKey(s), &map[string]bool{})

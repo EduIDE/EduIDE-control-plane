@@ -176,10 +176,12 @@ PVC=$(kubectl -n $NS get pvc -l app.kubernetes.io/component=usage-archive -o jso
 kubectl -n $NS run usage-archive-read --restart=Never --image=busybox:1.37 \
   --overrides='{"spec":{"volumes":[{"name":"a","persistentVolumeClaim":{"claimName":"'$PVC'"}}],"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"r","image":"busybox:1.37","command":["sleep","600"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"volumeMounts":[{"name":"a","mountPath":"/archive","readOnly":true}]}]}}'
 kubectl -n $NS wait --for=condition=Ready pod/usage-archive-read
-kubectl -n $NS exec usage-archive-read -- tar czf - -C /archive . > usage-archive.tgz
+kubectl -n $NS exec usage-archive-read -- tar czf - -C /archive --exclude=./lost+found . > usage-archive.tgz
 kubectl -n $NS delete pod usage-archive-read
 gzip -t usage-archive.tgz && tar tzf usage-archive.tgz | wc -l
 ```
+
+`lost+found` is left out: an ext4 volume has it, the job user cannot read it, and `tar` would fail on it. Stop if `kubectl exec` or `gzip -t` fails; the file is then incomplete.
 
 Load raw days back into a TSDB, for example a local Prometheus for a new export:
 

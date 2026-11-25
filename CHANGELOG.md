@@ -39,6 +39,17 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 - A reconnect revokes the replaced token; GitHub tokens are revoked one by one (`DELETE /applications/{client_id}/token`), a 422 counts as already revoked; no no-reply address is guessed for GitHub Enterprise Server hosts
 - A token refresh survives the end of the request, and an `invalid_grant` deletes the account only if the Secret still holds the refresh token that was sent
 
+## [0.2.5] - 2026-11-25
+
+### Fixed
+
+- Operator: the late start phases from the IDE milestones (`browser_connect` to `ide_usable` in `eduide_session_phase_seconds`, usage metric M4) are recorded without tracing too; before, installations without an OTLP endpoint had no M4 data
+- Usage archive docs: the copy command leaves out `lost+found`
+
+### Compatibility
+
+- CRD and API version `v1alpha1` / `v1`, unchanged; no chart value changes.
+
 ## [0.2.4] - 2026-11-24
 
 ### Added
