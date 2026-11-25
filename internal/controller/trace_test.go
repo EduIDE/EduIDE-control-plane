@@ -14,6 +14,7 @@ import (
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
+	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
 )
 
 func ms(name string, at time.Time) agentapi.Milestone { return agentapi.Milestone{Name: name, At: at} }
@@ -322,5 +323,35 @@ func TestClampKeepsOrder(t *testing.T) {
 			t.Fatalf("clamp(%d ms) = %v", ms, got)
 		}
 		prev = got
+	}
+}
+
+// TestMilestonePhasesWithoutTrace checks that the late phases reach the metrics when the session has no traceparent:
+// installations without tracing still need ide_usable for the usage export.
+func TestMilestonePhasesWithoutTrace(t *testing.T) {
+	requireEnv(t)
+	recordSpans(t) // also takes the clock back to the wall time
+	prevChecks := milestoneChecks.Load()
+	milestoneChecks.Store(&[]time.Duration{time.Second, 2 * time.Second, 4 * time.Second})
+	t.Cleanup(func() { milestoneChecks.Store(prevChecks) })
+
+	mustCreate(t, newTemplate("tpl-notrace"))
+	createSession(t, "s-notrace", "tpl-notrace")
+	var st v1.IDESessionStatus
+	eventually(t, "instance", func() bool { st = sessionStatus("s-notrace"); return st.Instance != "" })
+	setReady(t, "ide-"+st.Instance)
+	eventually(t, "ready", func() bool { st = sessionStatus("s-notrace"); return st.Phase == v1.SessionReady })
+
+	usable := telemetry.SessionPhase.WithLabelValues("ide_usable", strategyName(st.StartStrategy), "tpl-notrace")
+	before := histCount(usable)
+	ready := clk.Now()
+	agent.set(func(a *fakeAgent) {
+		a.milestones = []agentapi.Milestone{ms("claim-received", ready), ms("workspace-ready", ready.Add(5*time.Second))}
+	})
+	t.Cleanup(func() { agent.set(func(a *fakeAgent) { a.milestones = nil }) })
+	eventually(t, "ide_usable observed", func() bool { return histCount(usable) == before+1 })
+	time.Sleep(500 * time.Millisecond) // a further poll must not count it again
+	if n := histCount(usable); n != before+1 {
+		t.Errorf("ide_usable observed %d times, want once", n-before)
 	}
 }

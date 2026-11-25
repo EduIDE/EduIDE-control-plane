@@ -4,6 +4,10 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Fixed
+
+- Operator: the late start phases from the IDE milestones (`browser_connect` to `ide_usable` in `eduide_session_phase_seconds`, usage metric M4) are recorded without tracing too; before, installations without an OTLP endpoint had no M4 data
+
 ## [0.2.4] - 2026-11-24
 
 ### Added
