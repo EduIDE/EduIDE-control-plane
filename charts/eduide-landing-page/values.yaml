@@ -19,6 +19,8 @@ gateway:
   port: 443
 
 # Served as /config.json
+# Footer: config.footerLinks.bugReport and .featureRequest ({text, url}) are optional. Without them the footer links to the
+# issue forms of EduIDE/EduIDE with the page hostname (and footerLinks.attribution.version) as parameters.
 config:
   title: EduIDE
   apiBaseUrl: /api/v1

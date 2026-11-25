@@ -7,6 +7,7 @@ The section of a version becomes the notes of its GitHub Release.
 
 ### Changes
 
+- The footer links "Report a bug" and "Request a feature" (new, shown by default) open the issue forms of `EduIDE/EduIDE` with the page hostname as `installation` and `attribution.version` as `version` when set; never the full page URL. Configured `footerLinks.bugReport` and `featureRequest` still win unchanged
 - The deprecated `?artemisToken=` and a `?gitUri=` with credentials leave the address bar before the login, like the fragment forms; they no longer travel to Keycloak inside the redirect URI
 - A repository URL with a query or a fragment no longer makes the launch fail: the display source drops both
 - New message for `workspace-limit-reached`: the service limits the saved workspaces per user (`workspaces.perUser`)

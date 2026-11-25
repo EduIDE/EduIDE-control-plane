@@ -1,4 +1,5 @@
 import type { AppConfig } from '../config';
+import { issueFormUrl } from '../feedbackLinks';
 import { useI18n } from '../i18n';
 import { legalHref, type LegalRoute } from '../legal';
 import { GithubMark } from './Icons';
@@ -9,7 +10,6 @@ interface FooterProps {
 }
 
 const GITHUB_URL = 'https://github.com/EduIDE/EduIDE-control-plane';
-const ISSUES_URL = `${GITHUB_URL}/issues`;
 
 interface ConfiguredLink {
     text: string;
@@ -33,8 +33,13 @@ const External = ({
 export const Footer = ({ footerLinks, legal }: FooterProps): React.JSX.Element => {
     const { t } = useI18n();
     const version = footerLinks?.attribution?.version;
-    const bug: ConfiguredLink = footerLinks?.bugReport ?? { text: t('footer.bug'), url: ISSUES_URL };
-    const optional = [footerLinks?.featureRequest, footerLinks?.about].filter((l): l is ConfiguredLink => l !== undefined);
+    const host = window.location.hostname;
+    const bug: ConfiguredLink = footerLinks?.bugReport ?? { text: t('footer.bug'), url: issueFormUrl('bug_report.yml', host, version) };
+    const feature: ConfiguredLink = footerLinks?.featureRequest ?? {
+        text: t('footer.feature'),
+        url: issueFormUrl('feature_request.yml', host, version)
+    };
+    const optional = [feature, footerLinks?.about].filter((l): l is ConfiguredLink => l !== undefined);
     const legalLink = (route: LegalRoute): React.JSX.Element => {
         const { href, external } = legalHref(route, legal[route]);
         return (
