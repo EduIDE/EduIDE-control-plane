@@ -102,7 +102,8 @@ export const PickDialog = ({ template, onClose, onInfo, onStart }: PickDialogPro
                     <label key={o.id} className='opt'>
                         <input
                             type='radio'
-                            data-testid={`variant-${o.id || 'empty'}`}
+                            // A prefix of its own, so no variant id can collide with the empty project.
+                            data-testid={o.id ? `variant-${o.id}` : 'pick-empty'}
                             name='variant'
                             value={o.id}
                             checked={chosen === o.id}
