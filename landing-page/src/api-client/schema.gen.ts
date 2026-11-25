@@ -75,7 +75,7 @@ export interface paths {
         /**
          * @description Launches a session. Idempotent (G14): the key is template plus workspace, or for sessions
          *     without persistence template plus a hash of the launch data. A repeated launch returns the
-         *     existing session with 200. Send `traceparent` to join the launch trace.
+         *     existing session with 200. A `traceparent` becomes a link of the root span `launch`.
          */
         post: operations["launchSession"];
         delete?: never;
