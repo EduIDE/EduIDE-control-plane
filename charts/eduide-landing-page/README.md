@@ -8,7 +8,7 @@ The route for `/api/` on the same host comes from the `eduide-control-plane` cha
 |---|---|---|
 | `host` | required | Service host, equal to `config.hosts.service` of the control plane |
 | `gateway.name`, `.namespace`, `.sectionName` | `name` required | parentRef of the HTTPRoute |
-| `config` | title, `/api/v1`, Keycloak at `auth.example.org` | Content of `config.json`. `config.legal` is not allowed any more, use `legal` |
+| `config` | title, `/api/v1`, Keycloak at `auth.example.org` | Content of `config.json`. `footerLinks.bugReport` and `footerLinks.featureRequest` are optional; by default the footer opens the `EduIDE/EduIDE` issue forms with the page hostname and `footerLinks.attribution.version`. `config.legal` is not allowed any more, use `legal` |
 | `legal.imprint`, `legal.privacy` | required | Imprint and privacy page of the deployment. Each sets exactly one of `url` (http or https) or `markdown` (the text, served at `/imprint` or `/privacy`). Rendering fails when one is missing or both are set, also with `--skip-schema-validation` |
 | `image.repository`, `image.tag` | `ghcr.io/eduide/eduide-control-plane/landing-page`, appVersion | |
 | `replicas`, `resources`, `imagePullSecrets` | 1 | |

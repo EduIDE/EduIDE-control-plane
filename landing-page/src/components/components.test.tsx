@@ -45,16 +45,18 @@ const python: Template = {
 };
 
 describe('Footer', () => {
-    it('shows the same links everywhere: GitHub, bug report, imprint, privacy, and no feature request or about by default', () => {
+    it('shows the same links everywhere: GitHub, bug report, feature request, imprint, privacy, and no about by default', () => {
         render(wrap(<Footer legal={legal} />));
         expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://github.com/EduIDE/EduIDE-control-plane');
         expect(screen.getByRole('link', { name: 'Report a bug' }).getAttribute('href')).toBe(
-            'https://github.com/EduIDE/EduIDE-control-plane/issues'
+            `https://github.com/EduIDE/EduIDE/issues/new?template=bug_report.yml&installation=${window.location.hostname}`
+        );
+        expect(screen.getByRole('link', { name: 'Request a feature' }).getAttribute('href')).toBe(
+            `https://github.com/EduIDE/EduIDE/issues/new?template=feature_request.yml&installation=${window.location.hostname}`
         );
         expect(screen.getByRole('link', { name: 'Status' }).getAttribute('href')).toBe('/status');
         expect(screen.getByRole('link', { name: 'Imprint' }).getAttribute('href')).toBe('https://example.org/imprint');
         expect(screen.getByRole('link', { name: 'Privacy' }).getAttribute('href')).toBe('/privacy');
-        expect(screen.queryByText(/feature/i)).toBeNull();
         expect(screen.queryByRole('link', { name: 'About' })).toBeNull();
     });
 
@@ -76,6 +78,19 @@ describe('Footer', () => {
         expect(screen.getByRole('link', { name: 'GitHub' }).getAttribute('href')).toBe('https://git.example.org/x');
         expect(screen.getByRole('link', { name: 'Bugs' }).getAttribute('href')).toBe('https://bugs.example');
         screen.getByRole('link', { name: 'Us' });
+        expect(screen.getByRole('link', { name: 'Request a feature' }).getAttribute('href')).toContain('&version=v9');
+    });
+
+    it('keeps a configured feature request link unchanged', () => {
+        render(
+            wrap(
+                <Footer
+                    legal={legal}
+                    footerLinks={{ attribution: { version: 'v9' }, featureRequest: { text: 'Ideas', url: 'https://ideas.example/x' } }}
+                />
+            )
+        );
+        expect(screen.getByRole('link', { name: 'Ideas' }).getAttribute('href')).toBe('https://ideas.example/x');
     });
 });
 

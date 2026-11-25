@@ -13,7 +13,7 @@ The page a student lands on: it starts an IDE session through the control plane 
 - English and German (browser language, switchable in the avatar menu), colors follow the system light or dark setting
 - `/status` (no login): the overall state in plain language, the three parts (sign in, starting environments, saved workspaces) and the start time per template, split into temporary and saved workspaces. Reads the public `GET /api/v1/status` every 30 s and shows "Status is not available right now" when the request fails
 - `/admin` (login and admin role): a read-only panel with Status, Pools, Sessions (with details and trace link), Workspaces, Problems, Templates and Limits as real paths (`/admin/pools`, `/admin/sessions`, ...). It loads lazily, so students never download it. Live data comes from the admin event streams, other pages reload every 30 s. Charts and figures that need Prometheus are hidden when the service sends none. Users appear only as pseudonymous hash
-- Footer on every page with GitHub, bug report, imprint and privacy. `/imprint` and `/privacy` work without a login
+- Footer on every page with GitHub, bug report, feature request, imprint and privacy. `/imprint` and `/privacy` work without a login
 
 ## Link parameters
 
@@ -40,7 +40,7 @@ The server serves `/etc/eduide/landing/config.json` as `GET /config.json` (a Con
 
 Required: `legal.imprint` and `legal.privacy`, each exactly one of `{ "url": "https://..." }` (linked directly) or `{ "path": "/legal/imprint.md" }` (Markdown that the server serves from the directory of `config.json`, rendered at `/imprint` and sanitized). The chart sets these from its `legal` values.
 
-Optional keys: `hstsIncludeSubdomains` (default `true`, adds `includeSubDomains` to HSTS; set `false` when the session hosts are not subdomains of the landing host), `footerLinks` with `attribution.version` (shown as "EduIDE <version>"), `github.url` (default the control plane repository), `bugReport` (`text`, `url`), and `featureRequest` and `about` (not shown unless set). `legacy` is reserved and not used yet.
+Optional keys: `hstsIncludeSubdomains` (default `true`, adds `includeSubDomains` to HSTS; set `false` when the session hosts are not subdomains of the landing host), `footerLinks` with `attribution.version` (shown as "EduIDE <version>"), `github.url` (default the control plane repository), `bugReport` and `featureRequest` (`text`, `url`; by default they open the issue forms of `EduIDE/EduIDE` with `installation` set to the page hostname and `version` set to `attribution.version` when known, never the page URL or query string; a configured URL is used as is), and `about` (not shown unless set). `legacy` is reserved and not used yet.
 
 For local development copy that file (with `legal`) to `public/config.json` (git-ignored) and run `npm run dev`. Put Markdown files for the `path` variant in `public/legal/`.
 

@@ -4,6 +4,10 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Changed
+
+- Landing page footer: "Report a bug" and the new "Request a feature" open the `EduIDE/EduIDE` issue forms with the page hostname and `footerLinks.attribution.version`; configured `footerLinks.bugReport` and `featureRequest` still win (chart `eduide-landing-page` docs updated)
+
 ## [0.2.4] - 2026-11-24
 
 ### Added
