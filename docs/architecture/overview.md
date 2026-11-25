@@ -80,6 +80,7 @@ A session URL is `https://<hosts.instance>/<instance>/`.
 | Pod to pod | NetworkPolicy, default deny. :8080 only from Envoy, :8081 only from the operator, session pods cannot reach each other ([ADR 0019](../adr/0019-network-isolation.md)). |
 | Session pod to Kubernetes | None: `automountServiceAccountToken: false`. |
 | User input to cluster | The service accepts only keys on the template allowlist with a check per key, at most 8 KiB. Launch data lives in a Secret owned by the session and in agent memory, never in CR specs, logs, traces, metrics or status ([ADR 0012](../adr/0012-user-data-secrets-allowlist.md)). |
+| Feedback from the IDE | Off by default. The agent forwards it to `POST /api/v1/feedback` with the instance token; the service checks the token against the Secret, rate limits per session owner, redacts and forwards without user identity to the central receiver ([ADR 0023](../adr/0023-in-ide-feedback-path.md)). |
 | Control plane to cluster | RBAC per namespace, minimal. Informers filter on `app.kubernetes.io/managed-by=eduide`. |
 
 Residual risk: the instance token is readable in the HTTPRoute spec by cluster admins and the operator.

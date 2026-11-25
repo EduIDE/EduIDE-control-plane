@@ -577,3 +577,48 @@ func TestProxyScopesIDECookiesToTheInstancePath(t *testing.T) {
 		t.Fatalf("unchanged cookie %q", v)
 	}
 }
+
+func TestFeedbackOffIs404(t *testing.T) {
+	a := newAgent(t, "1")
+	if w := do(t, a.LocalHandler(), "POST", "/v1/feedback", `{}`, nil); w.Code != 404 {
+		t.Fatal(w.Code)
+	}
+	s, _ := a.snapshot()
+	if s.Feedback != nil {
+		t.Fatal("feedback must be absent when off")
+	}
+}
+
+func TestFeedbackForwardsBodyAndIdentity(t *testing.T) {
+	var gotBody, gotAuth, gotInst string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody, gotAuth, gotInst = string(b), r.Header.Get("Authorization"), r.Header.Get(InstanceHeader)
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer up.Close()
+	a := newAgent(t, "1")
+	a.FeedbackURL, a.PathPrefix = up.URL, "/abc123/"
+	w := do(t, a.LocalHandler(), "POST", "/v1/feedback", `{"kind":"bug"}`, nil)
+	if w.Code != 429 || w.Header().Get("Retry-After") != "42" {
+		t.Fatalf("%d %v", w.Code, w.Header())
+	}
+	if gotBody != `{"kind":"bug"}` || gotAuth != "Bearer "+tok || gotInst != "abc123" {
+		t.Fatalf("%q %q %q", gotBody, gotAuth, gotInst)
+	}
+	if s, _ := a.snapshot(); s.Feedback == nil || !*s.Feedback {
+		t.Fatal("feedback must be true when on")
+	}
+}
+
+func TestFeedbackLimitAndUpstreamFailure(t *testing.T) {
+	a := newAgent(t, "1")
+	a.FeedbackURL = "http://127.0.0.1:1/x"
+	if w := do(t, a.LocalHandler(), "POST", "/v1/feedback", strings.Repeat("a", 16<<10+1), nil); w.Code != 413 {
+		t.Fatal(w.Code)
+	}
+	if w := do(t, a.LocalHandler(), "POST", "/v1/feedback", `{}`, nil); w.Code != 502 {
+		t.Fatal(w.Code)
+	}
+}

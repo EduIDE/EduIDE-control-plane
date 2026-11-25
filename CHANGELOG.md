@@ -4,6 +4,17 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Added
+
+- In-IDE feedback, off by default ([ADR 0023](docs/adr/0023-in-ide-feedback-path.md)): `config.feedback` (`enabled`, `receiverURL`, `keySecret`) in the control plane chart; the render fails when enabled without receiver or key Secret
+- `POST /api/v1/feedback` (API 1.2.0), authenticated by instance token and `X-EduIDE-Instance`, not by OIDC; 404 while off; 5 per hour per session owner; redaction of tokens, email addresses and matriculation numbers; forwards without user identity to the central receiver. New problem code `upstream-unavailable` (502)
+- The operator sets `AGENT_FEEDBACK_URL` on the agent when feedback is on; `LocalSession.feedback` and the loopback `POST /v1/feedback` of the agent
+- `eduide-session` extension: context key `eduide.feedbackEnabled` and command `eduide.feedback.send`
+
+### Compatibility
+
+- Additive. The CRDs do not change. Feedback is off by default; pods created before the switch is turned on (including warm pool pods) do not get it until recreated.
+
 ## [0.2.4] - 2026-11-24
 
 ### Added

@@ -58,6 +58,15 @@ config:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 64Mi}
   rateLimit: {}
+  # In-IDE feedback (ADR 0023). Off by default: the endpoint answers 404 and session pods get no feedback setting.
+  # Reaches pods created after the change; recreate pools (or roll their pods) after toggling. Sessions send feedback to the
+  # central receiver (chart eduide-feedback-receiver, deployed elsewhere) with the installation key. Enabled without receiverURL or keySecret.name fails the render.
+  feedback:
+    enabled: false
+    # Full https URL of the receiver endpoint, e.g. https://feedback.example.org/v1/feedback
+    receiverURL: ""
+    # Existing Secret in this namespace with the installation key; only the service pod reads it.
+    keySecret: {name: "", key: key}
   # Optional, read-only admin API (U16); all keys optional.
   # admin:
   #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials

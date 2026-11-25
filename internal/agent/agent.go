@@ -53,6 +53,8 @@ type Agent struct {
 	log     *slog.Logger
 	// PathPrefix is the public path of this instance ("/<instance>/"); cookie paths of the IDE are moved below it.
 	PathPrefix string
+	// FeedbackURL is the feedback endpoint of the service (AGENT_FEEDBACK_URL). Empty means feedback is off.
+	FeedbackURL string
 
 	conns atomic.Int64
 
@@ -293,6 +295,7 @@ func (a *Agent) LocalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/session", a.getSession)
 	mux.HandleFunc("POST /v1/milestones", a.milestone)
+	mux.HandleFunc("POST /v1/feedback", a.feedback)
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		a.log.Debug("heartbeat")
 		a.mu.Lock()
@@ -312,6 +315,10 @@ func (a *Agent) snapshot() (agentapi.LocalSession, <-chan struct{}) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	s := agentapi.LocalSession{Version: a.version, Claimed: a.session != ""}
+	if a.FeedbackURL != "" {
+		on := true
+		s.Feedback = &on
+	}
 	if s.Claimed {
 		d := make(map[string]string, len(a.data))
 		for k, v := range a.data {

@@ -51,6 +51,13 @@ seccompProfile:
 {{- $c := deepCopy .Values.config -}}
 {{- if not $c.agent.image }}{{ $_ := set $c.agent "image" (include "ecp.image" (dict "ctx" . "name" "agent")) }}{{ end -}}
 {{- $_ := set $c "telemetry" (mergeOverwrite (dict) ($c.telemetry | default dict) (dict "userSaltFile" "/etc/eduide/secrets/user-salt")) -}}
+{{- $fb := $c.feedback | default dict -}}
+{{- if $fb.enabled -}}
+{{- if not $fb.receiverURL }}{{ fail "config.feedback.enabled needs config.feedback.receiverURL" }}{{ end -}}
+{{- if not (($fb.keySecret | default dict).name) }}{{ fail "config.feedback.enabled needs config.feedback.keySecret.name (Secret with the installation key)" }}{{ end -}}
+{{- end -}}
+{{- /* The key itself never goes into the ConfigMap: only the service pod gets it, from the Secret. */ -}}
+{{- $_ := set $c "feedback" (dict "enabled" (default false $fb.enabled) "receiverURL" ($fb.receiverURL | default "")) -}}
 {{- if .Values.poolScaler.enabled -}}
 {{- $_ := set $c "admin" (mergeOverwrite (dict "scalerInterval" (.Values.poolScaler.config.interval | default "30s")) ($c.admin | default dict)) -}}
 {{- end -}}

@@ -32,12 +32,13 @@ const (
 	signInTimeout        = 3 * time.Second
 )
 
-// publicWithoutToken lets GET /status through without a bearer token and keeps the token check for all others.
+// publicWithoutToken lets GET /status and POST /feedback through without an OIDC bearer token and keeps the token check for all others.
 func publicWithoutToken(authed func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		checked := authed(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.Pattern == "GET "+basePath+"/status" {
+			// The feedback route has its own check: instance token instead of an OIDC token (ADR 0023).
+			if r.Pattern == "GET "+basePath+"/status" || r.Pattern == "POST "+basePath+"/feedback" {
 				next.ServeHTTP(w, r)
 				return
 			}

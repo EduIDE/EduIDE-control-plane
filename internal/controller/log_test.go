@@ -74,3 +74,28 @@ func TestWorkspaceMountOnlyWithClaim(t *testing.T) {
 		}
 	}
 }
+
+func TestAgentFeedbackURLOnlyWhenEnabled(t *testing.T) {
+	tmpl := &v1.IDETemplate{ObjectMeta: metav1.ObjectMeta{Name: "java", Namespace: "ns"}}
+	for _, on := range []bool{false, true} {
+		d := &deps{cfg: &config.Config{Hosts: config.Hosts{Service: "ide.example.org"}, Feedback: config.Feedback{Enabled: on}}}
+		got := ""
+		for _, c := range d.buildPod(tmpl, "inst", nil, "").Spec.Containers {
+			for _, e := range c.Env {
+				if e.Name == "AGENT_FEEDBACK_URL" {
+					if c.Name != "agent" {
+						t.Fatal("AGENT_FEEDBACK_URL on the IDE container")
+					}
+					got = e.Value
+				}
+			}
+		}
+		want := ""
+		if on {
+			want = "https://ide.example.org/api/v1/feedback"
+		}
+		if got != want {
+			t.Errorf("enabled=%v: AGENT_FEEDBACK_URL = %q, want %q", on, got, want)
+		}
+	}
+}

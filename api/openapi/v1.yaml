@@ -1,11 +1,11 @@
 openapi: 3.1.0
 info:
   title: EduIDE control plane API
-  version: 1.1.1
+  version: 1.2.0
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
-    All endpoints need an OIDC bearer token of the deployment's realm. The endpoints under `/admin` additionally need the admin role (U16).
+    All endpoints need an OIDC bearer token of the deployment's realm, except `GET /status` and `POST /feedback`. The endpoints under `/admin` additionally need the admin role (U16).
   license: {name: EPL-2.0}
 servers:
   - url: /api/v1
@@ -16,6 +16,8 @@ tags:
   - name: sessions
   - name: workspaces
   - name: overview
+  - name: feedback
+    description: "In-IDE feedback of a running session. Authenticated with the instance token, not with an OIDC token; off by default (404)."
   - name: public
     description: "Unauthenticated health summary for the landing page (U17). Contains no user, session, host or capacity data."
   - name: admin
@@ -40,6 +42,34 @@ paths:
           content:
             application/json:
               schema: {$ref: "#/components/schemas/PublicStatus"}
+        default: {$ref: "#/components/responses/Problem"}
+  /feedback:
+    post:
+      operationId: sendFeedback
+      tags: [feedback]
+      security: [{instanceToken: []}]
+      description: |
+        Feedback from the IDE of a running session (ADR 0023). Called by the agent of the session pod, not by browsers.
+        Answers 404 before any other check while `config.feedback.enabled` is false. The caller names its instance in
+        `X-EduIDE-Instance` and sends the instance token as bearer; the instance must belong to a claimed session.
+        The owner of that session is the rate limit key (5 per hour). Tokens, email addresses and matriculation numbers
+        are redacted from `title` and `description`. The service forwards the feedback without any user identity to the
+        central receiver. Errors: 400 `invalid-input`, 401 `unauthorized`, 404 `not-found`, 429 `rate-limited` with
+        `Retry-After`, 502 `upstream-unavailable`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/FeedbackRequest"}
+      responses:
+        "202": {description: Accepted by the receiver.}
+        "429":
+          description: Rate limit of the user reached.
+          headers:
+            Retry-After: {schema: {type: string}}
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
         default: {$ref: "#/components/responses/Problem"}
   /templates:
     get:
@@ -351,6 +381,7 @@ paths:
 components:
   securitySchemes:
     bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+    instanceToken: {type: http, scheme: bearer, description: "Instance token of the session pod, with the instance id in the header X-EduIDE-Instance."}
   parameters:
     Name:
       name: name
@@ -386,7 +417,7 @@ components:
         code:
           type: string
           description: Stable machine-readable code. New codes may be added within v1.
-          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, workspace-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, internal]
+          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, workspace-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, upstream-unavailable, internal]
         sessions:
           description: Running sessions of the user, only with `session-limit-reached`.
           type: array
@@ -457,6 +488,22 @@ components:
         seconds: {type: number, format: double, description: Median start duration.}
         strategy: {type: string, enum: [warm, cold], description: "warm when a pool has an idle ready instance now (only without persistence)."}
         samples: {type: integer, description: Number of observed starts the median is based on.}
+    FeedbackRequest:
+      type: object
+      required: [kind, title, description, context]
+      additionalProperties: false
+      properties:
+        kind: {type: string, enum: [bug, feature]}
+        title: {type: string, minLength: 1, maxLength: 120}
+        description: {type: string, minLength: 1, maxLength: 5000}
+        context:
+          type: object
+          required: [version, appDefinition, browser]
+          additionalProperties: false
+          properties:
+            version: {type: string, maxLength: 100}
+            appDefinition: {type: string, maxLength: 100}
+            browser: {type: string, maxLength: 200}
     LaunchRequest:
       type: object
       required: [template]

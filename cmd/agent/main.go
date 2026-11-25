@@ -74,6 +74,7 @@ func run(log *slog.Logger) error {
 	}
 	a := agent.New(token, env("AGENT_IDE_PORT", "3000"), log)
 	a.PathPrefix = os.Getenv("AGENT_PATH_PREFIX")
+	a.FeedbackURL = os.Getenv("AGENT_FEEDBACK_URL")
 
 	if c := os.Getenv("AGENT_ID_TOKEN_COOKIE"); c != "" {
 		agent.StripCookie(c)

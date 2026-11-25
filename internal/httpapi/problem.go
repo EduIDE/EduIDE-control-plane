@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strconv"
 )
 
 // apiError is an RFC 9457 problem with a stable code.
@@ -13,6 +14,8 @@ type apiError struct {
 	title    string
 	detail   string
 	sessions []Session
+	// retryAfter in seconds overrides the default Retry-After of a rate limit problem.
+	retryAfter int
 }
 
 func (e *apiError) Error() string { return string(e.code) + ": " + e.detail }
@@ -32,6 +35,7 @@ const (
 	CodeWorkspaceLimit    ProblemCode = "workspace-limit-reached"
 	CodeRateLimited       ProblemCode = "rate-limited"
 	CodePayloadTooLarge   ProblemCode = "payload-too-large"
+	CodeUpstream          ProblemCode = "upstream-unavailable"
 	CodeInternal          ProblemCode = "internal"
 )
 
@@ -50,6 +54,7 @@ var problemStatus = map[ProblemCode]int{
 	CodeWorkspaceLimit:    http.StatusConflict,
 	CodeRateLimited:       http.StatusTooManyRequests,
 	CodePayloadTooLarge:   http.StatusRequestEntityTooLarge,
+	CodeUpstream:          http.StatusBadGateway,
 	CodeInternal:          http.StatusInternalServerError,
 }
 
@@ -73,7 +78,11 @@ func writeProblem(w http.ResponseWriter, e *apiError) {
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
 	if e.code == CodeRateLimited {
-		w.Header().Set("Retry-After", "6")
+		ra := "6"
+		if e.retryAfter > 0 {
+			ra = strconv.Itoa(e.retryAfter)
+		}
+		w.Header().Set("Retry-After", ra)
 	}
 	w.WriteHeader(e.status)
 	_ = json.NewEncoder(w).Encode(p)

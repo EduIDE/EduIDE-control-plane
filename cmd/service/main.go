@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -149,6 +150,13 @@ func run() error {
 		return errors.New("the admin API needs a non-empty telemetry.userSaltFile")
 	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
+	if cfg.Feedback.Enabled {
+		key := strings.TrimSpace(os.Getenv("FEEDBACK_KEY"))
+		if key == "" {
+			return errors.New("feedback.enabled needs the installation key in FEEDBACK_KEY")
+		}
+		api.EnableFeedback(key)
+	}
 	go api.RunSignInCheck(ctx)
 	servers := httpServers(ctx, api.Handler(auth.NewOIDC(cfg.OIDC)), ops)
 	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)

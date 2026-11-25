@@ -7,6 +7,8 @@ export interface Notice {
 export interface LocalSession {
   version: number;
   claimed: boolean;
+  // True when the operator turned feedback on for this installation.
+  feedback?: boolean;
   data?: Record<string, string>;
   notices?: Notice[];
 }
@@ -16,9 +18,25 @@ export interface EnvState {
   environment: Record<string, string>;
 }
 
+export interface FeedbackPayload {
+  kind: "bug" | "feature";
+  title: string;
+  description: string;
+  context: { version: string; appDefinition: string; browser: string };
+}
+
+// Never an exception: status 0 means the agent was not reachable.
+export interface FeedbackResult {
+  ok: boolean;
+  status: number;
+  retryAfter?: number;
+}
+
 export interface AgentClientOptions {
   baseUrl: string;
   onNotice: (n: Notice) => void;
+  // Called with the feedback switch on every session update and when it first becomes known.
+  onFeedbackEnabled?: (enabled: boolean) => void;
   // Remembers shown notices across IDE reloads (a VS Code Memento such as globalState).
   store?: { get<T>(key: string, fallback: T): T; update(key: string, value: unknown): Thenable<void> | Promise<void> };
   pollTimeoutSec?: number;
@@ -38,6 +56,7 @@ export class AgentClient {
   private seen = new Set<string>();
   private milestones = new Set<string>();
   private lastHeartbeat = -Infinity;
+  private feedback?: boolean;
   private abort = new AbortController();
   private stopped = false;
   private loop?: Promise<void>;
@@ -63,6 +82,27 @@ export class AgentClient {
   getEnv(keys: string[]): Record<string, string> {
     const env = this.session.data ?? {};
     return Object.fromEntries(keys.filter((k) => Object.hasOwn(env, k)).map((k) => [k, env[k]]));
+  }
+
+  // Posts feedback to the agent, which forwards it to the service. HTTP errors are results, not exceptions.
+  async sendFeedback(payload: FeedbackPayload): Promise<FeedbackResult> {
+    try {
+      const r = await fetch(`${this.o.baseUrl}/v1/feedback`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        // The agent gives up after 10 s.
+        signal: AbortSignal.any([this.abort.signal, AbortSignal.timeout(15000)]),
+      });
+      const res: FeedbackResult = { ok: r.ok, status: r.status };
+      const ra = Number(r.headers.get("retry-after") ?? NaN);
+      if (Number.isFinite(ra) && ra > 0) {
+        res.retryAfter = ra;
+      }
+      return res;
+    } catch {
+      return { ok: false, status: 0 };
+    }
   }
 
   // Sends a heartbeat unless one went out within the interval. force skips the throttle.
@@ -111,6 +151,11 @@ export class AgentClient {
   private apply(s: LocalSession) {
     this.session = s;
     this.version = s.version;
+    const fb = s.feedback === true;
+    if (fb !== this.feedback) {
+      this.feedback = fb;
+      this.o.onFeedbackEnabled?.(fb);
+    }
     for (const n of s.notices ?? []) {
       const k = noticeKey(n);
       if (this.seen.has(k)) {

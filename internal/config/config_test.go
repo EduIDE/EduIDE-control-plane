@@ -108,3 +108,27 @@ func TestAgentLogLevelIsValidated(t *testing.T) {
 		t.Fatalf("want a logLevel error, got %v", err)
 	}
 }
+
+func TestFeedbackConfig(t *testing.T) {
+	c, err := Parse([]byte(minimal))
+	if err != nil || c.Feedback.Enabled {
+		t.Fatalf("feedback must default to off: %v %+v", err, c.Feedback)
+	}
+	c, err = Parse([]byte(minimal + "feedback: {enabled: true, receiverURL: 'https://feedback.example.org/v1/feedback'}\n"))
+	if err != nil || !c.Feedback.Enabled {
+		t.Fatalf("%v %+v", err, c.Feedback)
+	}
+	for name, in := range map[string]string{
+		"no-url":  "feedback: {enabled: true}\n",
+		"http":    "feedback: {enabled: true, receiverURL: 'http://feedback.example.org/v1/feedback'}\n",
+		"bad-url": "feedback: {enabled: true, receiverURL: 'ftp://x'}\n",
+		"key":     "feedback: {enabled: true, receiverURL: 'https://x', keySecret: {name: a}}\n",
+	} {
+		if _, err := Parse([]byte(minimal + in)); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+	if _, err := Parse([]byte(minimal + "feedback: {enabled: false, receiverURL: ''}\n")); err != nil {
+		t.Errorf("off needs no receiver: %v", err)
+	}
+}

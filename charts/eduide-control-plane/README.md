@@ -30,6 +30,12 @@ The service Role then needs `list` and `watch` on `events.k8s.io` events and `ge
 With the pool scaler enabled the chart sets `config.admin.scalerInterval` from `poolScaler.config.interval` (default 30s).
 The public status (`GET /api/v1/status`, U17) needs no values.
 
+In-IDE feedback (ADR 0023, optional, default off): `config.feedback.enabled`, `receiverURL` (full URL of the central receiver) and `keySecret` (`name`, `key`, default key `key`; an existing Secret with the installation key in this namespace).
+The chart fails to render when `enabled` is true without `receiverURL` or `keySecret.name`.
+The key reaches only the service pod, as `FEEDBACK_KEY`; the ConfigMap holds `enabled` and `receiverURL`.
+With the switch on, the operator sets `AGENT_FEEDBACK_URL` on the agent of pods created afterwards (recreate pools after toggling, warm pool pods keep their environment).
+`POST /api/v1/feedback` answers 404 while the switch is off.
+
 No Ingress is rendered.
 The memory requests of operator, service and authz add up to 128 MiB.
 
