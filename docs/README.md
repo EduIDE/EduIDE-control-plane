@@ -15,6 +15,7 @@ Planned parts are marked **Planned** in the pages.
 | [operations/install.md](operations/install.md) | Install the CRDs and the control plane |
 | Runbooks | [pool empty](operations/pool-empty.md), [slow launch](operations/slow-launch.md), [authz errors](operations/authz-errors.md), [gateway backlog](operations/gateway-backlog.md), [workspace volume lost](operations/workspace-volume-lost.md) |
 | [operations/usage-export.md](operations/usage-export.md) | Usage metrics, recording rules and the anonymous usage export |
+| [operations/feedback-receiver.md](operations/feedback-receiver.md) | Central feedback receiver: GitHub App, Secrets, installation keys |
 | [operations/tracing.md](operations/tracing.md) | Read a launch trace in Jaeger: spans, normal values, slow causes |
 | [operations/logging.md](operations/logging.md) | Log format, fields and how to switch on debug logs |
 | [operations/migration.md](operations/migration.md) | Move a deployment from the Java stack |
