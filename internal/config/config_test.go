@@ -109,6 +109,22 @@ func TestAgentLogLevelIsValidated(t *testing.T) {
 	}
 }
 
+func TestAgentImagePullPolicyIsValidated(t *testing.T) {
+	for _, tc := range []struct {
+		policy string
+		ok     bool
+	}{{"", true}, {"Always", true}, {"IfNotPresent", true}, {"Never", true}, {"always", false}, {"Sometimes", false}} {
+		in := strings.Replace(minimal, "agent: {image: example.org/agent:1}", "agent: {image: example.org/agent:1, imagePullPolicy: '"+tc.policy+"'}", 1)
+		c, err := Parse([]byte(in))
+		if tc.ok && (err != nil || string(c.Agent.ImagePullPolicy) != tc.policy) {
+			t.Errorf("%q: %v", tc.policy, err)
+		}
+		if !tc.ok && (err == nil || !strings.Contains(err.Error(), "agent.imagePullPolicy")) {
+			t.Errorf("%q: want an imagePullPolicy error, got %v", tc.policy, err)
+		}
+	}
+}
+
 func TestGitAccounts(t *testing.T) {
 	prov := func(name, typ, host string) string {
 		return "{name: " + name + ", type: " + typ + ", host: " + host + ", clientID: cid, clientSecretFile: /s/" + name + "}"

@@ -62,6 +62,7 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Changed
 
+- Config `agent.imagePullPolicy` (optional): the operator sets it on the agent container of session pods. The chart fills it from `image.pullPolicy` when that is not `IfNotPresent`, so a test deployment with a mutable `pr-<N>` tag and `Always` no longer keeps an old agent on cached nodes. Without it nothing changes; when it is set or changed, idle instances are replaced
 - CI runs the promtool unit tests of the recording rules
 
 ### Fixed

@@ -52,6 +52,8 @@ config:
   agent:
     # Default: <image.registry>/agent:<image.tag>
     image: ""
+    # imagePullPolicy: Always, IfNotPresent or Never. Not set by default: the agent follows image.pullPolicy when
+    # that is not IfNotPresent.
     # debug, info or warn. Applies to session pods created after the change.
     logLevel: info
     resources:

@@ -46,7 +46,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 
 | Key | Default | Description |
 |---|---|---|
-| `image.registry`, `image.tag`, `image.pullPolicy` | `ghcr.io/eduide/eduide-control-plane`, appVersion | Image of all binaries |
+| `image.registry`, `image.tag`, `image.pullPolicy` | `ghcr.io/eduide/eduide-control-plane`, appVersion | Image of all binaries. A mutable tag such as `pr-<N>` needs `image.pullPolicy: Always`. The operator passes the policy on to the `agent` container of session pods (`config.agent.imagePullPolicy`, set only when it is not `IfNotPresent`), and a change replaces idle instances. IDE images follow `imagePullPolicy` of the template (default: Kubernetes decides from the tag), so use immutable tags or digests there, or set it |
 | `imagePullSecrets` | `[]` | |
 | `config` | see values.yaml | Content of `config.yaml`; `agent.image` defaults to the chart's agent image, `telemetry.userSaltFile` is set by the chart |
 | `oidc.clientSecretName` | required | Existing Secret with `client-secret` |

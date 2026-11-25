@@ -54,6 +54,10 @@ Listeners:
 - Bad: All traffic passes the agent proxy. It must handle WebSockets and large uploads correctly; proxy tests cover that.
 - Follow-up: Fuzzing for payload parsing and the 16 KiB claim limit ([0015](0015-test-strategy.md)). Data rules are in [0012](0012-user-data-secrets-allowlist.md).
 
+## Amendment 2026-11-25: pull policy of the agent
+
+The config field `agent.imagePullPolicy` (additive, optional) sets `imagePullPolicy` on the agent container, so a mutable tag with `image.pullPolicy: Always` reaches session pods too. Unset keeps the old pod and spec hash.
+
 ## Pros and Cons of the Options
 
 ### Direct to the IDE

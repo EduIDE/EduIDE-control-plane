@@ -64,6 +64,8 @@ seccompProfile:
 {{- define "ecp.config" -}}
 {{- $c := deepCopy .Values.config -}}
 {{- if not $c.agent.image }}{{ $_ := set $c.agent "image" (include "ecp.image" (dict "ctx" . "name" "agent")) }}{{ end -}}
+{{- /* Mutable preview tags need Always for the agent too; the default IfNotPresent renders nothing, so the config stays as it was. */ -}}
+{{- if and (not $c.agent.imagePullPolicy) (ne (.Values.image.pullPolicy | default "IfNotPresent") "IfNotPresent") }}{{ $_ := set $c.agent "imagePullPolicy" .Values.image.pullPolicy }}{{ end -}}
 {{- $_ := set $c "telemetry" (mergeOverwrite (dict) ($c.telemetry | default dict) (dict "userSaltFile" "/etc/eduide/secrets/user-salt")) -}}
 {{- if include "ecp.gitEnabled" . -}}
 {{- /* The client secrets and the key are files of a projected volume in the service pod; the config names the paths only. */ -}}

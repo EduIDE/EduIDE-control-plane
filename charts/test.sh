@@ -145,6 +145,12 @@ for v in "$cp"/ci/*-values.yaml; do
   [ "$(echo "$nogit" | yq -o=json -I=0 'select(.kind == "Role" and .metadata.name == "r-eduide-control-plane-service") | .rules[] | select(.resources[0] == "secrets") | .verbs | join(",")')" = '"create,get,delete"' ] || fail "service Secret verbs without git accounts ($v)"
   ok "git accounts ($v)"
 
+  # The agent follows image.pullPolicy only when it is not the default, so default installations keep their config.
+  ! grep -q 'imagePullPolicy' <<<"$cfg" || fail "default values render an agent pull policy ($v)"
+  always=$(helm template r "$cp" -f "$v" -n ns --set image.pullPolicy=Always | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]')
+  [ "$(echo "$always" | yq '.agent.imagePullPolicy')" = "Always" ] || fail "image.pullPolicy=Always does not reach agent.imagePullPolicy ($v)"
+  ok "agent pull policy ($v)"
+
   # Git proxy (ADR 0023): ClusterIP only, never routed, policies present, nothing rendered without providers.
   gp=r-eduide-control-plane-git-proxy
   [ "$(echo "$out" | yq 'select(.kind == "Deployment" and .metadata.name == "'$gp'") | .spec.replicas')" = "2" ] || fail "git-proxy does not run 2 replicas ($v)"

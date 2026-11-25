@@ -18,7 +18,7 @@ One tag `vX.Y.Z` versions everything ([ADR 0018](../adr/0018-charts-oci.md)):
 | Manual run on another branch | `sha-<7>` only |
 | Release tag `vX.Y.Z` | `X.Y.Z` |
 
-To test a pull request on a test deployment, point the chart values at the `pr-<N>` image tags. Do this only on test deployments.
+To test a pull request on a test deployment, point the chart values at the `pr-<N>` image tags. Do this only on test deployments, and set `image.pullPolicy: Always` there: `pr-<N>` is a mutable tag, and the operator gives the same policy to the agent container of session pods. A change of the policy replaces idle instances. IDE images of templates have their own `imagePullPolicy` (`spec.imagePullPolicy`).
 The workflow builds the amd64 image, scans it with Trivy and pushes the multi-arch image only when the scan passes.
 
 ## Steps

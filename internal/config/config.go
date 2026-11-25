@@ -245,6 +245,9 @@ type Telemetry struct {
 // Agent describes the sidecar the operator injects into session pods.
 type Agent struct {
 	Image string `json:"image"`
+	// ImagePullPolicy (Always, IfNotPresent or Never) of the agent container. Empty leaves it unset, so Kubernetes
+	// decides from the image tag. The chart sets it from image.pullPolicy when that is not IfNotPresent.
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 	// LogLevel (debug, info or warn) becomes AGENT_LOG_LEVEL of the sidecar. Default info.
 	LogLevel  string                      `json:"logLevel,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -371,6 +374,9 @@ func (c *Config) validate() error {
 	}
 	if !slices.Contains([]string{"", "debug", "info", "warn"}, c.Agent.LogLevel) {
 		errs = append(errs, errors.New("config: agent.logLevel must be debug, info or warn"))
+	}
+	if !slices.Contains([]corev1.PullPolicy{"", corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever}, c.Agent.ImagePullPolicy) {
+		errs = append(errs, errors.New("config: agent.imagePullPolicy must be Always, IfNotPresent or Never"))
 	}
 	if c.SessionsPerUser < 1 {
 		errs = append(errs, errors.New("config: sessionsPerUser must be at least 1"))

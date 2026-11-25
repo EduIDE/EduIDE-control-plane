@@ -8,6 +8,7 @@ import (
 
 	v1 "github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestGitEnv(t *testing.T) {
@@ -66,6 +67,31 @@ func TestSpecHashCoversGitSettings(t *testing.T) {
 // Git accounts feature. A change here replaces every idle pod of every installation once on upgrade.
 func TestSpecHashWithoutGitIsUnchanged(t *testing.T) {
 	d := &deps{cfg: &config.Config{Hosts: config.Hosts{Service: "ide.example.org"}}}
+	tmpl := &v1.IDETemplate{}
+	b, _ := json.Marshal([]any{tmpl.Spec, d.cfg.Agent.Image, d.cfg.Placement, 2})
+	sum := sha256.Sum256(b)
+	if got, want := d.specHash(tmpl), hex.EncodeToString(sum[:])[:16]; got != want {
+		t.Errorf("hash %s, want the pre-feature value %s", got, want)
+	}
+}
+
+func TestSpecHashCoversAgentPullPolicy(t *testing.T) {
+	hash := func(p corev1.PullPolicy) string {
+		d := &deps{cfg: &config.Config{Agent: config.Agent{ImagePullPolicy: p}}}
+		return d.specHash(&v1.IDETemplate{})
+	}
+	if hash("") == hash(corev1.PullAlways) {
+		t.Error("setting the pull policy keeps the hash: idle pods never get it")
+	}
+	if hash(corev1.PullAlways) == hash(corev1.PullNever) {
+		t.Error("changing the pull policy keeps the hash")
+	}
+}
+
+// TestSpecHashWithoutPullPolicyIsUnchanged pins the hash of an installation without the field to the formula from
+// before it existed, so an upgrade does not replace idle pods.
+func TestSpecHashWithoutPullPolicyIsUnchanged(t *testing.T) {
+	d := &deps{cfg: &config.Config{}}
 	tmpl := &v1.IDETemplate{}
 	b, _ := json.Marshal([]any{tmpl.Spec, d.cfg.Agent.Image, d.cfg.Placement, 2})
 	sum := sha256.Sum256(b)
