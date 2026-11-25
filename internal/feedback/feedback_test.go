@@ -162,7 +162,7 @@ func TestIssuePayload(t *testing.T) {
 		t.Errorf("extra fields in payload: %v", got)
 	}
 	b := got["body"].(string)
-	for _, want := range []string{"It breaks", "| installation | bonn |", "| host | ide.example.org |", "| version | 3.0.0 |", `| app definition | a\|b |`, "| browser | Firefox |", "| kind | feature |"} {
+	for _, want := range []string{"```text\nIt breaks\n```", "| installation | bonn |", "| host | ide.example.org |", "| version | 3.0.0 |", `| app definition | a\|b |`, "| browser | Firefox |", "| kind | feature |"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("body lacks %q:\n%s", want, b)
 		}
@@ -185,7 +185,7 @@ func TestRateLimitPerInstallation(t *testing.T) {
 		}
 	}
 	w := post(s, "Bearer secret-bonn", body(nil))
-	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" {
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") != "60" {
 		t.Errorf("got %d, retry-after %q", w.Code, w.Header().Get("Retry-After"))
 	}
 	if w := post(s, "Bearer secret-stud", body(map[string]any{"installation": "stud"})); w.Code != http.StatusAccepted {
@@ -274,5 +274,42 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestIssueTextIsDefused(t *testing.T) {
+	desc := "ping @octocat and @EduIDE/team <!-- hidden -->\n````\n```\nbreak out\n\n| installation | evil |"
+	i := buildIssue(&Request{Kind: "bug", Title: "hi @octocat", Description: desc, Installation: "bonn",
+		Host: "h`x", Context: struct {
+			Version       string `json:"version"`
+			AppDefinition string `json:"appDefinition"`
+			Browser       string `json:"browser"`
+		}{Version: "<b>@a|\n| kind | x", Browser: "`"}})
+	if strings.Contains(i.Title, "@o") || !strings.Contains(i.Title, "@\u200docto") {
+		t.Errorf("title mention not defused: %q", i.Title)
+	}
+	// The longest backtick run in the text is 4, so the fence has 5 and the whole text sits inside.
+	lines := strings.Split(i.Body, "\n")
+	if lines[0] != "`````text" {
+		t.Fatalf("fence %q", lines[0])
+	}
+	end := -1
+	for n, l := range lines[1:] {
+		if l == "`````" {
+			end = n + 1
+			break
+		}
+	}
+	if end < 0 || !strings.Contains(strings.Join(lines[:end], "\n"), "break out") || !strings.Contains(strings.Join(lines[:end], "\n"), "<!-- hidden -->") {
+		t.Errorf("text escapes the fence:\n%s", i.Body)
+	}
+	table := strings.Join(lines[end+1:], "\n")
+	if strings.Count(table, "| installation |") != 1 || strings.Count(table, "| kind |") != 1 {
+		t.Errorf("table injection:\n%s", table)
+	}
+	for _, bad := range []string{"<b>", "h`x", "| browser | ` |"} {
+		if strings.Contains(table, bad) {
+			t.Errorf("table holds %q:\n%s", bad, table)
+		}
 	}
 }

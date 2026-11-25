@@ -1,8 +1,9 @@
-# 0023. Central feedback receiver in its own chart
+# 0024. Central feedback receiver in its own chart
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-11-25
 - Decisions: none (plan `2026-11-13-feedback-channels`, step "Receiver")
+- Related: [0023](0023-in-ide-feedback-path.md) (the path from the IDE to the receiver)
 - Contracts: [cmd/feedback](../../cmd/feedback/main.go), [charts/eduide-feedback-receiver](../../charts/eduide-feedback-receiver/values.yaml)
 
 ## Context and Problem Statement
@@ -35,6 +36,7 @@ Chosen option: "A new binary and its own chart".
 - The app JWT (RS256) is signed with the standard library. The installation token is cached until five minutes before it expires. No new dependency (`golang.org/x/time` is already used by the service).
 - Keys come from a mounted Secret with one key per installation name. The receiver reads the file per request, so a new installation needs no restart.
 - Issue: title `[<installation>] <title>`, description and a table of the technical context, labels `via-ide`, `needs-triage`, `bug` or `enhancement`. Nothing else leaves the receiver, and the answer carries no issue data.
+- Issue text is untrusted: the description goes into a fenced code block whose fence is longer than any backtick run in it, so it cannot ping people, hide HTML comments or fake the context table. Mentions in the title and in the context cells get a zero-width joiner after `@`; `|`, backticks and `<` in the cells are escaped.
 - Logs hold installation, kind, result and the issue number, never text.
 - Answers: 202, 400, 401, 429 (with `Retry-After`), 502.
 

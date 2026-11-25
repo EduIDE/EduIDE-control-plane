@@ -6,7 +6,7 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ### Added
 
-- Feedback receiver: command `feedback` (image `feedback`) and chart `eduide-feedback-receiver`, off by default, installed once on one cluster. `POST /v1/feedback` checks the key of the named installation, rate limits per installation and files a GitHub issue through a GitHub App (`docs/operations/feedback-receiver.md`, ADR 0023)
+- Feedback receiver: command `feedback` (image `feedback`) and chart `eduide-feedback-receiver`, off by default, installed once on one cluster. `POST /v1/feedback` checks the key of the named installation, rate limits per installation and files a GitHub issue through a GitHub App (`docs/operations/feedback-receiver.md`, ADR 0024)
 
 ### Compatibility
 

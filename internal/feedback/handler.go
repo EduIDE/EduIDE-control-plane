@@ -185,12 +185,32 @@ func oneLine(s string) string {
 	}, s))
 }
 
+// defuse puts a zero-width joiner after every "@", so GitHub does not turn user or team names into mentions.
+func defuse(s string) string { return strings.ReplaceAll(s, "@", "@\u200d") }
+
+// cell makes a context value safe for a table row: no pipes, backticks, HTML or mentions.
 func cell(s string) string {
-	s = strings.ReplaceAll(oneLine(s), "|", `\|`)
+	s = defuse(oneLine(s))
+	s = strings.NewReplacer("|", `\|`, "`", "\\`", "<", "&lt;").Replace(s)
 	if s == "" {
 		return "-"
 	}
 	return s
+}
+
+// fence wraps text in a code block whose fence is longer than any backtick run inside, so the text cannot leave it.
+func fence(text string) string {
+	longest, run := 0, 0
+	for _, r := range text {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	f := strings.Repeat("`", max(3, longest+1))
+	return f + "text\n" + strings.TrimRight(text, "\n") + "\n" + f
 }
 
 func buildIssue(r *Request) Issue {
@@ -198,9 +218,9 @@ func buildIssue(r *Request) Issue {
 	if r.Kind == "bug" {
 		label = "bug"
 	}
-	body := fmt.Sprintf("%s\n\n---\n\n| Context | |\n|---|---|\n| installation | %s |\n| host | %s |\n| version | %s |\n| app definition | %s |\n| browser | %s |\n| kind | %s |\n",
-		r.Description, cell(r.Installation), cell(r.Host), cell(r.Context.Version), cell(r.Context.AppDefinition), cell(r.Context.Browser), r.Kind)
-	return Issue{Title: "[" + r.Installation + "] " + oneLine(r.Title), Body: body, Labels: []string{"via-ide", "needs-triage", label}}
+	body := fmt.Sprintf("%s\n\n| Context | |\n|---|---|\n| installation | %s |\n| host | %s |\n| version | %s |\n| app definition | %s |\n| browser | %s |\n| kind | %s |\n",
+		fence(r.Description), cell(r.Installation), cell(r.Host), cell(r.Context.Version), cell(r.Context.AppDefinition), cell(r.Context.Browser), r.Kind)
+	return Issue{Title: "[" + r.Installation + "] " + defuse(oneLine(r.Title)), Body: body, Labels: []string{"via-ide", "needs-triage", label}}
 }
 
 // Check fails fast at startup when the keys directory is missing.

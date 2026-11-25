@@ -1,7 +1,7 @@
 # Feedback receiver
 
 The central receiver files feedback from the IDE of every installation as an issue in one triage repository.
-It runs once, on one cluster, from the chart `eduide-feedback-receiver` (off by default). Design: [ADR 0023](../adr/0023-feedback-receiver.md).
+It runs once, on one cluster, from the chart `eduide-feedback-receiver` (off by default). Design: [ADR 0024](../adr/0024-feedback-receiver.md).
 The per-installation side (service endpoint, `config.feedback` in the `eduide-control-plane` chart) is described with that change.
 
 ## Create the GitHub App (maintainer)
