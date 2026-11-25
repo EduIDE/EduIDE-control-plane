@@ -59,9 +59,9 @@ describe('useTemplates', () => {
         vi.useFakeTimers();
         const get = vi.fn().mockRejectedValue(new Error('network'));
         const api = apiWith(get);
-        const { result } = renderHook(() => useTemplates(api, 'Could not load the environments.'));
+        const { result } = renderHook(() => useTemplates(api, 'Could not load the templates.'));
         await tick(0);
-        expect(result.current.error).toBe('Could not load the environments.');
+        expect(result.current.error).toBe('Could not load the templates.');
     });
 
     it('never has two requests in flight, also when reload is called meanwhile', async () => {

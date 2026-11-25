@@ -13,7 +13,7 @@ Method: parallel run per deployment. Decisions: [ADR 0017](../adr/0017-migration
 
 ## Steps per deployment
 
-1. **Prepare.** Install the CRD chart in the cluster if it is missing ([install.md](install.md)). Create the Keycloak clients, including the confidential gateway client with redirect `https://<instance host>/oauth2/callback`. Add the hosts, certificates and gateway listener (instance and webview host).
+1. **Prepare.** Install the CRD chart in the cluster if it is missing ([install.md](install.md)). Create the Keycloak clients, including the confidential gateway client with redirect `https://<instance host>/oauth2/callback`. Add the hosts, certificates and gateway listener (installation and webview host).
 2. **Install the new stack** in its own namespace or next to the old one, with new hosts. Do not touch the Java stack.
 3. **Check the IDE image.** The image must contain the `eduide-session` extension and the webview host settings. Images without them do not receive launch data.
 4. **Smoke test** with the landing page switched on for test users only: launch warm and cold, open the IDE as owner and as a foreign user (expect 403), and run the NetworkPolicy negative test.

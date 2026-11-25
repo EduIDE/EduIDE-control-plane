@@ -35,7 +35,7 @@ The route status shows `Accepted` and `ResolvedRefs` when the gateway took it.
 | Total route count too high | Hundreds of routes per deployment, several deployments on one gateway | Reduce `maxInstances` and idle targets; measure with the real gateway. **Planned fallback:** one route per pool with header or path matching. |
 | Gateway pods short on memory or CPU | Restarts, OOM | Raise Envoy Gateway resources (cluster admin) |
 | Route not accepted | `status.parents` shows a reason | `parentRef` wrong: check `gateway.name`, `gateway.namespace`, `gateway.sectionName`; hostnames not allowed by the listener |
-| 503 from the gateway while the pod is ready | Backend Service has no endpoint yet | `kubectl -n <ns> get endpoints ide-<instance>`; wait for pod readiness; check the agent `/readyz` |
+| 503 from the gateway while the pod is ready | Target Service has no endpoint yet | `kubectl -n <ns> get endpoints ide-<instance>`; wait for pod readiness; check the agent `/readyz` |
 | 404 on the instance path | Route not yet programmed, or the first path segment is wrong | Compare the URL segment with `status.instance`; wait and retry |
 
 Never edit routes by hand: the operator reconciles them back.

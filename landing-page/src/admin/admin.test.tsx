@@ -282,7 +282,7 @@ describe('layout', () => {
         await screen.findByRole('navigation', { name: 'Admin' });
         const button = screen.getByRole('button', { name: /Account Alex Schmidt/ });
         fireEvent.click(button);
-        screen.getByText('Administrator');
+        screen.getByText('Admin');
         expect(screen.getByRole('link', { name: 'Open landing page' }).getAttribute('href')).toBe('/');
         expect(screen.getByRole('link', { name: 'Sign out' }).getAttribute('href')).toBe('https://kc.example/logout');
         fireEvent.click(screen.getByRole('button', { name: 'DE' }));
@@ -303,13 +303,13 @@ describe('status page', () => {
         within(kpis).getByText('3 starting');
         within(kpis).getByText('below target');
         within(kpis).getByText('29.0');
-        within(kpis).getByText('Failed launches, 1 h');
-        within(kpis).getByText('of 212 launches');
+        within(kpis).getByText('Failed starts, 1 h');
+        within(kpis).getByText('of 212 starts');
         within(kpis).getByText('71');
         within(kpis).getByText('CPU requests, 9 nodes');
         await screen.findByRole('img', { name: '0 / 4 / 14' });
-        screen.getByRole('img', { name: 'Launches, last 12 h' });
-        screen.getByText('Launch time p95 per template');
+        screen.getByRole('img', { name: 'Starts, last 12 h' });
+        screen.getByText('Start time p95 per template');
         await screen.findByText('1208');
         screen.getByText('47');
         screen.getByText(/Retention 14 days after last use/);
@@ -322,9 +322,9 @@ describe('status page', () => {
         await open('/admin', mockApi({ '/admin/status': status({ stats: undefined, warnings: [] }) }));
         await screen.findByText(/need Prometheus are hidden/);
         expect(screen.getByRole('link', { name: 'Open Grafana' }).getAttribute('href')).toBe('https://grafana.example.org/');
-        expect(screen.queryByText('Launch time p95 per template')).toBeNull();
-        expect(screen.queryByRole('img', { name: 'Launches, last 12 h' })).toBeNull();
-        expect(screen.queryByText('Failed launches, 1 h')).toBeNull();
+        expect(screen.queryByText('Start time p95 per template')).toBeNull();
+        expect(screen.queryByRole('img', { name: 'Starts, last 12 h' })).toBeNull();
+        expect(screen.queryByText('Failed starts, 1 h')).toBeNull();
         expect(screen.queryByRole('alert')).toBeNull();
         screen.getByText('Running sessions');
     });
@@ -463,7 +463,7 @@ describe('templates and limits pages', () => {
         await screen.findByText('Java 17');
         expect(screen.getAllByText('EduIDE 2026.11.2')).toHaveLength(2);
         screen.getByText('Maven');
-        expect(screen.getAllByText(/Temporary workspace: 0.4 s/).length).toBeGreaterThan(0);
+        expect(screen.getAllByText(/Temporary session: 0.4 s/).length).toBeGreaterThan(0);
         expect(screen.getAllByText('inactive 60 min, warning after 50 min, max 24 h').length).toBeGreaterThan(0);
         expect(screen.getAllByText('GIT_URI, TEMPLATE (required)').length).toBeGreaterThan(0);
         expect(screen.getByRole('link', { name: 'java-17' }).getAttribute('href')).toBe('/admin/pools');
@@ -473,7 +473,7 @@ describe('templates and limits pages', () => {
 
     it('shows the effective config in groups', async () => {
         await open('/admin/limits');
-        await screen.findByText('Sessions and launches');
+        await screen.findByText('Sessions and starts');
         screen.getByText('10 per user and minute');
         screen.getByText('14 days');
         screen.getByText('2.0 GiB');

@@ -83,14 +83,14 @@ describe('templates after an outage', () => {
             });
             screen.getByRole('alert');
             screen.getByText('Service Unavailable');
-            expect(screen.queryByText('Loading your environments...')).toBeNull();
+            expect(screen.queryByText('Loading your sessions...')).toBeNull();
             expect(screen.queryByRole('button', { name: 'Start Java 17' })).toBeNull();
             await act(async () => {
                 await vi.advanceTimersByTimeAsync(1000);
             });
             screen.getByRole('button', { name: 'Start Java 17' });
             expect(screen.queryByRole('alert')).toBeNull();
-            screen.getByText('Loading your environments...');
+            screen.getByText('Loading your sessions...');
             expect(get.mock.calls.filter(c => c[0] === '/templates')).toHaveLength(2);
         } finally {
             vi.useRealTimers();

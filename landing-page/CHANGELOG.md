@@ -26,6 +26,7 @@ The section of a version becomes the notes of its GitHub Release.
 - The footer is the same on every page (GitHub, bug report, imprint, privacy) and sits at the bottom of the viewport; `footerLinks.github` is new
 - The browser tab title comes from `config.title` (index.html says "EduIDE" until then)
 - Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
+- Texts follow the EduIDE glossary: "environment" is now "session" or "template", "Temporary workspace" is "Temporary session", "Project templates" are "Starter projects" (DE "Startprojekte"), and the admin panel says "admin" instead of "operator"
 
 ## [1.5.1] - 2026-11-18
 

@@ -17,7 +17,7 @@ describe('logoFor', () => {
         expect(logoFor('rust.nightly')).toMatch(/rust-logo/);
     });
 
-    it('resolves project templates by id', () => {
+    it('resolves starter projects by id', () => {
         for (const id of ['maven', 'gradle', 'make', 'bazel']) {
             expect(logoFor(id)).toMatch(new RegExp(`${id}-logo`));
         }

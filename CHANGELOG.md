@@ -4,6 +4,10 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 
 ## [Unreleased]
 
+### Changed
+
+- Terms follow the EduIDE glossary: landing page texts say session and template instead of environment, "Temporary session" instead of "Temporary workspace", "Starter projects" instead of "Project templates", admin instead of operator for people; OpenAPI descriptions, docs and AGENTS.md use the same words (`<instance host>` replaces `<instance host>`). No identifier, API, CRD or metric changes.
+
 ## [0.2.5] - 2026-11-25
 
 ### Fixed

@@ -15,7 +15,7 @@ That is enough to measure what grows with the object count:
 - Time from creating an `IDESession` to phase `Ready`.
 
 What it does not show: the agent claim and the activity polling (the fake pod IPs are not reachable), the start time of a real IDE, and the gateway behavior with many routes.
-The gateway is measured separately with a real Envoy (ADR 0015), because kwok routes do not reach a backend.
+The gateway is measured separately with a real Envoy (ADR 0015), because kwok routes do not reach an upstream service.
 
 ## Scenarios
 

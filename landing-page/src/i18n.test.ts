@@ -13,7 +13,7 @@ describe('i18n', () => {
     });
     it('fills placeholders', () => {
         expect(translate('en', 'greeting.back', { name: 'Alex' })).toBe('Welcome back, Alex');
-        expect(translate('de', 'limit.title', { n: 3 })).toBe('Du hast bereits 3 laufende Umgebungen');
+        expect(translate('de', 'limit.title', { n: 3 })).toBe('Du hast bereits 3 laufende Sessions');
         expect(hasMessage('error.capacity-exhausted')).toBe(true);
         expect(hasMessage('error.nope')).toBe(false);
     });
@@ -32,10 +32,10 @@ describe('makeText', () => {
 describe('German wording', () => {
     it('says Workspace, never Arbeitsbereich, and does not say restart for starting something new', () => {
         expect(translate('de', 'persistence.saved')).toBe('Gespeicherter Workspace');
-        expect(translate('de', 'persistence.temporary')).toBe('Temporärer Workspace');
+        expect(translate('de', 'persistence.temporary')).toBe('Temporäre Session');
         expect(translate('de', 'row.saved')).toBe('gespeicherter Workspace');
-        expect(translate('de', 'row.temporary')).toBe('temporärer Workspace');
-        expect(translate('de', 'section.new')).toBe('Neue Umgebung starten');
-        expect(translate('de', 'limit.title', { n: 3 })).toBe('Du hast bereits 3 laufende Umgebungen');
+        expect(translate('de', 'row.temporary')).toBe('temporäre Session');
+        expect(translate('de', 'section.new')).toBe('Neue Session starten');
+        expect(translate('de', 'limit.title', { n: 3 })).toBe('Du hast bereits 3 laufende Sessions');
     });
 });

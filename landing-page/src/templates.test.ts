@@ -48,7 +48,7 @@ describe('buildLaunchInfo', () => {
 
 describe('templateStartLine', () => {
     const noEstimate: Template = { ...template, startEstimate: undefined, defaultPersistence: 'none' };
-    it('reads a warm template as instant for temporary workspaces even without an estimate', () => {
+    it('reads a warm template as instant for temporary sessions even without an estimate', () => {
         expect(templateStartLine({ ...noEstimate, warm: true }, 'none')).toEqual({ kind: 'instant' });
         expect(templateStartLine(noEstimate, 'none')).toBeUndefined();
         expect(templateStartLine({ ...noEstimate, warm: true }, 'volume')).toBeUndefined();

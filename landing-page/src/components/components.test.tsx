@@ -165,8 +165,8 @@ describe('TemplateTile', () => {
         const onInfo = vi.fn();
         const { rerender } = render(wrap(<TemplateTile template={java} onPick={onPick} onInfo={onInfo} />));
         screen.getByText('Ready in about 25 s');
-        const tag = screen.getByLabelText(/Saved workspace\. Your files are kept after the environment stops/);
-        expect(tag.getAttribute('data-tip')).toBe('Your files are kept after the environment stops, so you can continue later.');
+        const tag = screen.getByLabelText(/Saved workspace\. Your files are kept after the session stops/);
+        expect(tag.getAttribute('data-tip')).toBe('Your files are kept after the session stops, so you can continue later.');
         fireEvent.click(screen.getByRole('button', { name: 'What Java 17 includes' }));
         expect(onInfo).toHaveBeenCalledWith(java);
         expect(onPick).not.toHaveBeenCalled();
@@ -175,7 +175,7 @@ describe('TemplateTile', () => {
 
         rerender(wrap(<TemplateTile template={python} onPick={onPick} onInfo={onInfo} />));
         screen.getByText('Ready instantly');
-        screen.getByLabelText(/Temporary workspace\. Your files are deleted when the environment stops\./);
+        screen.getByLabelText(/Temporary session\. Your files are deleted when the session stops\./);
         expect(screen.queryByRole('button', { name: /includes/ })).toBeNull();
     });
 
@@ -212,21 +212,21 @@ describe('TemplateTile', () => {
 });
 
 describe('template dialogs', () => {
-    it('lists include groups as name version chips, project templates and the image version', () => {
+    it('lists include groups as name version chips, starter projects and the image version', () => {
         const onStart = vi.fn();
         render(wrap(<InfoDialog template={java} onClose={vi.fn()} onStart={onStart} />));
         screen.getByText('OpenJDK 17');
         screen.getByText('git');
-        screen.getByText('Project templates');
+        screen.getByText('Starter projects');
         screen.getByText('EduIDE 2026.11.2');
         fireEvent.click(screen.getByRole('button', { name: 'Start' }));
         expect(onStart).toHaveBeenCalledWith(java);
     });
 
-    it('preselects the first project template, offers an empty project and starts with the choice', () => {
+    it('preselects the first starter project, offers an empty project and starts with the choice', () => {
         const onStart = vi.fn();
         render(wrap(<PickDialog template={java} onClose={vi.fn()} onInfo={vi.fn()} onStart={onStart} />));
-        screen.getByRole('dialog', { name: 'New Java 17 environment' });
+        screen.getByRole('dialog', { name: 'New Java 17 session' });
         expect((screen.getByRole('radio', { name: /Maven/ }) as HTMLInputElement).checked).toBe(true);
         fireEvent.click(screen.getByRole('radio', { name: /Gradle/ }));
         fireEvent.click(screen.getByRole('button', { name: 'Start' }));
@@ -237,7 +237,7 @@ describe('template dialogs', () => {
         screen.getByText('Saved workspace.');
     });
 
-    it('shows bundled logos for known project templates and the folder for the empty project', () => {
+    it('shows bundled logos for known starter projects and the folder for the empty project', () => {
         const withIds = {
             ...java,
             variants: [
@@ -293,7 +293,7 @@ describe('EnvironmentRows', () => {
     it('describes the lifecycle and marks files in danger red', () => {
         render(wrap(<EnvironmentRows rows={[running, saved]} api={api(vi.fn())} onStart={vi.fn()} now={now} />));
         const first = screen.getByText('Pointer exercise').closest('.row') as HTMLElement;
-        expect(within(first).getByText(/^C · temporary workspace · started 12 minutes ago$/)).toBeTruthy();
+        expect(within(first).getByText(/^C · temporary session · started 12 minutes ago$/)).toBeTruthy();
         const life = within(first).getByText(/files are deleted then/);
         expect(life.textContent).toMatch(/^Stops at \d\d:\d\d if inactive, files are deleted then$/);
         expect(life.className).toContain('danger');
@@ -354,13 +354,13 @@ describe('Home', () => {
     it('greets a new user, shows the empty hint and starts a template without variants directly', async () => {
         const onLaunch = vi.fn();
         render(wrap(<Home api={overview([])} templates={[python]} firstName='Alex' onLaunch={onLaunch} onStartRow={vi.fn()} />));
-        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        await screen.findByText('Sessions you start show up here, so you can open them again later.');
         screen.getByRole('heading', { level: 1, name: 'Welcome, Alex' });
         fireEvent.click(screen.getByRole('button', { name: 'Start Python' }));
         expect(onLaunch).toHaveBeenCalledWith({ template: 'python' }, python);
     });
 
-    it('greets a returning user, lists the environments on top and starts a variant through the picker', async () => {
+    it('greets a returning user, lists the sessions on top and starts a variant through the picker', async () => {
         const onLaunch = vi.fn();
         const items: Overview['items'] = [
             { kind: 'session', title: 'Linked lists', template: 'java-17', running: true, session: session() }
@@ -369,7 +369,7 @@ describe('Home', () => {
         await screen.findByText('Linked lists');
         screen.getByRole('heading', { level: 1, name: 'Welcome back, Alex' });
         const sections = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent);
-        expect(sections[0]).toContain('Your environments');
+        expect(sections[0]).toContain('Your sessions');
         fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
         fireEvent.click(screen.getByRole('radio', { name: /Gradle/ }));
         fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Start' }));
@@ -377,11 +377,11 @@ describe('Home', () => {
         expect(screen.queryByRole('dialog')).toBeNull();
     });
 
-    it('starts directly when the template does not accept TEMPLATE, even with project templates', async () => {
+    it('starts directly when the template does not accept TEMPLATE, even with starter projects', async () => {
         const onLaunch = vi.fn();
         const noKey = { ...java, injectableKeys: [] };
         render(wrap(<Home api={overview([])} templates={[noKey]} onLaunch={onLaunch} onStartRow={vi.fn()} />));
-        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        await screen.findByText('Sessions you start show up here, so you can open them again later.');
         fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
         expect(screen.queryByRole('dialog')).toBeNull();
         expect(onLaunch).toHaveBeenCalledWith({ template: 'java-17' }, noKey);
@@ -423,22 +423,22 @@ describe('Home', () => {
     it('offers only listed templates as tiles and hides the section when none is listed', async () => {
         const hidden = { ...python, name: 'hidden', displayName: 'Hidden', listed: false };
         const { unmount } = render(wrap(<Home api={overview([])} templates={[java, hidden]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
-        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        await screen.findByText('Sessions you start show up here, so you can open them again later.');
         screen.getByRole('button', { name: 'Start Java 17' });
         expect(screen.queryByRole('button', { name: 'Start Hidden' })).toBeNull();
         unmount();
         render(wrap(<Home api={overview([])} templates={[hidden]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
-        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        await screen.findByText('Sessions you start show up here, so you can open them again later.');
         expect(screen.queryByRole('heading', { name: 'Start new' })).toBeNull();
     });
 
     it('opens the info dialog from the picker', async () => {
         render(wrap(<Home api={overview([])} templates={[java]} onLaunch={vi.fn()} onStartRow={vi.fn()} />));
-        await screen.findByText('Environments you start show up here, so you can open them again later.');
+        await screen.findByText('Sessions you start show up here, so you can open them again later.');
         screen.getByRole('heading', { level: 1, name: 'Welcome' });
         fireEvent.click(screen.getByRole('button', { name: 'Start Java 17' }));
         fireEvent.click(screen.getByRole('button', { name: "What's included" }));
-        screen.getByRole('dialog', { name: 'What this environment includes' });
+        screen.getByRole('dialog', { name: 'What this template includes' });
     });
 });
 
@@ -460,14 +460,14 @@ describe('Launch', () => {
                 />
             )
         );
-        await screen.findByText('Starting your environment');
+        await screen.findByText('Starting your session');
         screen.getByText('Request accepted');
         screen.getByText('Opening the IDE');
         screen.getByText('Usually ready in about 5 seconds.');
         expect(document.body.textContent).not.toMatch(/close/i);
     });
 
-    it('lists the running environments at the session limit with the actual count and a Back button, without the code', async () => {
+    it('lists the running sessions at the session limit with the actual count and a Back button, without the code', async () => {
         const onBack = vi.fn();
         const sessions = [session({ name: 'a', display: { title: 'One' } }), session({ name: 'b', display: { title: 'Two' } })];
         render(
@@ -482,7 +482,7 @@ describe('Launch', () => {
                 />
             )
         );
-        await screen.findByText('You already have 2 environments running');
+        await screen.findByText('You already have 2 sessions running');
         screen.getByText('Delete one to start a new one, or continue in one of these.');
         screen.getByText('One');
         screen.getByText('Two');
@@ -502,12 +502,12 @@ describe('Launch', () => {
         const del = vi.fn(async () => ({ response: { ok: true, status: 204 } }));
         const api = { launchDeps: { launch, watch: () => new Promise<void>(() => undefined) }, client: { DELETE: del } } as unknown as Api;
         render(wrap(<Launch api={api} request={{ template: 'c' }} info={info} templates={[]} onBack={vi.fn()} onStartRow={vi.fn()} />));
-        await screen.findByText('You already have 1 environment running');
+        await screen.findByText('You already have 1 session running');
         fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
         fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Delete' }));
-        await screen.findByText('Starting your environment');
+        await screen.findByText('Starting your session');
         expect(launch).toHaveBeenCalledTimes(2);
-        expect(document.body.textContent).not.toContain('0 environments');
+        expect(document.body.textContent).not.toContain('0 sessions');
     });
 
     it('says Sending request until the session exists, then Request accepted', async () => {
@@ -611,7 +611,7 @@ describe('Launch with a refused repository host', () => {
             )
         );
         await screen.findByText(
-            'The link contains a value this environment does not accept. (invalid value for key TEMPLATE: not a variant of this template)'
+            'The link contains a value this template does not accept. (invalid value for key TEMPLATE: not a variant of this template)'
         );
     });
 });

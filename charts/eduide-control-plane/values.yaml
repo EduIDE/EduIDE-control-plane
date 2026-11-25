@@ -69,7 +69,7 @@ oidc:
   # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID
   # under the key "client-secret" (the key the SecurityPolicy reads).
   clientSecretName: ""
-  # Optional: reach the identity provider through these backends instead of directly, for clusters
+  # Optional: reach the identity provider through these Gateway API backendRefs instead of directly, for clusters
   # whose Envoy pods have no direct egress. Pair it with a BackendTLSPolicy for the issuer host.
   providerBackendRefs: []
   # Optional: set the endpoints instead of letting Envoy Gateway discover them from the issuer.

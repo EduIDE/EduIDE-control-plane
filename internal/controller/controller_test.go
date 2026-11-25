@@ -173,7 +173,7 @@ func TestColdStartCreatesInstance(t *testing.T) {
 		t.Errorf("ide securityContext: %+v", ide)
 	}
 	if b := rule.BackendRefs[0]; string(b.Name) != pod.Name || *b.Port != 8080 {
-		t.Errorf("backend: %+v", b)
+		t.Errorf("backendRef: %+v", b)
 	}
 
 	// The pod becomes ready: one claim push with the data, then Ready.
