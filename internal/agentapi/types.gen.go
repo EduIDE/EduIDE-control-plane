@@ -42,7 +42,10 @@ type ClaimRequest struct {
 type LocalSession struct {
 	Claimed bool               `json:"claimed"`
 	Data    *map[string]string `json:"data,omitempty"`
-	Notices *[]Notice          `json:"notices,omitempty"`
+
+	// Feedback True when the operator turned feedback on; the extension shows the feedback dialog then.
+	Feedback *bool     `json:"feedback,omitempty"`
+	Notices  *[]Notice `json:"notices,omitempty"`
 
 	// Version Increases on every change (claim, notice).
 	Version int `json:"version"`
@@ -85,6 +88,9 @@ type Status struct {
 	Session *string `json:"session,omitempty"`
 }
 
+// SendFeedbackJSONBody defines parameters for SendFeedback.
+type SendFeedbackJSONBody map[string]interface{}
+
 // GetSessionParams defines parameters for GetSession.
 type GetSessionParams struct {
 	After   *int `form:"after,omitempty" json:"after,omitempty"`
@@ -93,6 +99,9 @@ type GetSessionParams struct {
 
 // ClaimJSONRequestBody defines body for Claim for application/json ContentType.
 type ClaimJSONRequestBody = ClaimRequest
+
+// SendFeedbackJSONRequestBody defines body for SendFeedback for application/json ContentType.
+type SendFeedbackJSONRequestBody SendFeedbackJSONBody
 
 // ReportMilestoneJSONRequestBody defines body for ReportMilestone for application/json ContentType.
 type ReportMilestoneJSONRequestBody = Milestone

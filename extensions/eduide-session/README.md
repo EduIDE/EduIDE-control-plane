@@ -35,6 +35,13 @@ The agent keeps the first report per name, so each name is sent at most once, wi
 
 `clone-done` is not reported: Scorpio exposes no hook for it.
 
+## Feedback
+
+Only when the operator turned feedback on (ADR 0023): the agent then sets `feedback: true` in `GET /v1/session`.
+The extension sets the context key `eduide.feedbackEnabled` to that value, on every change, so the IDE shows its feedback dialog only then.
+The command `eduide.feedback.send(payload)` posts `{kind: "bug" | "feature", title, description, context: {version, appDefinition, browser}}` to the agent (`POST /v1/feedback`) and resolves `{ok, status, retryAfter?}`.
+It never throws for HTTP errors; `status` 0 means the agent was not reachable, `retryAfter` (seconds) comes from a 429.
+
 ## Migration
 
 Remove `data-bridge` and the `monitor-theia` extension from the IDE image and install the `.vsix` instead.

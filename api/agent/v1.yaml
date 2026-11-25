@@ -100,6 +100,26 @@ paths:
       description: Sent by the extension on real user input, at most once per minute.
       responses:
         "204": {description: Recorded.}
+  /v1/feedback:
+    post:
+      operationId: sendFeedback
+      tags: [local]
+      description: |
+        Sent by the extension when the operator turned feedback on (`LocalSession.feedback`). The agent forwards the JSON body
+        unchanged to the service (`AGENT_FEEDBACK_URL`) with the instance token and answers with the status of the service,
+        including `Retry-After`. Body limit 16 KiB, timeout 10 s. Without `AGENT_FEEDBACK_URL` the route answers 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        "202": {description: Accepted by the service.}
+        "400": {description: Rejected by the service.}
+        "404": {description: Feedback is off.}
+        "413": {description: Body larger than 16 KiB.}
+        "429": {description: Rate limit of the service; `Retry-After` is passed on.}
+        "502": {description: Service or receiver not reachable.}
   /v1/milestones:
     post:
       operationId: reportMilestone
@@ -168,6 +188,7 @@ components:
       properties:
         version: {type: integer, description: "Increases on every change (claim, notice)."}
         claimed: {type: boolean}
+        feedback: {type: boolean, description: "True when the operator turned feedback on; the extension shows the feedback dialog then."}
         data:
           type: object
           additionalProperties: {type: string}

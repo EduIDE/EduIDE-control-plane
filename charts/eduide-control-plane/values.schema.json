@@ -17,6 +17,14 @@
             "webview": {"type": "string"}
           }
         },
+        "feedback": {
+          "type": "object",
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "receiverURL": {"type": "string", "pattern": "^(https://.+)?$"},
+            "keySecret": {"type": "object", "properties": {"name": {"type": "string"}, "key": {"type": "string"}}}
+          }
+        },
         "gateway": {
           "type": "object",
           "required": ["name"],

@@ -67,6 +67,11 @@ type Server struct {
 	quota   *StorageQuota
 	quotaAt time.Time
 
+	// feedbackKey is the installation key for the receiver (FEEDBACK_KEY); feedbackLimits holds the send times per owner.
+	feedbackKey    string
+	feedbackClient *http.Client
+	feedbackLimits map[string][]time.Time
+
 	// public status (U17): the cached body and the state of the sign-in check. pubMu lets one request rebuild an
 	// expired body while the others wait for it instead of rebuilding it, too.
 	pubMu   sync.Mutex
@@ -77,7 +82,7 @@ type Server struct {
 
 // NewServer reads through r (the cache) and writes through w. cfg must come from config.Parse.
 func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, salt []byte) *Server {
-	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now,
+	s := &Server{cfg: cfg, r: r, w: w, hub: hub, ping: 15 * time.Second, stopWait: 30 * time.Second, stopPoll: 200 * time.Millisecond, salt: salt, limiters: map[string]*rate.Limiter{}, adminLimiters: map[string]*rate.Limiter{}, ipLimiters: map[string]*rate.Limiter{}, now: time.Now, feedbackLimits: map[string][]time.Time{}, feedbackClient: newFeedbackClient(),
 		unauthorizedLog: logx.NewLimiter(20), streams: map[string]int{}, maxStreams: 16, writeWait: 30 * time.Second, bodyWait: 10 * time.Second}
 	if cfg.Overview.TitleStripPattern != "" {
 		s.titleStrip = regexp.MustCompile(cfg.Overview.TitleStripPattern) // config.Parse validated it
@@ -93,7 +98,7 @@ func NewServer(cfg *config.Config, r client.Reader, w client.Client, hub *Hub, s
 func (s *Server) Handler(v auth.Verifier) http.Handler {
 	return secureAndProblemFallback(hstsValue(s.cfg), HandlerWithOptions(s, StdHTTPServerOptions{
 		BaseURL:     basePath,
-		Middlewares: []MiddlewareFunc{s.adminAuthz, publicWithoutToken(auth.Middleware(userRecorder{v})), s.adminGate, s.accessLog, metricsMiddleware}, // last is outermost
+		Middlewares: []MiddlewareFunc{s.adminAuthz, publicWithoutToken(auth.Middleware(userRecorder{v})), s.feedbackGate, s.adminGate, s.accessLog, metricsMiddleware}, // last is outermost
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			writeProblem(w, problem(CodeInvalidInput, "invalid request parameter"))
 		},

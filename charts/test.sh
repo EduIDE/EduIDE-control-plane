@@ -134,6 +134,16 @@ for v in "$cp"/ci/*-values.yaml; do
   grep -q 'scalerInterval: 30s' <<<"$cfg" || fail "scalerInterval is not rendered with the pool scaler ($v)"
   ok "admin API rules and config ($v)"
 
+  # In-IDE feedback (ADR 0023): off by default; on needs receiver and key Secret; the key reaches only the service pod.
+  grep -q 'FEEDBACK_KEY' <<<"$out" && fail "FEEDBACK_KEY rendered with feedback off ($v)"
+  grep -q 'enabled: false' <<<"$(echo "$out" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]' | yq '.feedback')" || fail "feedback is not off by default ($v)"
+  if helm template r "$cp" -f "$v" -n ns --set config.feedback.enabled=true >/dev/null 2>&1; then fail "feedback enabled without receiverURL and keySecret renders ($v)"; fi
+  if helm template r "$cp" -f "$v" -n ns --set config.feedback.enabled=true --set config.feedback.receiverURL=https://f.example.org/v1/feedback >/dev/null 2>&1; then fail "feedback enabled without keySecret renders ($v)"; fi
+  fbout=$(helm template r "$cp" -f "$v" -n ns --set config.feedback.enabled=true --set config.feedback.receiverURL=https://f.example.org/v1/feedback --set config.feedback.keySecret.name=fb-key)
+  [ "$(echo "$fbout" | yq 'select(.kind == "Deployment" and .metadata.name == "r-eduide-control-plane-service") | .spec.template.spec.containers[0].env[] | select(.name == "FEEDBACK_KEY") | .valueFrom.secretKeyRef.name')" = "fb-key" ] || fail "service pod lacks FEEDBACK_KEY ($v)"
+  ! echo "$fbout" | yq 'select(.kind == "ConfigMap" and .metadata.name == "r-eduide-control-plane-config") | .data["config.yaml"]' | grep -q 'keySecret\|fb-key' || fail "the key Secret is named in the ConfigMap ($v)"
+  ok "feedback switch ($v)"
+
   # The control plane stays below 150 MiB of memory requests (pool scaler excluded, it is optional).
   total=$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment" and .metadata.name != "r-eduide-control-plane-pool-scaler") | .spec.replicas * (.spec.template.spec.containers[0].resources.requests.memory | sub("Mi"; "") | to_number)' | paste -sd+ - | bc)
   [ "$total" -lt 150 ] || fail "memory requests are ${total}Mi, limit is 150Mi"

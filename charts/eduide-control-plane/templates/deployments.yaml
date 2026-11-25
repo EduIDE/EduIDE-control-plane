@@ -65,6 +65,13 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        {{- if and (eq $c.name "service") $.Values.config.feedback.enabled }}
+        - name: FEEDBACK_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $.Values.config.feedback.keySecret.name }}
+              key: {{ $.Values.config.feedback.keySecret.key | default "key" }}
+        {{- end }}
         ports:
         {{- range $c.ports }}
         - {name: {{ .name }}, containerPort: {{ .port }}}

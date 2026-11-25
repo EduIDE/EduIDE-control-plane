@@ -43,6 +43,16 @@ type Config struct {
 	Admin Admin `json:"admin,omitempty"`
 	// Security tunes response headers of the service.
 	Security Security `json:"security,omitempty"`
+	// Feedback turns the in-IDE feedback path on (ADR 0023). Off by default.
+	Feedback Feedback `json:"feedback,omitempty"`
+}
+
+// Feedback is the per-installation switch of the feedback path. The installation key is not part of the config:
+// the chart passes it to the service pod only, as FEEDBACK_KEY.
+type Feedback struct {
+	Enabled bool `json:"enabled,omitempty"`
+	// ReceiverURL is the endpoint of the central feedback receiver, required when enabled.
+	ReceiverURL string `json:"receiverURL,omitempty"`
 }
 
 // Security tunes response headers of the service.
@@ -285,6 +295,10 @@ func (c *Config) validate() error {
 	}
 	if _, err := regexp.Compile(c.Overview.TitleStripPattern); err != nil {
 		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))
+	}
+	// The installation key travels in the Authorization header, so only TLS is acceptable.
+	if u, err := url.Parse(c.Feedback.ReceiverURL); c.Feedback.Enabled && (err != nil || u.Scheme != "https" || !httpURL(c.Feedback.ReceiverURL)) {
+		errs = append(errs, errors.New("config: feedback.receiverURL must be an https URL when feedback.enabled is true"))
 	}
 	errs = append(errs, c.validateAdmin()...)
 	return errors.Join(errs...)

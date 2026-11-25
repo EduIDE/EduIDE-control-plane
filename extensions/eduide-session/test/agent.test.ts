@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { AgentClient, type LocalSession, type Notice } from "../src/agent";
+import { AgentClient, type FeedbackPayload, type LocalSession, type Notice } from "../src/agent";
 
 function fakeAgent() {
   let session: LocalSession = { version: 0, claimed: false };
@@ -11,7 +11,18 @@ function fakeAgent() {
   const heartbeats: number[] = [];
   const milestones: unknown[] = [];
   const queries: string[] = [];
+  const feedback: unknown[] = [];
+  let feedbackReply: { status: number; headers?: Record<string, string> } = { status: 202 };
   const server = http.createServer((req, res) => {
+    if (req.method === "POST" && req.url === "/v1/feedback") {
+      let body = "";
+      req.on("data", (d) => (body += d));
+      req.on("end", () => {
+        feedback.push(JSON.parse(body));
+        res.writeHead(feedbackReply.status, feedbackReply.headers).end();
+      });
+      return;
+    }
     if (req.method === "POST" && req.url === "/v1/milestones") {
       let body = "";
       req.on("data", (d) => (body += d));
@@ -50,6 +61,8 @@ function fakeAgent() {
     server,
     heartbeats,
     milestones,
+    feedback,
+    replyFeedback: (status: number, headers?: Record<string, string>) => (feedbackReply = { status, headers }),
     queries,
     fail: (n: number) => (failNext = n),
     hang: (n: number) => (hangNext = n),
@@ -77,7 +90,7 @@ async function until(cond: () => boolean, ms = 3000) {
   }
 }
 
-async function setup(opts: { pollTimeoutSec?: number; now?: () => number } = {}) {
+async function setup(opts: { pollTimeoutSec?: number; now?: () => number; onFeedbackEnabled?: (on: boolean) => void } = {}) {
   const agent = fakeAgent();
   const notices: Notice[] = [];
   const c = new AgentClient({
@@ -210,4 +223,49 @@ test("first-input is sent with the first heartbeat only", async () => {
   assert.equal(agent.milestones.length, 1);
   assert.equal((agent.milestones[0] as { name: string }).name, "first-input");
   await done();
+});
+
+const payload: FeedbackPayload = {
+  kind: "bug",
+  title: "Crash",
+  description: "It broke",
+  context: { version: "1.0", appDefinition: "java", browser: "Firefox" },
+};
+
+test("feedback switch follows the session and is reported on change only", async () => {
+  const seen: boolean[] = [];
+  const { agent, c, done } = await setup({ onFeedbackEnabled: (on) => seen.push(on) });
+  try {
+    agent.set({ version: 1, claimed: true });
+    await until(() => seen.length === 1);
+    agent.set({ version: 2, claimed: true, feedback: true });
+    await until(() => seen.length === 2);
+    agent.set({ version: 3, claimed: true, feedback: true });
+    await until(() => c.getEnvState().injected);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.deepEqual(seen, [false, true]);
+  } finally {
+    await done();
+  }
+});
+
+test("sendFeedback posts the payload and reports the status", async () => {
+  const { agent, c, done } = await setup();
+  assert.deepEqual(await c.sendFeedback(payload), { ok: true, status: 202 });
+  assert.deepEqual(agent.feedback, [payload]);
+  await done();
+});
+
+test("sendFeedback turns HTTP errors into results with Retry-After", async () => {
+  const { agent, c, done } = await setup();
+  agent.replyFeedback(429, { "retry-after": "120" });
+  assert.deepEqual(await c.sendFeedback(payload), { ok: false, status: 429, retryAfter: 120 });
+  agent.replyFeedback(404);
+  assert.deepEqual(await c.sendFeedback(payload), { ok: false, status: 404 });
+  await done();
+});
+
+test("sendFeedback does not throw when the agent is down", async () => {
+  const c = new AgentClient({ baseUrl: "http://127.0.0.1:1", onNotice: () => {} });
+  assert.deepEqual(await c.sendFeedback(payload), { ok: false, status: 0 });
 });

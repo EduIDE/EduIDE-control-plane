@@ -122,6 +122,10 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 	}
+	if d.cfg.Feedback.Enabled {
+		// The agent posts feedback to the public service host; session pods may not reach private ranges.
+		agent.Env = append(agent.Env, corev1.EnvVar{Name: "AGENT_FEEDBACK_URL", Value: "https://" + d.cfg.Hosts.Service + "/api/v1/feedback"})
+	}
 	mode := int32(0o444)
 	tok := corev1.Volume{Name: "token", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 		SecretName: tokenName(instance), DefaultMode: &mode,

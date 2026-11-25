@@ -27,6 +27,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Feedback from the IDE of a running session (ADR 0023). Called by the agent of the session pod, not by browsers.
+         *     Answers 404 before any other check while `config.feedback.enabled` is false. The caller names its instance in
+         *     `X-EduIDE-Instance` and sends the instance token as bearer; the instance must belong to a claimed session.
+         *     The owner of that session is the rate limit key (5 per hour). Tokens, email addresses and matriculation numbers
+         *     are redacted from `title` and `description`. The service forwards the feedback without any user identity to the
+         *     central receiver. Errors: 400 `invalid-input`, 401 `unauthorized`, 404 `not-found`, 429 `rate-limited` with
+         *     `Retry-After`, 502 `upstream-unavailable`.
+         */
+        post: operations["sendFeedback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/templates": {
         parameters: {
             query?: never;
@@ -392,7 +417,7 @@ export interface components {
              * @description Stable machine-readable code. New codes may be added within v1.
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "workspace-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
+            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "workspace-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "upstream-unavailable" | "internal";
             /** @description Running sessions of the user, only with `session-limit-reached`. */
             sessions?: components["schemas"]["Session"][];
         };
@@ -454,6 +479,17 @@ export interface components {
             strategy: "warm" | "cold";
             /** @description Number of observed starts the median is based on. */
             samples: number;
+        };
+        FeedbackRequest: {
+            /** @enum {string} */
+            kind: "bug" | "feature";
+            title: string;
+            description: string;
+            context: {
+                version: string;
+                appDefinition: string;
+                browser: string;
+            };
         };
         LaunchRequest: {
             template: string;
@@ -953,6 +989,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PublicStatus"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    sendFeedback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Accepted by the receiver. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Rate limit of the user reached. */
+            429: {
+                headers: {
+                    "Retry-After"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];
