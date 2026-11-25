@@ -4,8 +4,8 @@ One tag `vX.Y.Z` versions everything ([ADR 0018](../adr/0018-charts-oci.md)):
 
 | Artifact | Where |
 |---|---|
-| Images `operator`, `service`, `authz`, `agent`, `pool-scaler`, `landing-page` | `ghcr.io/eduide/eduide-control-plane/<name>:X.Y.Z` |
-| Charts `eduide-control-plane-crds`, `eduide-control-plane`, `eduide-landing-page` | `oci://ghcr.io/eduide/eduide-control-plane/charts` |
+| Images `operator`, `service`, `authz`, `agent`, `pool-scaler`, `landing-page`, `feedback` | `ghcr.io/eduide/eduide-control-plane/<name>:X.Y.Z` |
+| Charts `eduide-control-plane-crds`, `eduide-control-plane`, `eduide-landing-page`, `eduide-feedback-receiver` | `oci://ghcr.io/eduide/eduide-control-plane/charts` |
 | OpenAPI spec | `api/openapi/v1.yaml` (semantic spec version) |
 | TypeScript client `@eduide/control-plane-client` | `clients/typescript` (no workflow publishes it to npm yet) |
 

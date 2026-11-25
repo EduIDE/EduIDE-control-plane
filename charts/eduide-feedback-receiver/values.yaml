@@ -1,0 +1,62 @@
+# Safety switch: nothing is rendered until this is true.
+enabled: false
+image:
+  repository: ghcr.io/eduide/eduide-control-plane/feedback
+  # Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+replicas: 1
+# debug, info or warn.
+logLevel: info
+
+# required when enabled: hostname of the receiver. Installations post to https://<host>/v1/feedback.
+host: ""
+# parentRef of the HTTPRoute
+gateway:
+  name: ""
+  namespace: ""
+  sectionName: ""
+  port: 443
+
+# required when enabled: name of an existing Secret with one key per installation.
+# The key name is the installation name (config.deployment of that installation), the value its feedback key.
+installationKeysSecret: ""
+
+# required when enabled
+github:
+  appID: ""
+  installationID: ""
+  # Triage repository, owner/name.
+  repository: ""
+  # Existing Secret with the PEM private key of the GitHub App.
+  privateKeySecret: {name: "", key: private-key.pem}
+  apiURL: https://api.github.com
+
+networkPolicy:
+  enabled: true
+  envoy:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: envoy-gateway-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: envoy
+  dnsNamespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: kube-system
+  # The receiver only needs the internet (GitHub): private and link-local ranges stay closed.
+  egressDeny:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+  - 169.254.0.0/16
+  - 100.64.0.0/10
+  - fc00::/7
+  - fe80::/10
+  # Cluster specific ranges to deny as well, for example the pod CIDR when it is public.
+  egressExtraDeny: []
+
+resources:
+  requests: {cpu: 5m, memory: 16Mi}
+  limits: {memory: 64Mi}

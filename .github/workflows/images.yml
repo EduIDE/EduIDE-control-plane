@@ -32,6 +32,7 @@ jobs:
           - {name: authz, context: ., file: build/Dockerfile, args: CMD=authz}
           - {name: agent, context: ., file: build/Dockerfile, args: CMD=agent}
           - {name: usage-export, context: ., file: build/Dockerfile, args: CMD=usage-export}
+          - {name: feedback, context: ., file: build/Dockerfile, args: CMD=feedback}
           - {name: fake-ide, context: test/fake-ide, file: test/fake-ide/Dockerfile, args: ""}
           - {name: pool-scaler, context: pool-scaler, file: pool-scaler/Dockerfile, args: ""}
           - {name: landing-page, context: landing-page, file: landing-page/Dockerfile, args: ""}

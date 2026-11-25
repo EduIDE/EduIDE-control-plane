@@ -148,4 +148,16 @@ for c in charts/eduide-landing-page; do
   done
   ok "landing page"
 done
+for c in charts/eduide-feedback-receiver; do
+  v="$c/ci/test-values.yaml"
+  [ -z "$(helm template r "$c" | tr -d '[:space:]')" ] || fail "feedback receiver renders while disabled"
+  for drop in host gateway.name installationKeysSecret github.appID github.installationID github.repository github.privateKeySecret.name; do
+    if helm template r "$c" -f "$v" --set "$drop=" >/dev/null 2>&1; then fail "feedback receiver renders without $drop"; fi
+  done
+  out=$(helm template r "$c" -f "$v")
+  [ "$(echo "$out" | yq -o=json -I=0 'select(.kind == "Deployment") | .spec.template.spec.containers[] | select(.resources == null or .securityContext == null)' | wc -l)" -eq 0 ] || fail "feedback receiver container lacks resources or securityContext"
+  grep -qE '^kind: HTTPRoute$' <<<"$out" || fail "feedback receiver HTTPRoute missing"
+  grep -qE '^kind: NetworkPolicy$' <<<"$out" || fail "feedback receiver NetworkPolicy missing"
+  ok "feedback receiver"
+done
 echo "all chart checks passed"

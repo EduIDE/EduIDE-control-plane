@@ -1,0 +1,12 @@
+enabled: true
+host: feedback.example.org
+gateway:
+  name: eduide
+  namespace: envoy-gateway-system
+  sectionName: https
+installationKeysSecret: eduide-feedback-keys
+github:
+  appID: "123456"
+  installationID: "7890123"
+  repository: EduIDE/feedback-inbox
+  privateKeySecret: {name: eduide-feedback-github, key: private-key.pem}

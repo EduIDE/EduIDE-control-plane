@@ -1,7 +1,7 @@
 # Logs
 
 Every component logs one JSON object per line on stdout.
-Common fields: `time`, `level`, `msg`, `service` (`eduide-operator`, `eduide-service`, `eduide-authz`, `eduide-agent`, `eduide-pool-scaler`, `eduide-landing-page`).
+Common fields: `time`, `level`, `msg`, `service` (`eduide-operator`, `eduide-service`, `eduide-authz`, `eduide-agent`, `eduide-pool-scaler`, `eduide-landing-page`, `eduide-feedback`).
 When a request carries a sampled trace, the line also has `trace_id`.
 Users appear as `user`, a pseudonym (HMAC-SHA256 with the deployment salt, 16 hex characters).
 Logs never contain tokens, cookies, launch data values, owner names, or e-mail addresses.

@@ -78,7 +78,7 @@ Two Helm charts from `oci://ghcr.io/eduide/eduide-control-plane/charts`:
 
 Needs Kubernetes with Gateway API, Envoy Gateway v1.8 or newer, cert-manager, a CNI that enforces NetworkPolicies and a Keycloak realm.
 The [install guide](docs/operations/install.md) lists every value and secret.
-Images: `ghcr.io/eduide/eduide-control-plane/{operator,service,authz,agent,pool-scaler,landing-page}`.
+Images: `ghcr.io/eduide/eduide-control-plane/{operator,service,authz,agent,pool-scaler,landing-page,feedback}`.
 
 ## Contributing
 
