@@ -10,7 +10,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /fake-ide .
 # network policy tests use nc and wget, and the Git test endpoint runs git. /work is the home of the
 # unprivileged user: git writes its global config there.
 FROM alpine:3.22
-RUN apk add --no-cache git && mkdir /work && chown 65532:65532 /work
+RUN apk upgrade --no-cache && apk add --no-cache git && mkdir /work && chown 65532:65532 /work
 COPY --from=build /fake-ide /fake-ide
 USER 65532:65532
 ENV HOME=/work
