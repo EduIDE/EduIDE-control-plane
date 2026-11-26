@@ -39,7 +39,7 @@ function failureText(t: Translate, code: string, message: string | undefined, ho
     return hasMessage(key) ? t(key, { host }) : (message ?? t('error.generic'));
 }
 
-/** Starts the environment, shows progress and redirects when it is ready. */
+/** Starts the session, shows progress and redirects when it is ready. */
 export const Launch = ({ api, request, info, templates, onBack, onStartRow }: LaunchProps): React.JSX.Element => {
     const { t } = useI18n();
     const [state, setState] = useState<LaunchState>({ kind: 'creating' });

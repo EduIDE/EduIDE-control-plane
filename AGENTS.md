@@ -45,7 +45,10 @@ Status: in use from EduIDE 3.0.0 on.
 
 ## Terminology
 
-Use exactly these words: **Template** (`IDETemplate`), **Pool** (`IDEPool`), **Instance** (a session pod, idle or claimed), **Session** (`IDESession`), **Workspace** (`IDEWorkspace`), **Claim** (assigning an idle instance to a session), **Release** (ending a session), **launch data** (the Secret with user data).
+Use the terms of the [EduIDE glossary](https://eduide.github.io/Docs/glossary) in code, UI texts, docs, values and comments, in exactly the meaning it gives.
+Do not introduce synonyms (environment, instance, workspace, launch, lecturer, start page) for a term the glossary defines, and never write "frontend" or "backend".
+When a new term is needed or a term changes, update the glossary in `EduIDE/Docs` first.
+Use exactly these words: **Template** (`IDETemplate`; the in-image examples are **starter projects**, API field `variants`), **Pool** (`IDEPool`), **Instance** (a session pod, internal), **idle instance** (an unclaimed pool pod, never "idle session"), **Session** (`IDESession`), **Workspace** (`IDEWorkspace`), **saved workspace** / **temporary session** (the two start modes), **Claim** (assigning an idle instance to a session), **Release** (ending a session), **launch data** (the Secret with user data).
 API group and label prefix: `eduide.github.io`.
 
 ## Rules

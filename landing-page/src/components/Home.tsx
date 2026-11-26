@@ -24,7 +24,7 @@ interface HomeProps {
 
 type Dialogs = { kind: 'info' | 'pick'; template: Template } | undefined;
 
-/** Your environments on top, new ones below. Both `/` and `/me/overview` show this page. */
+/** Your sessions on top, new ones below. Both `/` and `/me/overview` show this page. */
 export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, onReconnect }: HomeProps): React.JSX.Element => {
     const { t } = useI18n();
     const { overview, lost, recovered } = useOverview(api);
@@ -80,7 +80,7 @@ export const Home = ({ api, templates, error, firstName, onLaunch, onStartRow, o
                     <div className='empty'>{t('empty.mine')}</div>
                 )}
             </section>
-            {/* Unlisted templates still launch by link and show in the environments above. */}
+            {/* Unlisted templates still launch by link and show in the sessions above. */}
             {(!listed || listed.length > 0) && (
                 <section aria-labelledby='new'>
                     <h2 id='new'>{t('section.new')}</h2>

@@ -1,4 +1,4 @@
-# EduIDE Landing Page
+# EduIDE landing page
 
 > **Experimental.** Part of the EduIDE control plane. Interfaces, configuration and behavior can change without notice.
 
@@ -6,12 +6,12 @@ The page a student lands on: it starts an IDE session through the control plane 
 
 ## Features
 
-- One page at `/` (and `/me/overview`): "Your environments" on top with live updates, "Start new" tiles below
-- Environment rows show the stop time of a running environment (with the reason: idle or time limit) or the deletion date of a saved workspace, red only when files are about to be lost. Every row has Start and Delete (with a confirmation dialog)
-- Tiles show the start time (`startEstimate`), saved or temporary workspace, and a dialog with what the environment includes. Templates with project templates (`variants`) open a picker first
-- Launch from an Artemis link (`?appDef=<template>&gitUri=...`) or from a tile. Progress follows the session event stream (SSE) and redirects when the session is Ready. At the session limit the page lists the running environments to delete or open
+- One page at `/` (and `/me/overview`): "Your sessions" on top with live updates, "Start new" tiles below
+- Session rows show the stop time of a running session (with the reason: idle or time limit) or the deletion date of a saved workspace, red only when files are about to be lost. Every row has Start and Delete (with a confirmation dialog)
+- Tiles show the start time (`startEstimate`), saved workspace or temporary session, and a dialog with what the template includes. Templates with starter projects (`variants`) open a picker first
+- Launch from an Artemis link (`?appDef=<template>&gitUri=...`) or from a tile. Progress follows the session event stream (SSE) and redirects when the session is Ready. At the session limit the page lists the running sessions to delete or open
 - English and German (browser language, switchable in the avatar menu), colors follow the system light or dark setting
-- `/status` (no login): the overall state in plain language, the three parts (sign in, starting environments, saved workspaces) and the start time per template, split into temporary and saved workspaces. Reads the public `GET /api/v1/status` every 30 s and shows "Status is not available right now" when the request fails
+- `/status` (no login): the overall state in plain language, the three parts (sign in, starting sessions, saved workspaces) and the start time per template, split into temporary sessions and saved workspaces. Reads the public `GET /api/v1/status` every 30 s and shows "Status is not available right now" when the request fails
 - `/admin` (login and admin role): a read-only panel with Status, Pools, Sessions (with details and trace link), Workspaces, Problems, Templates and Limits as real paths (`/admin/pools`, `/admin/sessions`, ...). It loads lazily, so students never download it. Live data comes from the admin event streams, other pages reload every 30 s. Charts and figures that need Prometheus are hidden when the service sends none. Users appear only as pseudonymous hash
 - Footer on every page with GitHub, bug report, imprint and privacy. `/imprint` and `/privacy` work without a login
 
@@ -21,7 +21,7 @@ The page a student lands on: it starts an IDE session through the control plane 
 |---|---|---|
 | query | `appDef` | template name |
 | query | `gitUri`, `gitRef`, `artemisUrl` | launch data (only keys the template allows are sent) |
-| query | `title` | optional title shown in the environment list |
+| query | `title` | optional title shown in the session list |
 | query | `persistence` | optional `none` or `volume`, else the template default |
 | fragment | `artemisToken` | Artemis token. Read before Keycloak starts, kept in `sessionStorage`, removed from the address bar, deleted after the launch. `?artemisToken` still works and logs a deprecation warning |
 

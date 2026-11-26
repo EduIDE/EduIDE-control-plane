@@ -106,12 +106,12 @@ export function applySession(session: Session): LaunchState {
     return { kind: 'starting', session };
 }
 
-/** Launches a template, optionally with one of its project templates (only if the template accepts `TEMPLATE`). */
+/** Launches a template, optionally with one of its starter projects (only if the template accepts `TEMPLATE`). */
 export function buildTileRequest(template: Template, variantId?: string): LaunchRequest {
     const request = buildLaunchRequest({ appDef: template.name }, template);
     if (variantId && template.injectableKeys.includes('TEMPLATE')) {
         request.data = { ...request.data, TEMPLATE: variantId };
-        // Each project template gets its own saved workspace; its name tells them apart in "Your environments".
+        // Each starter project gets its own saved workspace; its name tells them apart in "Your sessions".
         const variant = template.variants?.find(v => v.id === variantId);
         if (variant) {
             request.display = { ...request.display, title: variant.name };

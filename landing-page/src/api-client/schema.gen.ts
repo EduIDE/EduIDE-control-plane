@@ -75,7 +75,7 @@ export interface paths {
         /**
          * @description Launches a session. Idempotent (G14): the key is template plus workspace, or for sessions
          *     without persistence template plus a hash of the launch data. A repeated launch returns the
-         *     existing session with 200. Send `traceparent` to join the launch trace.
+         *     existing session with 200. A `traceparent` becomes a link of the root span `launch`.
          */
         post: operations["launchSession"];
         delete?: never;
@@ -412,11 +412,11 @@ export interface components {
             defaultPersistence: components["schemas"]["PersistenceMode"];
             /** @description Keys a launch request may send in `data`. */
             injectableKeys: string[];
-            /** @description A pool prewarms sessions without persistence. */
+            /** @description A pool prewarms idle instances for temporary sessions. */
             warm?: boolean;
             /** @description EduIDE version of the template image, read from the image annotation (U12). Absent without metadata. */
             imageVersion?: string;
-            /** @description Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata. */
+            /** @description Starter projects of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata. */
             variants?: components["schemas"]["TemplateVariant"][];
             /** @description What the image brings along, in groups with the versions installed at build time (U12). */
             includes?: components["schemas"]["TemplateIncludeGroup"][];
