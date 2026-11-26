@@ -179,6 +179,15 @@ describe('TemplateTile', () => {
         expect(screen.queryByRole('button', { name: /includes/ })).toBeNull();
     });
 
+    it('has stable test ids: the start button by template name and the persistence tag', () => {
+        const { rerender } = render(wrap(<TemplateTile template={java} onPick={vi.fn()} onInfo={vi.fn()} />));
+        expect(screen.getByTestId('launch-app-java-17').getAttribute('aria-label')).toBe('Start Java 17');
+        expect(screen.getByLabelText(/Saved workspace/).getAttribute('data-persistence')).toBe('saved');
+        rerender(wrap(<TemplateTile template={python} onPick={vi.fn()} onInfo={vi.fn()} />));
+        expect(screen.getByTestId('launch-app-python')).toBeTruthy();
+        expect(screen.getByLabelText(/Temporary workspace/).getAttribute('data-persistence')).toBe('temporary');
+    });
+
     it('shows Ready instantly for a warm temporary template without an estimate', () => {
         render(wrap(<TemplateTile template={{ ...python, startEstimate: undefined, warm: true }} onPick={vi.fn()} onInfo={vi.fn()} />));
         screen.getByText('Ready instantly');

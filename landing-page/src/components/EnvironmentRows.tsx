@@ -47,7 +47,7 @@ export const EnvironmentRows = ({ rows, api, onStart, onDeleted, now }: Environm
                 {rows.map(row => {
                     const life = lifeText(row, i18n);
                     return (
-                        <div key={row.key} className='row'>
+                        <div key={row.key} className='row' data-testid={`row-${row.key}`}>
                             <Logo name={row.template} url={row.logoUrl} />
                             <div className='meta'>
                                 <div className='title'>{row.title}</div>
@@ -71,11 +71,18 @@ export const EnvironmentRows = ({ rows, api, onStart, onDeleted, now }: Environm
                                 )}
                             </div>
                             <div className='actions'>
-                                <button className='btn icon' aria-label={t('delete')} title={t('delete')} onClick={() => setDeleting(row)}>
+                                <button
+                                    className='btn icon'
+                                    data-testid='row-delete'
+                                    aria-label={t('delete')}
+                                    title={t('delete')}
+                                    onClick={() => setDeleting(row)}
+                                >
                                     <Trash2 aria-hidden />
                                 </button>
                                 <button
                                     className='btn primary'
+                                    data-testid='row-open'
                                     disabled={row.running && !row.openUrl && !row.workspaceName}
                                     onClick={() => onStart(row)}
                                 >
