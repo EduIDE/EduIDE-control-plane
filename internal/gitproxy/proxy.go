@@ -255,9 +255,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	st := &reqState{t: t, prov: prov, start: time.Now()}
 	rc := http.NewResponseController(w)
-	if t.Op == OpReceivePack {
-		st.form = pushFormOf(r, rc)
-	}
+	// Order: path and headers, authorize, slot, and only then the peek of a push (it allocates a buffer and
+	// waits for the client). A denial before the peek does not know the client yet, so st.form is formERR. Real
+	// git 2.54 shows nothing of that message on a push with side-band ("bad band #69", a failed push), but it
+	// fails the push cleanly. A non-200 status instead ends in "RPC failed", "unexpected disconnect" and a
+	// misleading "Everything up-to-date". A push is normally denied at info/refs, which shows the message.
 	resp, err := h.authorize(r.Context(), instance, token, t)
 	if err != nil {
 		st.result = resultUnavailable
@@ -284,6 +286,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer h.running.release(instance)
+	if t.Op == OpReceivePack {
+		st.form = pushFormOf(r, rc)
+	}
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	timer := time.AfterFunc(h.idle, func() { st.idleCut.Store(true); cancel() })
@@ -292,8 +297,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// connection in the background once the body is read, so a short read deadline there would cancel a request
 	// that waits for the provider.
 	var mu sync.Mutex
+	// done is set when the handler returns. A late read of the request body (the provider answered before the
+	// upload ended) must neither re-arm the stopped timer nor touch the connection of a finished request.
+	done := false
+	defer func() { mu.Lock(); done = true; mu.Unlock() }()
 	// The deadlines run a little longer than the timer, so the timer decides first and the client gets its message.
 	setLimit := func(d time.Duration) {
+		if done {
+			return
+		}
 		timer.Reset(d)
 		_ = rc.SetReadDeadline(time.Now().Add(d + deadlineGrace))
 		_ = rc.SetWriteDeadline(time.Now().Add(d + deadlineGrace))

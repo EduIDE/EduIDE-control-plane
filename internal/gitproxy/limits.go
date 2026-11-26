@@ -26,8 +26,12 @@ const (
 	processingTimeout = 30 * time.Minute
 	// deadlineGrace is how much longer the connection deadlines run than the timer of the same limit.
 	deadlineGrace = 5 * time.Second
-	// peekTimeout bounds the wait for the first command of a push, which tells how an error must reach git.
-	peekTimeout = 10 * time.Second
+	// peekTimeout bounds the wait for the first command of a push, which tells how an error must reach git. The
+	// peek runs only for a request that is authorised and holds a slot of its instance.
+	peekTimeout = 2 * time.Second
+	// peekSize is the buffer of that peek. It holds the leading "shallow" lines and the first command; a push
+	// whose first command does not fit takes formStatus.
+	peekSize = 4 << 10
 	// maxErrMessage bounds the text of an ERR line: a pkt-line length has four hex digits.
 	maxErrMessage = 1000
 )

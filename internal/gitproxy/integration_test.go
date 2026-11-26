@@ -859,7 +859,16 @@ func TestPushErrorsReachTheUser(t *testing.T) {
 		after := func() { r.clk.add(time.Minute); r.az.hook.Store(&hook) }
 		r.prov.afterAdvert.Store(&after)
 		defer r.prov.afterAdvert.Store(nil)
-		push(t, "Too many Git requests of this session")
+		// The slot is refused before the proxy peeks at the push, so it does not know that git wants side-band:
+		// the answer is an ERR line. git 2.54 prints "bad band" for it, which is not the message, but the push
+		// fails and never claims "Everything up-to-date".
+		out, err := r.run(work, "push", "origin", "main")
+		if err == nil || strings.Contains(out, "Everything up-to-date") || strings.Contains(out, "RPC failed") {
+			t.Errorf("push: %v\n%s", err, out)
+		}
+		if r.head("priv/secret") == strings.TrimSpace(r.mustRun(work, "rev-parse", "HEAD")) {
+			t.Error("the push landed")
+		}
 	})
 
 	t.Run("the provider never answers", func(t *testing.T) {
@@ -868,6 +877,25 @@ func TestPushErrorsReachTheUser(t *testing.T) {
 		defer r.prov.stallPush.Store(false)
 		r.connect(true)
 		push(t, "The transfer stalled")
+	})
+
+	// A push from a shallow clone starts with "shallow <oid>" lines, so the first line has no capability list. The
+	// proxy skips them and still knows that git reads the answer through side-band.
+	t.Run("the provider never answers, push from a shallow clone", func(t *testing.T) {
+		r.az.sessionRepo.Store(host + "/priv/secret")
+		r.connect(true)
+		r.seedCommit("priv/secret", "b.txt", "b") // a history of two commits, so that depth 1 is shallow
+		sdir := t.TempDir()
+		r.mustRun(sdir, "clone", "--depth", "1", "https://"+host+"/priv/secret", "s")
+		sw := filepath.Join(sdir, "s")
+		r.commit(sw, "d.txt", "d")
+		r.proxy.processing = 500 * time.Millisecond
+		r.prov.stallPush.Store(true)
+		defer r.prov.stallPush.Store(false)
+		out, err := r.run(sw, "push", "origin", "main")
+		if err == nil || !strings.Contains(out, "The transfer stalled") || strings.Contains(out, "Everything up-to-date") || strings.Contains(out, "bad band") {
+			t.Errorf("push from a shallow clone: %v\n%s", err, out)
+		}
 	})
 
 	t.Run("denied by the service", func(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,9 +25,14 @@ const (
 )
 
 // pushFormOf looks at the first command of a push without consuming it: "<old> <new> <ref>\0<capabilities>".
-// It replaces r.Body with a reader that still delivers every byte. Anything it cannot read in peekTimeout is formERR.
+// A push from a shallow clone sends "shallow <oid>" lines first; they are skipped. It replaces r.Body with a reader
+// that still delivers every byte. It reads at most peekSize bytes and waits at most peekTimeout. Anything it cannot
+// read in time is formERR, a first command that does not fit is formStatus.
+//
+// It allocates its buffer, so the handler calls it only for a request that is authorised and holds a slot.
 func pushFormOf(r *http.Request, rc *http.ResponseController) pushForm {
-	br := bufio.NewReaderSize(r.Body, 64<<10)
+	peekBuffers.Add(1)
+	br := bufio.NewReaderSize(r.Body, peekSize)
 	r.Body = struct {
 		io.Reader
 		io.Closer
@@ -36,24 +42,41 @@ func pushFormOf(r *http.Request, rc *http.ResponseController) pushForm {
 	}
 	_ = rc.SetReadDeadline(time.Now().Add(peekTimeout))
 	defer func() { _ = rc.SetReadDeadline(time.Time{}) }()
-	hdr, err := br.Peek(4)
-	if err != nil {
-		return formERR
+	off := 0
+	for {
+		hdr, err := br.Peek(off + 4)
+		if err == bufio.ErrBufferFull {
+			return formStatus
+		}
+		if err != nil {
+			return formERR
+		}
+		n, err := strconv.ParseUint(string(hdr[off:]), 16, 16)
+		if err != nil || n <= 4 { // a flush: the probe of a large push
+			return formERR
+		}
+		buf, err := br.Peek(off + int(n))
+		if err == bufio.ErrBufferFull { // many shallow lines or a long command: the capabilities are out of reach
+			return formStatus
+		}
+		if err != nil {
+			return formERR
+		}
+		line := buf[off+4:]
+		if bytes.HasPrefix(line, []byte("shallow ")) {
+			off += int(n)
+			continue
+		}
+		_, caps, _ := bytes.Cut(line, []byte{0})
+		if bytes.Contains(caps, []byte("side-band")) {
+			return formSideband
+		}
+		return formStatus
 	}
-	n, err := strconv.ParseUint(string(hdr), 16, 16)
-	if err != nil || n <= 4 { // a flush: the probe of a large push
-		return formERR
-	}
-	line, err := br.Peek(int(n))
-	if err != nil {
-		return formERR
-	}
-	_, caps, _ := bytes.Cut(line[4:], []byte{0})
-	if bytes.Contains(caps, []byte("side-band")) {
-		return formSideband
-	}
-	return formStatus
 }
+
+// peekBuffers counts the peeks that allocated a buffer; the tests assert that an unauthorised request adds none.
+var peekBuffers atomic.Int64
 
 // errorAnswer is status, content type and body of an error answer. code is the status of formStatus.
 func errorAnswer(t Target, form pushForm, code int, msg string) (int, string, []byte) {

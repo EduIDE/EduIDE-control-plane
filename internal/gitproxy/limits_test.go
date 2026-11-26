@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -315,5 +316,39 @@ func TestProviderThatNeverAnswersIsCutAfterTheProcessingLimit(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Error("the limit did not cut")
+	}
+}
+
+// deadlineCounter counts the calls to the connection deadlines, like the connection of a server does.
+type deadlineCounter struct {
+	*httptest.ResponseRecorder
+	calls atomic.Int64
+}
+
+func (d *deadlineCounter) SetReadDeadline(time.Time) error  { d.calls.Add(1); return nil }
+func (d *deadlineCounter) SetWriteDeadline(time.Time) error { d.calls.Add(1); return nil }
+
+// The provider answers before the upload ends. A read of the request body after the handler returned must not
+// move the deadlines of the finished request or re-arm its timer.
+func TestLateBodyReadAfterTheHandlerReturnedArmsNothing(t *testing.T) {
+	var late io.ReadCloser
+	rt := rtFunc(func(r *http.Request) (*http.Response, error) {
+		late = r.Body // the transport still holds the body when it answers
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("early")), Request: r}, nil
+	})
+	h := New([]config.GitProvider{{Name: "p", Host: "h.test", DisplayName: "Host"}}, "https://landing.test", anonymous(), rt, slog.New(slog.DiscardHandler))
+	h.idle = 50 * time.Millisecond
+	w := &deadlineCounter{ResponseRecorder: httptest.NewRecorder()}
+	h.ServeHTTP(w, gitReq("POST", "/h.test/o/r/git-upload-pack", strings.NewReader(strings.Repeat("x", 1000))))
+	if w.Body.String() != "early" || late == nil {
+		t.Fatalf("setup: %q", w.Body)
+	}
+	calls := w.calls.Load()
+	if _, err := io.Copy(io.Discard, late); err != nil { // the late read: progress and the end of the body
+		t.Fatal(err)
+	}
+	time.Sleep(3 * h.idle) // a re-armed timer would fire in this time
+	if w.calls.Load() != calls {
+		t.Errorf("%d deadline calls after the handler returned", w.calls.Load()-calls)
 	}
 }
