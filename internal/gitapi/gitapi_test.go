@@ -78,6 +78,10 @@ func TestCanonicalRepo(t *testing.T) {
 		{".config/r", ".config/r", true},
 		{"o/.gitx", "o/.gitx", true},
 		{"o/..", "", false},
+		{"a/..git", "", false}, // the cut of ".git" would leave "."
+		{"a/...git", "", false}, // and ".."
+		{"a/....git", "a/...", true},
+		{"a/.git/b", "", false},
 		{"o/./r", "", false},
 		{"o/r.git.git", "", false},
 		{"o.git/r", "", false}, // .git only at the end of the last segment
@@ -96,6 +100,9 @@ func TestCanonicalRepo(t *testing.T) {
 		}
 		if ok && NormalizeRepo(got) != got {
 			t.Errorf("CanonicalRepo(%q) = %q is not stable under NormalizeRepo", tc.in, got)
+		}
+		if again, ok2 := CanonicalRepo(got); ok && (!ok2 || again != got) {
+			t.Errorf("CanonicalRepo(CanonicalRepo(%q)) = %q %v, want %q", tc.in, again, ok2, got)
 		}
 	}
 }

@@ -207,6 +207,19 @@ describe('parseApproval', () => {
         expect(parseApproval(`?session=s-abc${a}&approveRepo=https%3A%2F%2Fh%2Fa%2Fb`)).toBe('invalid');
     });
 
+    it.each(['a/..git', 'a/...git', 'a/.git/b'])(
+        'refuses the repository path %j, whose .git cut would leave a dot segment or a hidden one',
+        path => {
+            expect(normalizeRepository(`https://h.test/${path}`)).toBeUndefined();
+        }
+    );
+
+    it.each(['a/b', 'a/b.git', 'a/....git', 'G/Sub/P.git', 'org/.github', 'u/.dotfiles.git'])('canonical form of %j is stable', path => {
+        const once = normalizeRepository(`https://h.test/${path}`);
+        expect(once).toBeDefined();
+        expect(normalizeRepository(once as string)).toBe(once);
+    });
+
     it('punycodes a look-alike host so the user sees what the service sees', () => {
         expect(normalizeRepository('https://gíthub.com/a/b')).toBe('https://xn--gthub-zsa.com/a/b');
     });

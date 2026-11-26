@@ -190,7 +190,8 @@ function canonicalRepository(pathname: string): string | undefined {
         return undefined;
     }
     segs[last] = segs[last].replace(/\.git$/, '');
-    return segs[last].endsWith('.git') ? undefined : segs.join('/');
+    // The cut can leave a dot segment (`a/..git`), which a browser or a provider would resolve to another path.
+    return ['', '.', '..'].includes(segs[last]) || segs[last].endsWith('.git') ? undefined : segs.join('/');
 }
 
 /** https, no credentials, query, fragment or port (the rules of `GIT_URI`), then host and path the way the service compares them. */
