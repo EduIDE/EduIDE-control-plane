@@ -39,7 +39,7 @@ export interface LaunchInfo {
     seconds?: number;
 }
 
-/** What the launch view shows about an environment, from the template when known and the caller's values otherwise. */
+/** What the launch view shows about a session, from the template when known and the caller's values otherwise. */
 export function buildLaunchInfo(
     template: Template | undefined,
     request: { template: string; persistence?: PersistenceMode; workspace?: string; display?: { title?: string } },

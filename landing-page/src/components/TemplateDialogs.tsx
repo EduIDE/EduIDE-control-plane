@@ -59,7 +59,7 @@ export const InfoDialog = ({ template, onClose, onStart }: InfoDialogProps): Rea
             </div>
             <div className='dlg-foot'>
                 <span className='sub'>{template.imageVersion}</span>
-                <button className='btn primary' data-autofocus onClick={() => onStart(template)}>
+                <button className='btn primary' data-testid='info-start' data-autofocus onClick={() => onStart(template)}>
                     <Play aria-hidden />
                     {t('start')}
                 </button>
@@ -102,6 +102,8 @@ export const PickDialog = ({ template, onClose, onInfo, onStart }: PickDialogPro
                     <label key={o.id} className='opt'>
                         <input
                             type='radio'
+                            // A prefix of its own, so no variant id can collide with the empty project.
+                            data-testid={o.id ? `variant-${o.id}` : 'pick-empty'}
                             name='variant'
                             value={o.id}
                             checked={chosen === o.id}
@@ -130,7 +132,7 @@ export const PickDialog = ({ template, onClose, onInfo, onStart }: PickDialogPro
                     <button className='btn' onClick={onClose}>
                         {t('cancel')}
                     </button>
-                    <button className='btn primary' onClick={() => onStart(template, chosen)}>
+                    <button className='btn primary' data-testid='pick-start' onClick={() => onStart(template, chosen)}>
                         <Play aria-hidden />
                         {t('start')}
                     </button>

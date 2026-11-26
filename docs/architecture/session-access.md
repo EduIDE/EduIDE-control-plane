@@ -7,7 +7,7 @@ Who may open which IDE, and how the gateway decides. Source: [ADR 0005](../adr/0
 - One `SecurityPolicy` (Envoy Gateway) per deployment selects all HTTPRoutes with the label `eduide.github.io/route=session`. It configures the `oidc` filter (Keycloak realm of the deployment, confidential gateway client `oidc.gatewayClientID`, ID token cookie `oidc.idTokenCookie`, refresh token) and `extAuth` to `authz` over gRPC with `failOpen: false`.
 - `authz` keeps its own informer on `IDESession` objects and makes no API call per request.
 - Each session route also sets `X-EduIDE-Instance-Token`. The agent forwards only requests with that token. This is the second line, next to the NetworkPolicy.
-- The chart adds an HTTPRoute for `/oauth2/` on the instance host (label `route=session`, backend: the service, answers 404) so the OIDC callback has a route.
+- The chart adds an HTTPRoute for `/oauth2/` on the instance host (label `route=session`, target: the service, answers 404) so the OIDC callback has a route.
 
 ## Filter order finding
 

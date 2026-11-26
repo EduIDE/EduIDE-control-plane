@@ -58,14 +58,14 @@ describe('buildLaunchRequest', () => {
         expect(buildLaunchRequest({ appDef: 'x', persistence: 'weird' }, template).persistence).toBeUndefined();
     });
 
-    it('sends the chosen project template only when the template accepts TEMPLATE', () => {
+    it('sends the chosen starter project only when the template accepts TEMPLATE', () => {
         const withKey = { ...template, injectableKeys: ['TEMPLATE'] };
         expect(buildTileRequest(withKey, 'maven')).toEqual({ template: 'java-17', data: { TEMPLATE: 'maven' } });
         expect(buildTileRequest(withKey, '')).toEqual({ template: 'java-17' });
         expect(buildTileRequest(template, 'maven')).toEqual({ template: 'java-17' });
     });
 
-    it('names the environment after the chosen project template', () => {
+    it('names the session after the chosen starter project', () => {
         const withVariants = { ...template, injectableKeys: ['TEMPLATE'], variants: [{ id: 'web', name: 'Web' }] };
         expect(buildTileRequest(withVariants, 'web')).toEqual({ template: 'java-17', data: { TEMPLATE: 'web' }, display: { title: 'Web' } });
         expect(buildTileRequest(withVariants, 'other')).toEqual({ template: 'java-17', data: { TEMPLATE: 'other' } });

@@ -16,7 +16,7 @@ export interface Row {
     templateName: string;
     logoUrl?: string;
     running: boolean;
-    /** Files stay after the session ends (the environment has a workspace). */
+    /** Files stay after the session ends (the session has a workspace). */
     saved: boolean;
     since?: { kind: 'started' | 'lastUsed'; at: string };
     life?: Life;

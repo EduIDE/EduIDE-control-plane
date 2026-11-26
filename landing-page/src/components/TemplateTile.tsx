@@ -19,7 +19,12 @@ export const TemplateTile = ({ template, onPick, onInfo }: TemplateTileProps): R
     const line = templateStartLine(template, template.defaultPersistence);
     return (
         <div className='card'>
-            <button className='card-main' aria-label={t('tile.start', { name: template.displayName })} onClick={() => onPick(template)} />
+            <button
+                className='card-main'
+                data-testid={`launch-app-${template.name}`}
+                aria-label={t('tile.start', { name: template.displayName })}
+                onClick={() => onPick(template)}
+            />
             {template.includes && template.includes.length > 0 && (
                 <button
                     className='info-btn'
@@ -40,7 +45,13 @@ export const TemplateTile = ({ template, onPick, onInfo }: TemplateTileProps): R
                 )}
             </div>
             <div className='tags'>
-                <span className='tag tip' tabIndex={0} data-tip={p.long} aria-label={`${p.short}. ${p.long}`}>
+                <span
+                    className='tag tip'
+                    data-persistence={saved ? 'saved' : 'temporary'}
+                    tabIndex={0}
+                    data-tip={p.long}
+                    aria-label={`${p.short}. ${p.long}`}
+                >
                     {p.icon}
                     {p.short}
                 </span>

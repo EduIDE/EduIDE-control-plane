@@ -1,4 +1,4 @@
-"""EduIDE Control Plane (Go rewrite): architecture diagrams.
+"""EduIDE control plane (Go rewrite): architecture diagrams.
 
 Plan: ../../2026-11-18-eduide-control-plane-go.md
 Run: python3 diagrams.py [--png <preview dir>]
@@ -81,7 +81,7 @@ def object_model():
 
     uml_class(d, 40, 520, 180, "PersistenceMode", ["none", "volume", "snapshot (later)"], stereotype="enumeration")
     uml_class(d, 240, 520, 180, "StartStrategy", ["warm-ready", "warm-starting", "cold"], stereotype="enumeration")
-    uml_class(d, 40, 690, 180, "SessionPhase", ["Pending", "Starting", "Ready", "Terminating", "Failed"],
+    uml_class(d, 40, 690, 180, "SessionPhase", ["Pending", "Starting", "Ready", "Failed"],
               stereotype="enumeration")
     uml_class(d, 240, 690, 180, "InstanceState", ["starting", "idle", "claimed"], stereotype="enumeration")
     d.save()
@@ -100,7 +100,7 @@ def components():
     kc = component(d, 400, 30, 240, 80, "Identity Provider", "logins, tokens",
                    stereotype="subsystem", external=True)
 
-    landing = subsystem(d, 780, -20, 520, 200, "EduIDE\nLanding Page")
+    landing = subsystem(d, 780, -20, 520, 200, "EduIDE\nlanding page")
     launcher = component(d, 800, 80, 230, 80, "Launcher", "launch from Artemis link")
     overview = component(d, 1050, 80, 230, 80, "Session Overview", "my sessions and workspaces")
 
@@ -114,7 +114,7 @@ def components():
     authz = subsystem(d, *authz_box, "EduIDE\nSession Access", size=16)
     k8s = component(d, 980, 530, 220, 80, "Kubernetes API", "custom resources, watch",
                     stereotype="subsystem", external=True)
-    scaler = subsystem(d, 1240, 520, 180, 100, "EduIDE\nPool Scaler", size=16)
+    scaler = subsystem(d, 1240, 520, 180, 100, "EduIDE\npool scaler", size=16)
 
     # session lane at the bottom, next to the operator
     session = subsystem(d, 40, 700, 480, 360, "EduIDE Session")
@@ -219,7 +219,7 @@ def deployment():
     component(d, 55, 120, 190, 65, "Identity Provider", stereotype="subsystem", external=True)
     br_box = (40, 300, 220, 170)
     browser = node(d, *br_box, "executionEnvironment", "Browser", "React · TypeScript")
-    subsystem(d, 55, 380, 190, 75, "EduIDE\nLanding Page", size=14)
+    subsystem(d, 55, 380, 190, 75, "EduIDE\nlanding page", size=14)
     artemis = node(d, 40, 600, 220, 150, "device", "Artemis", "Artemis", fill=EXTERNAL_FILL)
     component(d, 55, 670, 190, 60, "Artemis", stereotype="subsystem", external=True)
 
@@ -244,14 +244,14 @@ def deployment():
     subsystem(d, 895, 700, 240, 80, "EduIDE Session", size=14)
     sc_box = (1220, 110, 270, 170)
     scaler = node(d, *sc_box, "pod", "pool-scaler", "Go · :9090 metrics")
-    subsystem(d, 1235, 200, 240, 65, "EduIDE Pool Scaler", size=14)
+    subsystem(d, 1235, 200, 240, 65, "EduIDE pool scaler", size=14)
     op_box = (1220, 580, 270, 220)
     op = node(d, *op_box, "pod", "operator", "Go · controller-runtime<br/>leader election · :9464 metrics")
     subsystem(d, 1235, 700, 240, 80, "EduIDE Operator", size=14)
 
     gp_box = (1220, 850, 270, 150)
     gp = node(d, *gp_box, "pod", "git-proxy × 2 (with Git providers)", "Go · :8080 Git, :9090 metrics<br/>asks service :8083 (internal)")
-    subsystem(d, 1235, 935, 240, 55, "EduIDE Git Proxy", size=14)
+    subsystem(d, 1235, 935, 240, 55, "EduIDE git-proxy", size=14)
     api_box = (1640, 330, 270, 170)
     api = node(d, *api_box, "executionEnvironment", "kube-apiserver", "Kubernetes · :6443", fill=EXTERNAL_FILL)
     component(d, 1655, 420, 240, 65, "Kubernetes API", stereotype="subsystem", external=True)

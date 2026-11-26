@@ -25,6 +25,7 @@ All notable changes to the EduIDE control plane. One tag `vX.Y.Z` versions the i
 ### Changed
 
 - Docs: the installation guide requires two Keycloak clients with exact redirect URIs and a confidential gateway client, and ADR 0023 documents why (an open risk for deployments that use one client for both). The Keycloak guidance warns never to switch "Client authentication" on for the shared landing page client (it breaks every landing page login) and adds the procedure "Migrate from one shared client" (not yet tested on a real installation). Changing `gatewayClientID` ends every open IDE login once: the users sign in again, running sessions are not affected
+- Terms follow the EduIDE glossary: landing page texts say session and template instead of environment, "Temporary session" instead of "Temporary workspace", "Starter projects" instead of "Project templates", admin instead of operator for people; OpenAPI descriptions, docs and AGENTS.md use the same words (`<instance host>` replaces `<instance host>`). No identifier, API, CRD or metric changes.
 
 ## [0.2.5] - 2026-11-25
 

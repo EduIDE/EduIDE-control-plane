@@ -1,4 +1,4 @@
-# EduIDE Pool-Scaler
+# EduIDE pool scaler
 
 > **Experimental.** Part of the [EduIDE control plane](https://github.com/EduIDE/EduIDE-control-plane)
 > monorepo (`pool-scaler/`, own Go module). The interfaces may change.

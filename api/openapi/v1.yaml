@@ -314,7 +314,7 @@ paths:
     get:
       operationId: listGitProviders
       tags: [git]
-      description: Git providers the administrator configured, with the connection state of the calling user. Empty when the feature is off.
+      description: Git providers the admin configured, with the connection state of the calling user. Empty when the feature is off.
       responses:
         "200":
           description: Providers in configuration order.
@@ -744,10 +744,10 @@ components:
           description: Keys a launch request may send in `data`.
           type: array
           items: {type: string}
-        warm: {type: boolean, description: "A pool prewarms sessions without persistence."}
+        warm: {type: boolean, description: "A pool prewarms idle instances for temporary sessions."}
         imageVersion: {type: string, description: "EduIDE version of the template image, read from the image annotation (U12). Absent without metadata."}
         variants:
-          description: "Project templates of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata."
+          description: "Starter projects of the image (U12). Launch one by sending its `id` as `data.TEMPLATE`. Absent without metadata."
           type: array
           items: {$ref: "#/components/schemas/TemplateVariant"}
         includes:

@@ -12,7 +12,7 @@ src/artemisToken.ts      #artemisToken and #gitUri handling (G16, Artemis#14702)
 src/git.ts               Git accounts: return path rule, callback capture, connect, preflight, approval link parsing (ADR 0023)
 src/launch.ts            launch request, state mapping, traceparent
 src/runLaunch.ts         launch state machine: POST, follow SSE, reconnect
-src/overview.ts           environment rows and delete (G15)
+src/overview.ts           session rows and delete (G15)
 src/i18n.ts, I18nProvider.tsx  English and German strings, language choice
 src/legal.ts             /imprint and /privacy routes, sanitized Markdown
 src/templates.ts         start time lines and launch info from templates

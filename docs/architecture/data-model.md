@@ -32,6 +32,7 @@ A session that has an instance keeps running when its template is deleted; it en
 Duration fields (`timeouts.*`, `retention`) accept Go durations such as `90m` or `48h`; the CRD rejects `2d`. `timeouts.max` must not be shorter than `timeouts.idle`. The operator and the service apply the resolved values (`ResolvedTimeouts` in `api/v1alpha1/helpers.go`): a missing or zero `idle` or `max` is the default, and a `warning` that does not come before the idle end is moved to five sixths of `idle`.
 Timestamps in `status.timestamps`: `claimed`, `podReady`, `agentReady`, `ready` (see [start-path.md](start-path.md)).
 Start strategies: `warm-ready`, `warm-starting`, `cold`.
+Two older names map onto them: the metric label `start_mode` is `eager` for `warm-ready` and `warm-starting` and `lazy` or `lazy_fallback` for `cold` (without or with an IDEPool), and the REST `StartEstimate.strategy` is `warm` for a ready idle instance and `cold` otherwise.
 
 ## Labels and annotations
 

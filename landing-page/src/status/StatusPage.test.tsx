@@ -65,21 +65,21 @@ describe('StatusPage', () => {
         await renderPage();
         screen.getByRole('heading', { name: 'Everything is working' });
         screen.getByText('Sign in');
-        screen.getByText('Starting environments');
+        screen.getByText('Starting sessions');
         screen.getByText('Saved workspaces');
         expect(screen.getAllByText('Working')).toHaveLength(3);
         const java = screen.getByText('Java 17').closest('.row') as HTMLElement;
         within(java).getByText('Instantly');
         within(java).getByText('About 25 s');
-        within(java).getByText('Ready environments available');
+        within(java).getByText('Instant starts available');
         const rust = screen.getByText('Rust').closest('.row') as HTMLElement;
         within(rust).getByText('Prepared when you start it');
         within(rust).getByText('About 1 min');
         expect(within(rust).queryByText('Temporary')).toBeNull();
-        // Every template is listed. A warm one is instant for temporary workspaces even without an estimate.
+        // Every template is listed. A warm one is instant for temporary sessions even without an estimate.
         const go = screen.getByText('Go').closest('.row') as HTMLElement;
         within(go).getByText('Instantly');
-        within(go).getByText('Ready environments available');
+        within(go).getByText('Instant starts available');
         expect(within(go).queryByText('Saved')).toBeNull();
         const nothing = screen.getByText('Nothing').closest('.row') as HTMLElement;
         within(nothing).getByText('Prepared when you start it');

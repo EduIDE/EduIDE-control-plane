@@ -70,6 +70,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back, onMenuO
                     >
                         <button
                             className='avatar'
+                            data-testid='account-button'
                             ref={el => {
                                 avatar.current = el ?? undefined;
                             }}
@@ -108,7 +109,7 @@ export const Header = ({ title = 'EduIDE', user, logoutUrl, admin, back, onMenuO
                                     </a>
                                 )}
                                 {logoutUrl && (
-                                    <a href={logoutUrl}>
+                                    <a href={logoutUrl} data-testid='logoutButton'>
                                         <LogOut aria-hidden />
                                         {t('signOut')}
                                     </a>
