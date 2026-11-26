@@ -38,6 +38,7 @@ The fake does what GitLab does for the flow:
 - `/oauth/token` checks PKCE (S256), the redirect URI and single use of the code; the refresh token grant rotates: a used refresh token answers `invalid_grant`.
 - Access tokens live 75 seconds (`FAKE_GIT_ACCESS_TTL`), so the refresh test needs one wait of about a minute.
 - `/oauth/revoke` invalidates the whole grant, `/api/v4/user` answers id 4242, login `e2euser`.
+- A repository path without `.git` is answered like GitLab does: a 301 to the `.git` form on GET and a 422 on POST, before any auth rule. The git-proxy and the preflight must ask for the `.git` form.
 - Git smart HTTP through `git http-backend` for `course/ex1` (private, the session repository), `course/other` (private, the account may read it) and `open/public` (anonymous reads). Private repositories and every push need basic auth with user `oauth2` and a valid access token.
 - A second listener (port 9000, plain HTTP, not used by any control plane pod) serves `/_test/state`: counters (authorizes, exchanges, refreshes, invalid refreshes, revokes), per repository the requests, the basic auth users, valid token requests, rejections, pushes and the last pushed ref, and the issued codes and tokens. The tests reach it with `kubectl port-forward` and use the values only to search logs and containers for leaks. The fake logs method and path, never a query or a header.
 

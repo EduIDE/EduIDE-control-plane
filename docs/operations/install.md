@@ -92,12 +92,13 @@ The ID token cookie (`eduide-id` by default) is set for the instance host. The c
 ### Migrate from one shared client
 
 Use this when `oidc.gatewayClientID` and `oidc.clientIDs` name the same client today.
-The order keeps every login working at every step. **This procedure is not yet tested on a real installation.** Try it on a test realm first.
+The order keeps the landing page login working at every step. Step 3 ends the IDE logins that are open (see there). **This procedure is not yet tested on a real installation.** Try it on a test realm first.
 Do not change the existing client's "Client authentication" at any step.
 
 1. In Keycloak, create a **new** client (for example `eduide-gateway`). Client authentication **on**, standard flow only, direct access grants, implicit flow and service accounts off. Valid redirect URI, exactly one: `https://<instance host>/oauth2/callback`. No wildcard, and no entry for the webview host. Copy its secret from the Credentials tab.
 2. Store the secret in the Secret that `oidc.clientSecretName` names, under the key `client-secret`. Create or replace it from a file or a pipe, and never print it.
 3. Set `config.oidc.gatewayClientID` to the new client id. Leave `config.oidc.clientIDs` and the landing page client as they are. Deploy the chart.
+   This step signs out every open IDE tab once: the ID token cookies of the gateway carry the old audience, so `authz` rejects them and redirects to the login of the new client. Every user with an open IDE tab signs in again once. Running sessions keep running; only the browser login is renewed. Choose a quiet time window, for example outside lectures and exams.
 4. Verify: log in to the landing page, then log in to an IDE (a fresh browser session). Both must work. The old public client still has its instance host redirect URI, so a failed step 3 costs nothing.
 5. Only now remove the instance host redirect URI and web origin from the old, public client (and a webview host entry, if your installation added one). Keep its service host redirect URI and web origin. Its "Client authentication" stays off.
 6. Verify again: landing page login, IDE login.

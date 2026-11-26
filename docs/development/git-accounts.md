@@ -23,7 +23,7 @@ IDE ---- 127.0.0.1:8082/git ---> agent   +--- provider host (Git smart HTTP, use
 | Agent | `internal/agent/git.go` | `/git/<host>/...` on the loopback listener, `GET /v1/git/hosts` |
 | IDE extension | `extensions/eduide-session/src/git.ts` | Writes the `insteadOf` entries before it hands out launch data |
 | Landing page | `landing-page/src/git.ts`, `landing-page/src/components/Git*.tsx`, `RepoPicker.tsx`, `App.tsx` | Accounts section, `/git/callback`, preflight, picker, approval page |
-| Fake provider | `test/fake-git` | OAuth and Git smart HTTP for the e2e |
+| Fake provider | `test/fake-git` | OAuth and Git smart HTTP for the e2e. It behaves like GitLab: a path without `.git` is a 301 (GET) or a 422 (POST) |
 
 ## Where each rule lives
 
@@ -36,8 +36,9 @@ IDE ---- 127.0.0.1:8082/git ---> agent   +--- provider host (Git smart HTTP, use
 | A preflight never blocks a launch | `preflight` in `landing-page/src/git.ts` returns `undefined` on any failure, `startChecked` in `App.tsx` then launches |
 | Nothing is approved without a click | `GitApproval.tsx` calls `PUT` only from the "Allow" handler; `parseApproval` validates the link |
 | Provider hosts count as allowed hosts for `GIT_URI` only | `internal/httpapi/validate.go` |
-| What a repository path may look like (git-proxy, approval API, preflight) | `gitapi.CanonicalRepo`, the only place. The git-proxy builds the upstream path from its result |
-| Limits of the git-proxy (per IP, per instance, idle deadline, ERR length) | `internal/gitproxy/limits.go`, used by `Handler.ServeHTTP` |
+| What a repository path may look like (git-proxy, approval API, preflight) | `gitapi.CanonicalRepo`, the only place; the landing page mirrors it in `canonicalRepository` (`landing-page/src/git.ts`). The git-proxy and the preflight build the upstream path `/<repository>.git/<suffix>` from its result (GitLab needs the `.git`) |
+| Limits of the git-proxy (per IP, per instance, idle and processing limit, ERR length) | `internal/gitproxy/limits.go`, used by `Handler.ServeHTTP` |
+| How an error reaches git on a push (side-band channel 3, status, `ERR`) | `internal/gitproxy/pusherror.go` |
 | Limiter and token cache of the authorize endpoint | `internal/gitpolicy/gitpolicy.go` (`tokenOK` before `allow`) |
 | Commit identity from the provider's values | `identityName`, `validIdentityMail` in `internal/httpapi/git.go` |
 
