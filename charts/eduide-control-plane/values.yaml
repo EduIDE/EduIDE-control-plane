@@ -36,7 +36,9 @@ config:
     issuerURL: ""
     # required: clients accepted for API tokens (landing page client)
     clientIDs: []
-    # required: confidential client of the SecurityPolicy
+    # required: a separate, confidential client for the SecurityPolicy. Never the public landing page client
+    # and never listed in clientIDs. Do not switch the landing page client to confidential: its logins fail.
+    # Migration from one shared client: docs/operations/install.md, "Migrate from one shared client".
     gatewayClientID: ""
     userClaim: preferred_username
     idTokenCookie: eduide-id
@@ -91,7 +93,8 @@ gitAccounts:
     secretName: ""
 
 oidc:
-  # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID
+  # required: existing Secret in this namespace with the secret of the separate confidential client
+  # config.oidc.gatewayClientID (a public client has no secret)
   # under the key "client-secret" (the key the SecurityPolicy reads).
   clientSecretName: ""
   # Optional: reach the identity provider through these backends instead of directly, for clusters

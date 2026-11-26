@@ -38,7 +38,8 @@ The memory requests of operator, service and authz add up to 128 MiB.
 ## Values a deployment must set
 
 `config.deployment`, `config.hosts.service`, `config.hosts.instance`, `config.gateway.name`, `config.oidc.issuerURL`, `config.oidc.clientIDs`, `config.oidc.gatewayClientID` and `oidc.clientSecretName`.
-The client secret Secret holds the key `client-secret`.
+The client secret Secret holds the key `client-secret` and the secret of the separate, confidential gateway client `config.oidc.gatewayClientID`.
+Never make the landing page client confidential (its logins fail), and never list the gateway client in `config.oidc.clientIDs`. An installation with one shared client migrates with [Migrate from one shared client](../../docs/operations/install.md#migrate-from-one-shared-client).
 `values.schema.json` rejects an install without them.
 Examples use `example.org`, see `ci/test-values.yaml`.
 
@@ -49,7 +50,7 @@ Examples use `example.org`, see `ci/test-values.yaml`.
 | `image.registry`, `image.tag`, `image.pullPolicy` | `ghcr.io/eduide/eduide-control-plane`, appVersion | Image of all binaries. A mutable tag such as `pr-<N>` needs `image.pullPolicy: Always`. The operator passes the policy on to the `agent` container of session pods (`config.agent.imagePullPolicy`, set only when it is not `IfNotPresent`), and a change replaces idle instances. IDE images follow `imagePullPolicy` of the template (default: Kubernetes decides from the tag), so use immutable tags or digests there, or set it |
 | `imagePullSecrets` | `[]` | |
 | `config` | see values.yaml | Content of `config.yaml`; `agent.image` defaults to the chart's agent image, `telemetry.userSaltFile` is set by the chart |
-| `oidc.clientSecretName` | required | Existing Secret with `client-secret` |
+| `oidc.clientSecretName` | required | Existing Secret with `client-secret`, the secret of the separate confidential gateway client |
 | `operator.*`, `service.*`, `authz.*` | replicas 1/2/2 | `logLevel` (debug, info, warn), `replicas`, `resources`, `nodeSelector`, `tolerations`, `affinity` |
 | `templates` | `[]` | List of `{name, spec, pool}`; `spec` is the IDETemplate spec, `pool` (optional) is `{minIdle, maxInstances}`; a `targetIdle` here is not rendered, it belongs to the pool scaler (scale subresource), and Helm would otherwise conflict with it on every upgrade |
 | `networkPolicy.enabled` | `true` | Needs a CNI that enforces policies |

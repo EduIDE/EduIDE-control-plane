@@ -178,7 +178,7 @@ type OIDC struct {
 	IssuerURL string `json:"issuerURL"`
 	// ClientIDs accepted as audience or azp of API tokens (landing page client).
 	ClientIDs []string `json:"clientIDs"`
-	// GatewayClientID is the confidential client of the SecurityPolicy; audience of the ID token cookie.
+	// GatewayClientID is the separate, confidential client of the SecurityPolicy (never the public landing page client); audience of the ID token cookie.
 	GatewayClientID string `json:"gatewayClientID"`
 	// UserClaim identifies the owner. Default preferred_username.
 	UserClaim string `json:"userClaim,omitempty"`
