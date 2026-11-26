@@ -2,11 +2,14 @@ package gitproxy
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"strings"
 	"sync"
@@ -24,7 +27,12 @@ const (
 	// shortTTL covers denials and anonymous answers: a user who connects an account must not wait long.
 	shortTTL     = 3 * time.Second
 	maxCacheSize = 4096
+	// retryWait is the pause before the one retry of an authorize call that the service answered with 429. Jitter
+	// up to the same length keeps the requests of a burst from coming back in one step.
+	retryWait = 200 * time.Millisecond
 )
+
+var errRateLimited = errors.New("authorize call: status 429")
 
 // Authorizer asks the service whether a request is allowed and which credential to use.
 type Authorizer interface {
@@ -35,11 +43,28 @@ type Authorizer interface {
 type ServiceClient struct {
 	URL  string // base URL, for example http://eduide-service:8083
 	HTTP *http.Client
+	// wait is the pause before the retry; zero takes retryWait. Tests shorten it.
+	wait time.Duration
 }
 
 // Authorize returns a denial with reason "unauthorized" when the service rejects the instance token, and an
-// error when the service cannot answer.
+// error when the service cannot answer. A 429 of the service is tried once more after a short pause, so a burst
+// of distinct repositories (many submodules, many Git dependencies) does not fail on the rate limit of one instance.
 func (c *ServiceClient) Authorize(ctx context.Context, token string, req gitapi.AuthorizeRequest) (gitapi.AuthorizeResponse, error) {
+	resp, err := c.authorizeOnce(ctx, token, req)
+	if !errors.Is(err, errRateLimited) {
+		return resp, err
+	}
+	wait := cmp.Or(c.wait, retryWait)
+	select {
+	case <-time.After(wait + rand.N(wait)): // #nosec G404 -- jitter, not a secret
+	case <-ctx.Done():
+		return resp, err
+	}
+	return c.authorizeOnce(ctx, token, req)
+}
+
+func (c *ServiceClient) authorizeOnce(ctx context.Context, token string, req gitapi.AuthorizeRequest) (gitapi.AuthorizeResponse, error) {
 	body, _ := json.Marshal(req)
 	hr, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimSuffix(c.URL, "/")+gitapi.AuthorizePath, bytes.NewReader(body))
 	if err != nil {
@@ -55,6 +80,8 @@ func (c *ServiceClient) Authorize(ctx context.Context, token string, req gitapi.
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
 		return gitapi.AuthorizeResponse{Reason: gitapi.ReasonUnauthorized, Message: "EduIDE could not verify this session."}, nil
+	case resp.StatusCode == http.StatusTooManyRequests:
+		return gitapi.AuthorizeResponse{}, errRateLimited
 	case resp.StatusCode != http.StatusOK:
 		return gitapi.AuthorizeResponse{}, fmt.Errorf("authorize call: status %d", resp.StatusCode)
 	}

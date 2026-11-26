@@ -44,7 +44,12 @@ func TestParsePath(t *testing.T) {
 		{"root", "GET", "/", "", false, Target{}},
 		{"dot git segment", "GET", "/h.test/o/r/.git/info/refs", "service=git-upload-pack", false, Target{}},
 		{"dot git segment upload", "POST", "/h.test/o/r/.git/git-upload-pack", "", false, Target{}},
-		{"hidden segment", "GET", "/h.test/o/.x/info/refs", "service=git-upload-pack", false, Target{}},
+		{"upper case dot git segment", "GET", "/h.test/o/.GIT/info/refs", "service=git-upload-pack", false, Target{}},
+		{"dot git repository", "GET", "/h.test/o/.git/info/refs", "service=git-upload-pack", false, Target{}},
+		{"encoded dot dot", "GET", "/h.test/o/%2e%2e/r/info/refs", "service=git-upload-pack", false, Target{}},
+		{"encoded dot git", "GET", "/h.test/o/r/%2egit/info/refs", "service=git-upload-pack", false, Target{}},
+		{"leading dot name", "GET", "/h.test/org/.github/info/refs", "service=git-upload-pack", true, Target{Host: "h.test", Repo: "org/.github", Op: OpInfoRefs, Service: "git-upload-pack"}},
+		{"leading dot name with suffix", "POST", "/h.test/user/.dotfiles.git/git-receive-pack", "", true, Target{Host: "h.test", Repo: "user/.dotfiles", Op: OpReceivePack, Service: "git-receive-pack"}},
 		{"double git suffix", "GET", "/h.test/o/r.git.git/info/refs", "service=git-upload-pack", false, Target{}},
 		{"git suffix in the middle", "GET", "/h.test/o.git/r/info/refs", "service=git-upload-pack", false, Target{}},
 	}

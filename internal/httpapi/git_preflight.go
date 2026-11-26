@@ -85,7 +85,7 @@ func (s *Server) probe(ctx context.Context, owner string, e *gitaccount.Entry, u
 	ctx, cancel := context.WithTimeout(ctx, preflightTimeout)
 	defer cancel()
 	// Scheme and host come from the configured provider, never from the request; only the canonical repository path does.
-	target := url.URL{Scheme: "https", Host: e.Config.Host, Path: u.Path + "/info/refs", RawQuery: "service=git-upload-pack"}
+	target := url.URL{Scheme: "https", Host: e.Config.Host, Path: "/" + u.Path + ".git/info/refs", RawQuery: "service=git-upload-pack"}
 	if s.gitProbeBase != nil {
 		b, _ := url.Parse(s.gitProbeBase(e.Config.Host))
 		target.Scheme, target.Host = b.Scheme, b.Host

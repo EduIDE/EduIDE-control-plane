@@ -176,14 +176,16 @@ export function parseApproval(search: string): ApprovalRequest | 'invalid' | und
 
 const PATH_SEGMENT = /^[A-Za-z0-9._~-]+$/;
 
-/** The rule of the service (`CanonicalRepo` in `internal/gitapi`): 2 to 10 plain segments, none starting with a dot, `.git` only at the end. */
+/** The rule of the service (`CanonicalRepo` in `internal/gitapi`): 2 to 10 plain segments, none of them `.`, `..` or `.git`, `.git` only at the end. */
 function canonicalRepository(pathname: string): string | undefined {
     const segs = pathname.replace(/^\/+|\/+$/g, '').split('/');
     const last = segs.length - 1;
     if (
         segs.length < 2 ||
         segs.length > 10 ||
-        segs.some((s, i) => !PATH_SEGMENT.test(s) || s.startsWith('.') || (i < last && s.endsWith('.git')))
+        segs.some(
+            (s, i) => !PATH_SEGMENT.test(s) || s === '.' || s === '..' || s.toLowerCase() === '.git' || (i < last && s.endsWith('.git'))
+        )
     ) {
         return undefined;
     }

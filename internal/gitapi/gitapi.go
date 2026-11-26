@@ -83,16 +83,17 @@ const MaxRepoSegments = 10
 // CanonicalRepo is the one place that decides what a repository path may look like, for the git-proxy, the
 // approval API and the preflight. It returns the path without surrounding slashes and without a ".git" suffix,
 // and false for anything else: fewer than 2 or more than MaxRepoSegments segments, other characters than
-// letters, digits and "._~-", a segment that starts with a dot (".git", "..", hidden names), ".git" at the end
-// of a segment other than the last, or a name that still ends in ".git" after one is cut. The result is
-// idempotent under NormalizeRepo, so no caller can normalise it a second time into another repository.
+// letters, digits and "._~-", the segments ".", ".." and ".git" (any case), ".git" at the end of a segment other
+// than the last, or a name that still ends in ".git" after one is cut. Other names with a leading dot are valid
+// (".github", ".dotfiles"). The result is idempotent under NormalizeRepo, so no caller can normalise it a second
+// time into another repository.
 func CanonicalRepo(p string) (string, bool) {
 	segs := strings.Split(strings.Trim(p, "/"), "/")
 	if len(segs) < 2 || len(segs) > MaxRepoSegments {
 		return "", false
 	}
 	for i, s := range segs {
-		if !segmentRE.MatchString(s) || s[0] == '.' {
+		if !segmentRE.MatchString(s) || s == "." || s == ".." || strings.EqualFold(s, ".git") {
 			return "", false
 		}
 		if strings.HasSuffix(s, ".git") {

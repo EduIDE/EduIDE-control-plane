@@ -618,13 +618,11 @@ func TestGitAccounts(t *testing.T) {
 			if resp.StatusCode != 200 || json.NewDecoder(resp.Body).Decode(&got) != nil {
 				t.Fatalf("try-approve: status %d", resp.StatusCode)
 			}
-			// Session pods may not reach the gateway at all (the egress deny list covers private ranges), so the pod
-			// either gets no connection or a 401. Never a success.
-			if svc := got["service"]; !svc.Error && svc.Status != 401 && svc.Status != 403 {
-				t.Errorf("service answered %+v to a call without a token", svc)
-			}
-			// What the pod would hit if it could connect: the same PUT without a token, and with a made-up token,
-			// from here, with the real session name and a provider repository.
+			// The pod's own call to the service is not asserted. Session pods cannot reach the gateway at all (the egress
+			// deny list covers private ranges), so the call fails to connect, and that would pass for any reason, also
+			// for a service that accepts the call. The 401 checks from outside the cluster below stay: they are what
+			// the pod would hit if it could connect, the same PUT without a token and with a made-up token, with the
+			// real session name and a provider repository.
 			for name, bearer := range map[string]string{"no token": "", "made-up token": "pod-guess"} {
 				r, _ := http.NewRequest(http.MethodPut, apiBase+repoPath, strings.NewReader(`{"repository":"`+otherURL+`","access":"read"}`))
 				r.Header.Set("Content-Type", "application/json")

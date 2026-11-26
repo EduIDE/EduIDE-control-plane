@@ -32,9 +32,12 @@ import (
 
 const (
 	maxBody = 4 << 10
-	// perInstanceRate and burst bound the calls of one instance; the git-proxy caches answers, so real traffic stays far below.
-	perInstanceRate  = 10
-	perInstanceBurst = 30
+	// perInstanceRate and burst bound the calls of one instance. The git-proxy caches answers for a few seconds and
+	// calls once per repository, so only a burst over many repositories (40 Git dependencies, 30 submodules fetched
+	// in parallel) comes near. The burst covers that; the git-proxy retries a 429 once. Wrong tokens and made-up
+	// instance names never reach this bucket (see ServeHTTP and unknownLookupRate).
+	perInstanceRate  = 20
+	perInstanceBurst = 100
 	instanceIndex    = "status.instance"
 	// maxTracked bounds the limiter map and the token cache.
 	maxTracked = 4096
@@ -81,6 +84,9 @@ type Handler struct {
 	Approvals interface {
 		List(ctx context.Context, session string) ([]Approval, error)
 	}
+
+	// now is the clock of the token cache and the limiters; nil takes time.Now. Tests set it.
+	now func() time.Time
 
 	mu       sync.Mutex
 	limiters map[string]*limiterEntry
@@ -149,12 +155,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (h *Handler) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
 // allow charges the bucket of an authenticated instance. The map is bounded: quiet buckets are dropped first,
 // and when it is still full the call is let through untracked (the caller holds a valid instance token).
 func (h *Handler) allow(instance string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	now := time.Now()
+	now := h.clock()
 	if h.limiters == nil {
 		h.limiters = map[string]*limiterEntry{}
 	}
@@ -174,7 +187,7 @@ func (h *Handler) allow(instance string) bool {
 		h.limiters[instance] = e
 	}
 	e.seen = now
-	return e.l.Allow()
+	return e.l.AllowN(now, 1)
 }
 
 var errLookupBudget = errors.New("too many token lookups for unknown instances")
@@ -183,7 +196,7 @@ var errLookupBudget = errors.New("too many token lookups for unknown instances")
 // The hash of the token is cached, so wrong tokens for a real instance cost no API call at all.
 func (h *Handler) tokenOK(ctx context.Context, instance, bearer string) (bool, error) {
 	got := sha256.Sum256([]byte(bearer))
-	now := time.Now()
+	now := h.clock()
 	h.mu.Lock()
 	e, hit := h.tokens[instance]
 	h.mu.Unlock()

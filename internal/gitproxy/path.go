@@ -23,7 +23,7 @@ const (
 // Target is a request that passed the path allowlist: /{host}/{repo...}/{info/refs|git-upload-pack|git-receive-pack}.
 type Target struct {
 	Host string // lower case
-	Repo string // canonical (gitapi.CanonicalRepo): no slashes around it, no .git suffix. Upstream and authorize use this value only.
+	Repo string // canonical (gitapi.CanonicalRepo): no slashes around it, no .git suffix. Authorize, approvals and the push rule use this value; the upstream path adds ".git" itself.
 	Op   Op
 	// Service is git-upload-pack or git-receive-pack.
 	Service string
@@ -37,12 +37,15 @@ func (t Target) Kind() string {
 	return gitapi.KindRead
 }
 
-// upstreamPath is the fixed Git suffix below the repository; the upstream URL is "/" + Repo + upstreamPath.
+// upstreamPath is the path at the provider: the repository with ".git", then the fixed Git suffix. The ".git" is
+// not optional. GitLab answers a repository without it with a 301 on info/refs and a 422 on the POST, GitHub serves
+// both forms. Repo itself stays without ".git": authorize, approvals and the push rule compare that form.
 func (t Target) upstreamPath() string {
+	p := "/" + t.Repo + ".git"
 	if t.Op == OpInfoRefs {
-		return "/info/refs"
+		return p + "/info/refs"
 	}
-	return "/" + t.Service
+	return p + "/" + t.Service
 }
 
 // ParsePath checks method, path and query against the allowlist. ok is false for everything else.

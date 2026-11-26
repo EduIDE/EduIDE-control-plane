@@ -183,10 +183,19 @@ describe('parseApproval', () => {
         ['double git suffix', 'https://h/a/b.git.git'],
         ['git suffix in the middle', 'https://h/a.git/b'],
         ['one segment', 'https://h/a'],
-        ['hidden segment', 'https://h/a/.b'],
+        ['upper case dot git segment', 'https://h/a/.GIT'],
+        ['dot git as the repository', 'https://h/a/.git'],
+        ['encoded double dot', 'https://h/a/%2e%2e/b'],
         ['too deep', 'https://h/a/b/c/d/e/f/g/h/i/j/k']
     ])('refuses a repository with %s', (_n, repo) => {
         expect(parseApproval(link(repo))).toBe('invalid');
+    });
+
+    it('accepts repositories whose name starts with a dot', () => {
+        expect(parseApproval(link('https://github.com/org/.github'))).toMatchObject({ repository: 'https://github.com/org/.github' });
+        expect(parseApproval(link('https://github.com/user/.dotfiles.git'))).toMatchObject({
+            repository: 'https://github.com/user/.dotfiles'
+        });
     });
 
     it.each(['', 'S_ABC', '../x', 'a/b', '-a', 'a'.repeat(64)])('refuses the session name %j', name => {

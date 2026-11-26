@@ -257,12 +257,24 @@ func (s *server) user(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"id": accountID, "username": accountLogin, "name": accountName})
 }
 
-// git serves /{group}/{project}[.git]/... with git http-backend after the auth rules of the fake.
+// git serves /{group}/{project}.git/... with git http-backend after the auth rules of the fake. Like GitLab, it
+// answers a path without ".git" with a 301 to the ".git" form on GET and with a 422 on POST, before any auth
+// rule. A client that leaves the suffix out (the git-proxy did once) fails here instead of on a real host.
 func (s *server) git(w http.ResponseWriter, r *http.Request) {
-	repo, tail, ok := repoOf(r.URL.Path)
+	repo, tail, hasGit, ok := repoOf(r.URL.Path)
 	private, known := repos[repo]
 	if !ok || !known {
 		http.NotFound(w, r)
+		return
+	}
+	if !hasGit {
+		if r.Method == http.MethodGet {
+			u := *r.URL
+			u.Path = "/" + repo + ".git" + tail
+			http.Redirect(w, r, u.String(), http.StatusMovedPermanently)
+			return
+		}
+		http.Error(w, "the repository path needs the .git suffix", http.StatusUnprocessableEntity)
 		return
 	}
 	user, pass, hasAuth := r.BasicAuth()
@@ -306,15 +318,16 @@ func (s *server) git(w http.ResponseWriter, r *http.Request) {
 	}).ServeHTTP(w, r)
 }
 
-// repoOf splits "/group/project[.git]/info/refs" and the two service paths into "group/project" and the tail.
-// Providers answer with and without ".git"; the preflight of the service leaves it out.
-func repoOf(p string) (repo, tail string, ok bool) {
+// repoOf splits "/group/project[.git]/info/refs" and the two service paths into "group/project", the tail and
+// whether the path had ".git".
+func repoOf(p string) (repo, tail string, hasGit, ok bool) {
 	for _, t := range []string{"/info/refs", "/git-upload-pack", "/git-receive-pack"} {
 		if r, found := strings.CutSuffix(p, t); found {
-			return strings.TrimSuffix(strings.TrimPrefix(r, "/"), ".git"), t, true
+			repo, hasGit = strings.CutSuffix(strings.TrimPrefix(r, "/"), ".git")
+			return repo, t, hasGit, true
 		}
 	}
-	return "", "", false
+	return "", "", false, false
 }
 
 // recordPush notes the first command of the push (old new ref) and hands the body on unchanged.

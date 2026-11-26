@@ -64,7 +64,19 @@ func TestCanonicalRepo(t *testing.T) {
 		{"o/my.repo-1_x~", "o/my.repo-1_x~", true},
 		{"o/r/.git/info", "", false}, // the dot segment that used to normalise to o/r
 		{"o/.git", "", false},
-		{"o/.hidden", "", false},
+		{"o/.GIT", "", false},
+		{"o/.Git/", "", false},
+		{"o/.git/", "", false},
+		{"o/r/.git", "", false},
+		{"o/%2e%2e/r", "", false}, // encoded dots are not path segments
+		{"o/%2egit", "", false},
+		{"o/.git.git", "", false},
+		{"o/../r", "", false},
+		{"o/.../r", "o/.../r", true},
+		{"org/.github", "org/.github", true}, // a leading dot alone is a valid name
+		{"user/.dotfiles.git", "user/.dotfiles", true},
+		{".config/r", ".config/r", true},
+		{"o/.gitx", "o/.gitx", true},
 		{"o/..", "", false},
 		{"o/./r", "", false},
 		{"o/r.git.git", "", false},

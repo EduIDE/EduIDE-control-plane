@@ -20,6 +20,14 @@ const (
 	// idleTimeout cancels a request that moves no byte in either direction for this long. The total time is not
 	// limited: a large clone over a slow link keeps making progress.
 	idleTimeout = 5 * time.Minute
+	// processingTimeout replaces the idle time between the end of a request body and the first byte of the answer.
+	// The provider works in that phase (it unpacks and checks a push, or builds a pack) and sends nothing, so a
+	// quiet wire is not a stall. The limit only frees the slot of a provider that never answers.
+	processingTimeout = 30 * time.Minute
+	// deadlineGrace is how much longer the connection deadlines run than the timer of the same limit.
+	deadlineGrace = 5 * time.Second
+	// peekTimeout bounds the wait for the first command of a push, which tells how an error must reach git.
+	peekTimeout = 10 * time.Second
 	// maxErrMessage bounds the text of an ERR line: a pkt-line length has four hex digits.
 	maxErrMessage = 1000
 )

@@ -56,6 +56,10 @@ type provider struct {
 	seen []seenRequest
 	// slow throttles both directions of the fake provider: a slow link. Set it before the first request.
 	slow time.Duration
+	// afterAdvert runs at the end of the advertisement for a push, before git receives it.
+	afterAdvert atomic.Pointer[func()]
+	// stallPush makes the provider read a push and then never answer.
+	stallPush atomic.Bool
 }
 
 // slowWriter and slowReader pass 256 KiB per step of the delay.
@@ -103,12 +107,21 @@ func newProvider(t *testing.T, gitExec string) *provider {
 	}}
 }
 
-// ServeHTTP behaves like GitHub for the cases the tests need: /priv/ needs basic auth, pushes always do, and an
-// unauthorized answer is a 401 with WWW-Authenticate, which would make git ask for a password.
+// ServeHTTP behaves like GitLab for the cases the tests need: a repository path needs ".git" (without it a GET is
+// a 301 and a POST a 422), /priv/ needs basic auth, pushes always do, and an unauthorized answer is a 401 with
+// WWW-Authenticate, which would make git ask for a password.
 func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p.mu.Lock()
 	p.seen = append(p.seen, seenRequest{r.URL.Path, r.Header.Get("Authorization")})
 	p.mu.Unlock()
+	if segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3); len(segs) == 3 && !strings.HasSuffix(segs[1], ".git") {
+		if r.Method == http.MethodGet {
+			http.Redirect(w, r, "/"+segs[0]+"/"+segs[1]+".git/"+segs[2]+"?"+r.URL.RawQuery, http.StatusMovedPermanently)
+		} else {
+			http.Error(w, "the repository path needs the .git suffix", http.StatusUnprocessableEntity)
+		}
+		return
+	}
 	if p.slow > 0 {
 		w, r.Body = &slowWriter{ResponseWriter: w, d: p.slow}, &slowReader{ReadCloser: r.Body, d: p.slow}
 	}
@@ -120,11 +133,6 @@ func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-	}
-	segs := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 3)
-	if len(segs) == 3 && !strings.HasSuffix(segs[1], ".git") {
-		segs[1] += ".git"
-		r.URL.Path = "/" + strings.Join(segs, "/")
 	}
 	if r.ContentLength < 0 {
 		// Go's CGI handler refuses chunked bodies. Spool to disk (not to memory) and give the length.
@@ -139,7 +147,15 @@ func (p *provider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Body, r.ContentLength, r.TransferEncoding = f, n, nil
 		}
 	}
+	if p.stallPush.Load() && push && r.Method == http.MethodPost {
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+		return
+	}
 	p.cgi.ServeHTTP(w, r)
+	if f := p.afterAdvert.Load(); f != nil && push && r.Method == http.MethodGet {
+		(*f)()
+	}
 }
 
 func (p *provider) auths() []string {
@@ -163,6 +179,8 @@ type authorizeFake struct {
 	mu          sync.Mutex
 	mode        string
 	approved    map[string]string // "host/path" -> "read" or "write"
+	// hook runs at the start of every call.
+	hook atomic.Pointer[func(gitapi.AuthorizeRequest)]
 }
 
 func (a *authorizeFake) approve(repo, access string) {
@@ -197,6 +215,9 @@ func (a *authorizeFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var req gitapi.AuthorizeRequest
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if f := a.hook.Load(); f != nil {
+		(*f)(req)
+	}
 	sr, _ := a.sessionRepo.Load().(string)
 	acct := a.connected.Load()
 	a.mu.Lock()
@@ -762,6 +783,100 @@ func TestUnclaimedInstanceGetsNoGitPath(t *testing.T) {
 	}
 }
 
+// The provider is as strict as GitLab: a repository path without ".git" is a 301 or a 422. Git must work with
+// both clone URLs, because the proxy always asks the provider for the ".git" form.
+func TestCloneWithAndWithoutDotGit(t *testing.T) {
+	r := newRig(t)
+	r.seed("pub/open", map[string][]byte{"README": []byte("public\n")})
+	r.seed("priv/secret", map[string][]byte{"README": []byte("private\n")})
+	r.az.sessionRepo.Store(host + "/priv/secret")
+	r.connect(true)
+	for _, tc := range []struct{ name, url string }{
+		{"public without .git", "https://" + host + "/pub/open"},
+		{"public with .git", "https://" + host + "/pub/open.git"},
+		{"private without .git", "https://" + host + "/priv/secret"},
+		{"private with .git", "https://" + host + "/priv/secret.git"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			r.mustRun(dir, "clone", tc.url, "c")
+			if _, err := os.Stat(filepath.Join(dir, "c", "README")); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	// A push to the session repository works without ".git" as well, and a leading dot in the name is no problem.
+	r.seed("org/.github", map[string][]byte{"profile": []byte("hello\n")})
+	r.mustRun(t.TempDir(), "clone", "https://"+host+"/org/.github", "c")
+	dir := t.TempDir()
+	r.mustRun(dir, "clone", "https://"+host+"/priv/secret", "c")
+	r.commit(filepath.Join(dir, "c"), "new.txt", "x")
+	r.mustRun(filepath.Join(dir, "c"), "push", "origin", "main")
+	if want := strings.TrimSpace(r.mustRun(filepath.Join(dir, "c"), "rev-parse", "HEAD")); r.head("priv/secret") != want {
+		t.Error("the push did not land")
+	}
+}
+
+// git must show the text of an error that the proxy raises after the push body went out, not "bad band".
+func TestPushErrorsReachTheUser(t *testing.T) {
+	r := newRig(t)
+	r.seed("priv/secret", map[string][]byte{"README": []byte("private\n")})
+	r.az.sessionRepo.Store(host + "/priv/secret")
+	r.connect(true)
+	dir := t.TempDir()
+	r.mustRun(dir, "clone", "https://"+host+"/priv/secret", "c")
+	work := filepath.Join(dir, "c")
+	r.commit(work, "a.txt", "a")
+
+	push := func(t *testing.T, want string) {
+		t.Helper()
+		out, err := r.run(work, "push", "origin", "main")
+		if err == nil || !strings.Contains(out, want) || strings.Contains(out, "bad band") {
+			t.Errorf("push: %v\n%s\nwant the text %q", err, out, want)
+		}
+		if r.head("priv/secret") == strings.TrimSpace(r.mustRun(work, "rev-parse", "HEAD")) {
+			t.Error("the push landed")
+		}
+	}
+
+	t.Run("too many requests of the session", func(t *testing.T) {
+		var release []func()
+		// The second authorize call of the push is the POST, once the answer of the advertisement left the cache.
+		hook := func(gitapi.AuthorizeRequest) {
+			r.az.hook.Store(nil)
+			for range maxInFlight {
+				for !r.proxy.running.acquire(instanceName) { // the advertisement may still hold its slot
+					runtime.Gosched()
+				}
+				release = append(release, func() { r.proxy.running.release(instanceName) })
+			}
+		}
+		defer func() {
+			for _, f := range release {
+				f()
+			}
+		}()
+		after := func() { r.clk.add(time.Minute); r.az.hook.Store(&hook) }
+		r.prov.afterAdvert.Store(&after)
+		defer r.prov.afterAdvert.Store(nil)
+		push(t, "Too many Git requests of this session")
+	})
+
+	t.Run("the provider never answers", func(t *testing.T) {
+		r.proxy.processing = 500 * time.Millisecond
+		r.prov.stallPush.Store(true)
+		defer r.prov.stallPush.Store(false)
+		r.connect(true)
+		push(t, "The transfer stalled")
+	})
+
+	t.Run("denied by the service", func(t *testing.T) {
+		r.az.sessionRepo.Store(host + "/priv/other")
+		r.connect(true)
+		push(t, "only pushes to the repository this session was started with")
+	})
+}
+
 // randomFile writes n incompressible bytes, so the pack is as large as the data.
 func randomFile(t *testing.T, path string, n int) {
 	t.Helper()
@@ -817,7 +932,8 @@ func TestLargeRepositoryStreams(t *testing.T) {
 	r := newRig(t)
 	const size = 50 << 20
 	// A slow link: each direction takes about 5 s, the idle deadline is 3 s. The transfer never stops, so it
-	// must finish (the deadline counts idle time, not total time).
+	// must finish (the deadline counts idle time, not total time). The provider also needs seconds to unpack the
+	// push and to build the pack, under -race longer than the idle time: that silent phase has its own limit.
 	r.prov.slow = 25 * time.Millisecond
 	r.proxy.idle = 3 * time.Second
 	seedDir := t.TempDir()

@@ -133,7 +133,6 @@ func TestPrivateRepoNeedsToken(t *testing.T) {
 		"/course/ex1.git/info/refs?service=git-upload-pack":   401,
 		"/open/public.git/info/refs?service=git-receive-pack": 401,
 		"/nope/none.git/info/refs?service=git-upload-pack":    404,
-		"/course/ex1/info/refs?service=git-upload-pack":       401,
 	} {
 		resp, err := f.client().Get(f.srv.URL + path)
 		if err != nil {
@@ -144,8 +143,34 @@ func TestPrivateRepoNeedsToken(t *testing.T) {
 			t.Errorf("%s: %d, want %d", path, resp.StatusCode, want)
 		}
 	}
-	if st := f.s.stats["course/ex1"]; st == nil || st.Rejected != 2 || st.Users[""] != 2 {
+	if st := f.s.stats["course/ex1"]; st == nil || st.Rejected != 1 || st.Users[""] != 1 {
 		t.Fatalf("stats %+v", st)
+	}
+}
+
+// Like GitLab: no ".git" is a 301 to the ".git" form on GET and a 422 on POST, whatever the auth state.
+func TestPathWithoutDotGitIsRedirectedLikeGitLab(t *testing.T) {
+	f := newFixture(t)
+	c := f.client()
+	c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := c.Get(f.srv.URL + "/course/ex1/info/refs?service=git-upload-pack")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMovedPermanently || resp.Header.Get("Location") != "/course/ex1.git/info/refs?service=git-upload-pack" {
+		t.Errorf("GET: %d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+	resp, err = c.Post(f.srv.URL+"/open/public/git-upload-pack", "application/x-git-upload-pack-request", strings.NewReader("0000"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Errorf("POST: %d", resp.StatusCode)
+	}
+	if st := f.s.stats["course/ex1"]; st != nil && st.Requests != 0 {
+		t.Errorf("the redirect counted as a request: %+v", st)
 	}
 }
 

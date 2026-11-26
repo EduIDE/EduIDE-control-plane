@@ -247,6 +247,74 @@ func TestRateLimitPerInstance(t *testing.T) {
 	}
 }
 
+func TestBurstOverManyDistinctRepositoriesPasses(t *testing.T) {
+	r := newRig(t, session("s", "alice", "inst1", "", v1alpha1.SessionReady))
+	for i := range 40 { // npm install with 40 Git dependencies, git submodule update --jobs 8 over 40 submodules
+		req := gitapi.AuthorizeRequest{Instance: "inst1", Host: "github.com", Repository: fmt.Sprintf("o/r%d", i), Kind: "read"}
+		if code, _, _ := r.call(instanceTok, req); code != http.StatusOK {
+			t.Fatalf("repository %d: status %d", i, code)
+		}
+	}
+}
+
+// fakeClock is a settable clock for the caches of the handler.
+type fakeClock struct{ t time.Time }
+
+func (c *fakeClock) now() time.Time { return c.t }
+
+func (r *rig) setSecretToken(t *testing.T, instance, token string) {
+	t.Helper()
+	ctx := context.Background()
+	name := "ide-" + instance + "-token"
+	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns}, Data: map[string][]byte{v1alpha1.InstanceTokenKey: []byte(token)}}
+	if err := r.k.Create(ctx, sec); err != nil {
+		if err := r.k.Update(ctx, sec); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestTokenCacheExpires(t *testing.T) {
+	r := newRig(t, session("s", "alice", "inst1", "", v1alpha1.SessionReady))
+	clk := &fakeClock{t: time.Now()}
+	r.h.now = clk.now
+	req := gitapi.AuthorizeRequest{Instance: "inst1", Host: "github.com", Repository: "o/r", Kind: "read"}
+	if code, _, _ := r.call(instanceTok, req); code != http.StatusOK {
+		t.Fatalf("first call: %d", code)
+	}
+	r.setSecretToken(t, "inst1", "rotated-token")
+	clk.t = clk.t.Add(tokenTTL - time.Second)
+	if code, _, _ := r.call(instanceTok, req); code != http.StatusOK {
+		t.Errorf("inside the TTL the cached hash stays in use: %d", code)
+	}
+	clk.t = clk.t.Add(2 * time.Second)
+	if code, _, _ := r.call(instanceTok, req); code != http.StatusUnauthorized {
+		t.Errorf("after the TTL the old token is refused: %d", code)
+	}
+	if code, _, _ := r.call("rotated-token", req); code != http.StatusOK {
+		t.Errorf("after the TTL the new token works: %d", code)
+	}
+}
+
+func TestMissingSecretIsRememberedForMissTTLOnly(t *testing.T) {
+	r := newRig(t, session("s", "alice", "inst9", "", v1alpha1.SessionReady))
+	clk := &fakeClock{t: time.Now()}
+	r.h.now = clk.now
+	req := gitapi.AuthorizeRequest{Instance: "inst9", Host: "github.com", Repository: "o/r", Kind: "read"}
+	if code, _, _ := r.call("tok9", req); code != http.StatusUnauthorized {
+		t.Fatalf("no Secret yet: %d", code)
+	}
+	r.setSecretToken(t, "inst9", "tok9")
+	clk.t = clk.t.Add(missTTL - time.Second)
+	if code, _, _ := r.call("tok9", req); code != http.StatusUnauthorized {
+		t.Errorf("inside missTTL the missing Secret is remembered: %d", code)
+	}
+	clk.t = clk.t.Add(2 * time.Second)
+	if code, _, _ := r.call("tok9", req); code != http.StatusOK {
+		t.Errorf("after missTTL the new Secret is read: %d", code)
+	}
+}
+
 // countingReader counts the Secret reads of the handler.
 type countingReader struct {
 	client.Reader

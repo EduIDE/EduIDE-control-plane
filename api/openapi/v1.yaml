@@ -422,7 +422,7 @@ paths:
       tags: [git]
       description: |
         Tells whether a launch with this repository needs a step first. The service sends one `info/refs` request to
-        the provider host (3 s timeout, with the credential of the user when there is an account, never following a
+        the provider host (path `/<repository>.git/info/refs`, because GitLab redirects a path without `.git`; 3 s timeout, with the credential of the user when there is an account, never following a
         redirect) and discards the answer. The URL follows the rules of the launch key `GIT_URI`: https, no
         credentials. Results: `ok` (reachable, with the credential or anonymously), `connect` (provider host, no
         account, not readable anonymously), `no-access` (account connected, the host says not found or no access),

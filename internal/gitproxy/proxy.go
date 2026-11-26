@@ -53,13 +53,14 @@ type Handler struct {
 	rp         *httputil.ReverseProxy
 	clients    *clientLimiter
 	running    slots
-	idle       time.Duration
+	// idle and processing are idleTimeout and processingTimeout; tests shorten them.
+	idle, processing time.Duration
 }
 
 // New returns a handler for the provider hosts. rt reaches the provider hosts over HTTPS; nil takes a transport
 // with default TLS verification. Redirects of a provider are never followed.
 func New(providers []config.GitProvider, landingURL string, az Authorizer, rt http.RoundTripper, log *slog.Logger) *Handler {
-	h := &Handler{providers: map[string]Provider{}, landingURL: landingURL, authz: az, cache: newDecisionCache(), log: log, clients: newClientLimiter(), idle: idleTimeout}
+	h := &Handler{providers: map[string]Provider{}, landingURL: landingURL, authz: az, cache: newDecisionCache(), log: log, clients: newClientLimiter(), idle: idleTimeout, processing: processingTimeout}
 	for _, p := range providers {
 		h.providers[strings.ToLower(p.Host)] = Provider{Name: p.Name, DisplayName: p.DisplayName}
 	}
@@ -67,7 +68,7 @@ func New(providers []config.GitProvider, landingURL string, az Authorizer, rt ht
 		rt = Transport(nil)
 	}
 	// No timeout of the whole request: a clone or push of gigabytes must not be cut off. A request that moves
-	// no byte for h.idle is cancelled (ServeHTTP).
+	// no byte for h.idle is cancelled, and one that gets no answer h.processing after its body ended (ServeHTTP).
 	h.rp = &httputil.ReverseProxy{
 		FlushInterval:  -1,
 		BufferPool:     bufPool{},
@@ -104,11 +105,17 @@ type reqState struct {
 	// progress is called whenever bytes arrive (from the client or from the provider). It moves the idle timer and the
 	// connection deadlines, so a write to a client that stopped reading ends after the idle time.
 	progress func()
-	start    time.Time
-	in, out  atomic.Int64
-	idleCut  atomic.Bool
-	result   string
-	upstream int
+	// processing starts the wait for the provider after the request body ended, see processingTimeout. It does
+	// nothing once the answer began.
+	processing func()
+	// form is how an error on this request reaches git (pushForm).
+	form      pushForm
+	responded atomic.Bool
+	start     time.Time
+	in, out   atomic.Int64
+	idleCut   atomic.Bool
+	result    string
+	upstream  int
 }
 
 type stateKey struct{}
@@ -117,7 +124,7 @@ func stateOf(ctx context.Context) *reqState { s, _ := ctx.Value(stateKey{}).(*re
 
 func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 	st := stateOf(pr.In.Context())
-	u := &url.URL{Scheme: "https", Host: st.t.Host, Path: "/" + st.t.Repo + st.t.upstreamPath()}
+	u := &url.URL{Scheme: "https", Host: st.t.Host, Path: st.t.upstreamPath()}
 	if st.t.Op == OpInfoRefs {
 		u.RawQuery = "service=" + st.t.Service
 	}
@@ -133,13 +140,15 @@ func (h *Handler) rewrite(pr *httputil.ProxyRequest) {
 		pr.Out.SetBasicAuth(st.cred.Username, st.cred.Password)
 	}
 	if b := pr.Out.Body; b != nil && b != http.NoBody {
-		pr.Out.Body = &countReader{ReadCloser: b, n: &st.in, progress: st.progress}
+		pr.Out.Body = &countReader{ReadCloser: b, n: &st.in, progress: st.progress, onEOF: st.processing}
 	}
 }
 
 func (h *Handler) modifyResponse(resp *http.Response) error {
 	st := stateOf(resp.Request.Context())
 	st.upstream = resp.StatusCode
+	st.responded.Store(true)
+	st.progress()
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound:
 		st.result = resultUpstreamDenied
@@ -190,14 +199,14 @@ func (h *Handler) upstreamFailed(w http.ResponseWriter, r *http.Request, err err
 	st := stateOf(r.Context())
 	st.result = resultUpstreamError
 	if st.idleCut.Load() {
-		writeGitError(w, st.t, "The transfer stalled and EduIDE cancelled it. Try again.")
+		writeGitError(w, st.t, st.form, http.StatusGatewayTimeout, "The transfer stalled and EduIDE cancelled it. Try again.")
 		return
 	}
 	if r.Context().Err() != nil { // the client went away
 		return
 	}
 	h.log.Warn("git upstream unreachable", "provider", st.prov.Name, "error", errText(err))
-	writeGitError(w, st.t, st.prov.DisplayName+" is not reachable right now. Try again in a moment.")
+	writeGitError(w, st.t, st.form, http.StatusBadGateway, st.prov.DisplayName+" is not reachable right now. Try again in a moment.")
 }
 
 func errText(err error) string {
@@ -213,9 +222,9 @@ func errText(err error) string {
 func (h *Handler) replaceWithError(resp *http.Response, st *reqState, msg string) {
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
 	_ = resp.Body.Close()
-	body := errorBody(st.t, msg)
-	resp.StatusCode, resp.Status = http.StatusOK, "200 OK"
-	resp.Header = http.Header{"Content-Type": {contentType(st.t)}, "Cache-Control": {"no-cache"}}
+	code, ctype, body := errorAnswer(st.t, st.form, http.StatusForbidden, msg)
+	resp.StatusCode, resp.Status = code, fmt.Sprintf("%d %s", code, http.StatusText(code))
+	resp.Header = http.Header{"Content-Type": {ctype}, "Cache-Control": {"no-cache"}}
 	resp.Body, resp.ContentLength = io.NopCloser(bytes.NewReader(body)), int64(len(body))
 	resp.Header.Set("Content-Length", fmt.Sprint(len(body)))
 	resp.TransferEncoding = nil
@@ -245,11 +254,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := &reqState{t: t, prov: prov, start: time.Now()}
+	rc := http.NewResponseController(w)
+	if t.Op == OpReceivePack {
+		st.form = pushFormOf(r, rc)
+	}
 	resp, err := h.authorize(r.Context(), instance, token, t)
 	if err != nil {
 		st.result = resultUnavailable
 		h.log.Warn("git authorize unavailable", "provider", prov.Name, "kind", t.Kind(), "error", err.Error())
-		writeGitError(w, t, "EduIDE cannot check your access right now. Try again in a moment.")
+		writeGitError(w, t, st.form, http.StatusServiceUnavailable, "EduIDE cannot check your access right now. Try again in a moment.")
 		h.finish(st, "")
 		return
 	}
@@ -260,13 +273,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if msg == "" {
 			msg = "EduIDE does not allow this Git request."
 		}
-		writeGitError(w, t, msg)
+		writeGitError(w, t, st.form, http.StatusForbidden, msg)
 		h.finish(st, resp.Reason)
 		return
 	}
 	if !h.running.acquire(instance) {
 		st.result = resultDenied
-		writeGitError(w, t, "Too many Git requests of this session run at the same time. Try again in a moment.")
+		writeGitError(w, t, st.form, http.StatusTooManyRequests, "Too many Git requests of this session run at the same time. Try again in a moment.")
 		h.finish(st, "busy")
 		return
 	}
@@ -275,11 +288,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	timer := time.AfterFunc(h.idle, func() { st.idleCut.Store(true); cancel() })
 	defer timer.Stop()
-	rc := http.NewResponseController(w)
-	st.progress = func() {
-		timer.Reset(h.idle)
-		_ = rc.SetReadDeadline(time.Now().Add(h.idle))
-		_ = rc.SetWriteDeadline(time.Now().Add(h.idle))
+	// One limit at a time moves the timer and the deadlines of the client connection. The server reads the
+	// connection in the background once the body is read, so a short read deadline there would cancel a request
+	// that waits for the provider.
+	var mu sync.Mutex
+	// The deadlines run a little longer than the timer, so the timer decides first and the client gets its message.
+	setLimit := func(d time.Duration) {
+		timer.Reset(d)
+		_ = rc.SetReadDeadline(time.Now().Add(d + deadlineGrace))
+		_ = rc.SetWriteDeadline(time.Now().Add(d + deadlineGrace))
+	}
+	st.progress = func() { mu.Lock(); defer mu.Unlock(); setLimit(h.idle) }
+	st.processing = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if !st.responded.Load() {
+			setLimit(h.processing)
+		}
 	}
 	st.progress()
 	defer func() { _ = rc.SetReadDeadline(time.Time{}); _ = rc.SetWriteDeadline(time.Time{}) }()
@@ -328,13 +353,15 @@ func (h *Handler) finish(st *reqState, reason string) {
 		"kind", kind, "result", st.result, "reason", reason, "status", st.upstream)
 }
 
-// writeGitError answers with a valid smart HTTP body that carries an ERR line. git prints it as "remote error: ...".
-func writeGitError(w http.ResponseWriter, t Target, msg string) {
-	body := errorBody(t, msg)
-	w.Header().Set("Content-Type", contentType(t))
+// writeGitError answers with a valid smart HTTP body that carries the message; errorAnswer says in which form.
+// code is the status of the plain form of a push.
+func writeGitError(w http.ResponseWriter, t Target, form pushForm, code int, msg string) {
+	status, ctype, body := errorAnswer(t, form, code, msg)
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Content-Length", fmt.Sprint(len(body)))
-	_, _ = w.Write(body)
+	w.WriteHeader(status)
+	_, _ = w.Write(body) // #nosec G705 -- a Git protocol or plain text answer, never HTML
 }
 
 func contentType(t Target) string {
@@ -346,11 +373,16 @@ func contentType(t Target) string {
 
 func pktLine(s string) string { return fmt.Sprintf("%04x%s", len(s)+4, s) }
 
-func errorBody(t Target, msg string) []byte {
+func cleanMessage(msg string) string {
 	msg = strings.Join(strings.Fields(msg), " ")
 	if len(msg) > maxErrMessage {
 		msg = strings.ToValidUTF8(msg[:maxErrMessage], "")
 	}
+	return msg
+}
+
+func errorBody(t Target, msg string) []byte {
+	msg = cleanMessage(msg)
 	var b strings.Builder
 	if t.Op == OpInfoRefs {
 		b.WriteString(pktLine("# service=" + t.Service + "\n"))
@@ -371,6 +403,7 @@ type countReader struct {
 	io.ReadCloser
 	n        *atomic.Int64
 	progress func() // may be nil
+	onEOF    func() // may be nil
 }
 
 func (c *countReader) Read(p []byte) (int, error) {
@@ -378,6 +411,9 @@ func (c *countReader) Read(p []byte) (int, error) {
 	c.n.Add(int64(n))
 	if n > 0 && c.progress != nil {
 		c.progress()
+	}
+	if err == io.EOF && c.onEOF != nil {
+		c.onEOF()
 	}
 	return n, err
 }

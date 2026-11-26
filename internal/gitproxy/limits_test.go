@@ -3,7 +3,6 @@ package gitproxy
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -99,7 +98,8 @@ func gitReq(method, path string, body io.Reader) *http.Request {
 	return r
 }
 
-func TestUpstreamPathIsTheNormalisedRepositoryPlusFixedSuffix(t *testing.T) {
+// The upstream path always carries ".git": GitLab answers a repository without it with a 301 (info/refs) or a 422 (POST).
+func TestUpstreamPathIsTheRepositoryWithGitPlusFixedSuffix(t *testing.T) {
 	var paths []string
 	rt := rtFunc(func(r *http.Request) (*http.Response, error) {
 		paths = append(paths, r.URL.Path+"?"+r.URL.RawQuery)
@@ -107,9 +107,14 @@ func TestUpstreamPathIsTheNormalisedRepositoryPlusFixedSuffix(t *testing.T) {
 	})
 	h := New([]config.GitProvider{{Name: "p", Host: "h.test", DisplayName: "Host"}}, "https://landing.test", anonymous(), rt, slog.New(slog.DiscardHandler))
 	h.ServeHTTP(httptest.NewRecorder(), gitReq("GET", "/h.test/o/r.git/info/refs?service=git-upload-pack&x=y", nil))
+	h.ServeHTTP(httptest.NewRecorder(), gitReq("GET", "/h.test/o/r/info/refs?service=git-upload-pack", nil))
 	h.ServeHTTP(httptest.NewRecorder(), gitReq("POST", "/h.test/g/s/r/git-receive-pack", strings.NewReader("x")))
+	h.ServeHTTP(httptest.NewRecorder(), gitReq("POST", "/h.test/g/s/r.git/git-upload-pack", strings.NewReader("x")))
 	h.ServeHTTP(httptest.NewRecorder(), gitReq("GET", "/h.test/o/r/.git/info/refs?service=git-upload-pack", nil))
-	want := []string{"/o/r/info/refs?service=git-upload-pack", "/g/s/r/git-receive-pack?"}
+	want := []string{
+		"/o/r.git/info/refs?service=git-upload-pack", "/o/r.git/info/refs?service=git-upload-pack",
+		"/g/s/r.git/git-receive-pack?", "/g/s/r.git/git-upload-pack?",
+	}
 	if strings.Join(paths, " ") != strings.Join(want, " ") {
 		t.Errorf("upstream saw %v, want %v", paths, want)
 	}
@@ -181,7 +186,8 @@ func TestConcurrencyCapPerInstance(t *testing.T) {
 }
 
 // idleRig runs the handler on a real listener in front of a fake provider.
-func idleRig(t *testing.T, idle time.Duration, upstream http.HandlerFunc) *httptest.Server {
+// processing is the limit for the wait after the request body; zero keeps the default.
+func idleRig(t *testing.T, idle, processing time.Duration, upstream http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	up := httptest.NewTLSServer(upstream)
 	t.Cleanup(up.Close)
@@ -193,18 +199,49 @@ func idleRig(t *testing.T, idle time.Duration, upstream http.HandlerFunc) *httpt
 	}
 	h := New([]config.GitProvider{{Name: "p", Host: "h.test", DisplayName: "Host"}}, "https://landing.test", anonymous(), tr, slog.New(slog.DiscardHandler))
 	h.idle = idle
+	if processing > 0 {
+		h.processing = processing
+	}
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return srv
 }
 
+// postSlowly sends a body of n bytes, one byte per step. With stallAt >= 0 the upload pauses for stall there.
+func postSlowly(url string, n int, step time.Duration, stallAt int, stall time.Duration) (int, []byte, error) {
+	pr, pw := io.Pipe()
+	go func() {
+		for i := range n {
+			_, _ = pw.Write([]byte("x"))
+			time.Sleep(step)
+			if i == stallAt {
+				time.Sleep(stall)
+			}
+		}
+		_ = pw.Close()
+	}()
+	req, _ := http.NewRequest("POST", url+"/h.test/o/r/git-upload-pack", pr)
+	req.Header.Set(gitapi.InstanceHeader, "i")
+	req.Header.Set("Authorization", "Bearer t")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = res.Body.Close() }()
+	b, err := io.ReadAll(res.Body)
+	return res.StatusCode, b, err
+}
+
+// The ratios are generous on purpose: a step is a twenty-fourth of the idle time, so a slow CI machine does not
+// turn a moving transfer into an idle one.
 func TestIdleDeadlineCutsStalledTransfersOnly(t *testing.T) {
-	const idle = 300 * time.Millisecond
-	const step = 60 * time.Millisecond
-	srv := idleRig(t, idle, func(w http.ResponseWriter, r *http.Request) {
-		n, _ := io.Copy(io.Discard, r.Body)
+	const idle = 600 * time.Millisecond
+	const step = 25 * time.Millisecond
+	const steps = 30 // 750 ms in total, longer than the idle time
+	srv := idleRig(t, idle, 0, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
 		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
-		for i := range 10 { // a slow download: 600 ms in total, never idle for long
+		for i := range steps {
 			_, _ = w.Write([]byte("data"))
 			w.(http.Flusher).Flush()
 			time.Sleep(step)
@@ -212,46 +249,71 @@ func TestIdleDeadlineCutsStalledTransfersOnly(t *testing.T) {
 				time.Sleep(3 * idle)
 			}
 		}
-		_ = n
 	})
-	post := func(agent string, stallUpload bool) (int, error) {
-		pr, pw := io.Pipe()
-		go func() {
-			for i := range 10 { // a slow upload of 600 ms
-				_, _ = pw.Write([]byte("x"))
-				time.Sleep(step)
-				if stallUpload && i == 1 {
-					time.Sleep(3 * idle)
-				}
-			}
-			_ = pw.Close()
-		}()
-		req, _ := http.NewRequest("POST", srv.URL+"/h.test/o/r/git-upload-pack", pr)
-		req.Header.Set("User-Agent", agent)
+	download := func(stall bool) (int, []byte, error) {
+		req, _ := http.NewRequest("POST", srv.URL+"/h.test/o/r/git-upload-pack", strings.NewReader("x"))
 		req.Header.Set(gitapi.InstanceHeader, "i")
 		req.Header.Set("Authorization", "Bearer t")
+		if stall {
+			req.Header.Set("User-Agent", "stall")
+		}
 		res, err := http.DefaultClient.Do(req)
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		defer func() { _ = res.Body.Close() }()
 		b, err := io.ReadAll(res.Body)
-		if err == nil && len(b) != 40 {
-			err = fmt.Errorf("got %d bytes, want 40", len(b))
-		}
-		return res.StatusCode, err
+		return res.StatusCode, b, err
 	}
 	start := time.Now()
-	if code, err := post("slow", false); err != nil || code != 200 {
-		t.Fatalf("a slow but steady transfer fails: %d %v", code, err)
+	if code, b, err := download(false); err != nil || code != 200 || len(b) != 4*steps {
+		t.Fatalf("a slow but steady download fails: %d, %d bytes, %v", code, len(b), err)
 	}
 	if time.Since(start) < idle {
 		t.Fatal("the test transfer is not longer than the idle deadline")
 	}
-	if _, err := post("stall", false); err == nil {
+	if _, b, err := download(true); err == nil && len(b) == 4*steps {
 		t.Error("a stalled download is not cut")
 	}
-	if _, err := post("slow", true); err == nil {
+	if code, b, err := postSlowly(srv.URL, steps, step, -1, 0); err != nil || code != 200 || len(b) != 4*steps {
+		t.Fatalf("a slow but steady upload fails: %d, %d bytes, %v", code, len(b), err)
+	}
+	if _, b, err := postSlowly(srv.URL, steps, step, 1, 3*idle); err == nil && len(b) == 4*steps {
 		t.Error("a stalled upload is not cut")
+	}
+}
+
+// After the request body the provider works without a byte on the wire (it unpacks a push). That is not a stall.
+func TestSilentProviderAfterTheUploadIsNotCut(t *testing.T) {
+	const idle = 200 * time.Millisecond
+	srv := idleRig(t, idle, time.Minute, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		time.Sleep(5 * idle)
+		w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
+		_, _ = w.Write([]byte("done"))
+	})
+	code, b, err := postSlowly(srv.URL, 3, 10*time.Millisecond, -1, 0)
+	if err != nil || code != 200 || string(b) != "done" {
+		t.Fatalf("the silent phase after the upload is cut: %d %q %v", code, b, err)
+	}
+}
+
+// A provider that never answers is freed after the processing limit, and the client gets the message as text.
+func TestProviderThatNeverAnswersIsCutAfterTheProcessingLimit(t *testing.T) {
+	const processing = 300 * time.Millisecond
+	srv := idleRig(t, time.Minute, processing, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+	})
+	start := time.Now()
+	code, b, err := postSlowly(srv.URL, 3, 10*time.Millisecond, -1, 0)
+	if err != nil || code != 200 || !strings.Contains(string(b), "The transfer stalled") {
+		t.Fatalf("got %d %q %v", code, b, err)
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("the limit did not cut")
 	}
 }

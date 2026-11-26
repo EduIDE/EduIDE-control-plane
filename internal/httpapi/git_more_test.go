@@ -26,7 +26,8 @@ func connectAs(t *testing.T, e *env, token string) {
 	}
 }
 
-// fakeRepoHost answers info/refs like a Git host: "pub" is public, "priv" needs the token, "gone" is 404 with
+// fakeRepoHost answers info/refs like GitLab, which needs ".git" (a path without it is a 301 to the ".git" form):
+// "pub" is public, "priv" needs the token, "gone" is 404 with
 // the token, "boom" is 502, "moved" redirects to another host.
 func fakeRepoHost(t *testing.T) (srv *httptest.Server, other *atomic.Int32, seen *[]string) {
 	t.Helper()
@@ -37,18 +38,22 @@ func fakeRepoHost(t *testing.T) (srv *httptest.Server, other *atomic.Int32, seen
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.RequestURI())
 		user, pass, _ := r.BasicAuth()
+		if repo, _ := strings.CutSuffix(r.URL.Path, "/info/refs"); !strings.HasSuffix(repo, ".git") {
+			http.Redirect(w, r, repo+".git/info/refs?"+r.URL.RawQuery, http.StatusMovedPermanently)
+			return
+		}
 		switch {
-		case strings.HasPrefix(r.URL.Path, "/o/pub/"):
+		case strings.HasPrefix(r.URL.Path, "/o/pub.git/"):
 			w.WriteHeader(200)
-		case strings.HasPrefix(r.URL.Path, "/o/priv/"):
+		case strings.HasPrefix(r.URL.Path, "/o/priv.git/"):
 			if user == "oauth2" && pass == gitAccess {
 				w.WriteHeader(200)
 				return
 			}
 			w.WriteHeader(401)
-		case strings.HasPrefix(r.URL.Path, "/o/gone/"):
+		case strings.HasPrefix(r.URL.Path, "/o/gone.git/"):
 			w.WriteHeader(404)
-		case strings.HasPrefix(r.URL.Path, "/o/moved/"):
+		case strings.HasPrefix(r.URL.Path, "/o/moved.git/"):
 			http.Redirect(w, r, elsewhere.URL+"/x", http.StatusFound)
 		default:
 			w.WriteHeader(502)
@@ -103,15 +108,20 @@ func TestGitPreflight(t *testing.T) {
 		t.Error("the redirect was followed")
 	}
 	for _, p := range *seen {
-		if !strings.HasSuffix(p, "/info/refs?service=git-upload-pack") {
+		if !strings.HasSuffix(p, ".git/info/refs?service=git-upload-pack") { // GitLab answers a path without .git with a 301
 			t.Errorf("probe path %s", p)
 		}
 	}
 	for _, bad := range []string{"http://gitlab.example.org/o/priv", "https://u:p@gitlab.example.org/o/priv", "https://gitlab.example.org/", "https://gitlab.example.org/o/../x",
 		"https://gitlab.example.org/o/priv/.git/info", "https://gitlab.example.org/o/priv.git.git", "https://gitlab.example.org/priv", "https://gitlab.example.org/o/priv/x/../../../../../api/v4/user",
-		"https://gitlab.example.org/o/p%3Fx=1", "nonsense", ""} {
+		"https://gitlab.example.org/o/p%3Fx=1", "https://gitlab.example.org/o/.GIT", "https://gitlab.example.org/o/%2e%2e/priv", "https://gitlab.example.org/o/priv/./x", "nonsense", ""} {
 		if _, code := pre("alice", bad); code != 400 {
 			t.Errorf("%q: %d", bad, code)
+		}
+	}
+	for _, ok := range []string{"https://gitlab.example.org/o/.github", "https://gitlab.example.org/user/.dotfiles.git"} { // a leading dot is a valid name
+		if _, code := pre("alice", ok); code != 200 {
+			t.Errorf("%q: %d", ok, code)
 		}
 	}
 	if strings.Contains(buf.String(), "o/priv") || strings.Contains(buf.String(), gitAccess) {
