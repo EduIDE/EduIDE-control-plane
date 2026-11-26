@@ -78,7 +78,7 @@ func TestCanonicalRepo(t *testing.T) {
 		{".config/r", ".config/r", true},
 		{"o/.gitx", "o/.gitx", true},
 		{"o/..", "", false},
-		{"a/..git", "", false}, // the cut of ".git" would leave "."
+		{"a/..git", "", false},  // the cut of ".git" would leave "."
 		{"a/...git", "", false}, // and ".."
 		{"a/....git", "a/...", true},
 		{"a/.git/b", "", false},

@@ -3,6 +3,7 @@ package gitproxy
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -45,7 +46,7 @@ func pushFormOf(r *http.Request, rc *http.ResponseController) pushForm {
 	off := 0
 	for {
 		hdr, err := br.Peek(off + 4)
-		if err == bufio.ErrBufferFull {
+		if errors.Is(err, bufio.ErrBufferFull) {
 			return formStatus
 		}
 		if err != nil {
@@ -56,7 +57,7 @@ func pushFormOf(r *http.Request, rc *http.ResponseController) pushForm {
 			return formERR
 		}
 		buf, err := br.Peek(off + int(n))
-		if err == bufio.ErrBufferFull { // many shallow lines or a long command: the capabilities are out of reach
+		if errors.Is(err, bufio.ErrBufferFull) { // many shallow lines or a long command: the capabilities are out of reach
 			return formStatus
 		}
 		if err != nil {
