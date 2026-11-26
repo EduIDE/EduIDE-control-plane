@@ -10,7 +10,17 @@ The IDE container reaches a provider host through the agent (`127.0.0.1:8082/git
 The git-proxy asks the service (`:8083`, `POST /internal/v1/git/authorize`) what is allowed, then streams the request to `https://<host>/...`.
 The user's token is used for the session repository (its `GIT_URI`) and for repositories the user approved for the session.
 Other repositories are read anonymously, and a push to them is refused.
-Nothing is buffered, so a clone of any size uses little memory.
+Nothing of a clone or push is buffered, so a transfer of any size uses little memory.
+The proxy reads at most 4 KiB of a push body (2 seconds at most) to find out how git wants to read an error, and only for a request that the service authorised and that holds a slot of its instance.
+The worst case is 16 concurrent authorised requests per instance (`maxInFlight`), each with a 4 KiB peek buffer and a pooled 32 KiB copy buffer, about 0.6 MiB per instance; the 64Mi limit holds that for about 50 instances at their cap, or about 1000 concurrent authorised requests, per replica.
+An unauthorised request allocates nothing for the push body.
+
+## What users see on a push
+
+- A denial at `info/refs` (the normal case) shows the message as `remote error`.
+- A refusal after the push body began (the provider refuses or stalls) shows the message too, also for a push from a shallow clone (`--depth`).
+- A refusal that comes before the proxy looks at the push (the instance has no free slot, the service is unreachable, or the service denies the POST only) cannot know what git reads. git prints `bad band` and the push fails; the log of the git-proxy has the reason.
+- A client without side-band gets the message as an HTTP status; git shows only the status and "Everything up-to-date".
 
 ## Metrics
 

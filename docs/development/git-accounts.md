@@ -38,7 +38,7 @@ IDE ---- 127.0.0.1:8082/git ---> agent   +--- provider host (Git smart HTTP, use
 | Provider hosts count as allowed hosts for `GIT_URI` only | `internal/httpapi/validate.go` |
 | What a repository path may look like (git-proxy, approval API, preflight) | `gitapi.CanonicalRepo`, the only place; the landing page mirrors it in `canonicalRepository` (`landing-page/src/git.ts`). The git-proxy and the preflight build the upstream path `/<repository>.git/<suffix>` from its result (GitLab needs the `.git`) |
 | Limits of the git-proxy (per IP, per instance, idle and processing limit, ERR length) | `internal/gitproxy/limits.go`, used by `Handler.ServeHTTP` |
-| How an error reaches git on a push (side-band channel 3, status, `ERR`) | `internal/gitproxy/pusherror.go` |
+| How an error reaches git on a push (side-band channel 3, status, `ERR`; leading `shallow` lines; the 4 KiB peek only after authorize and the slot) | `internal/gitproxy/pusherror.go`, order in `Handler.ServeHTTP`; tests `TestUnauthorisedPushNeverPeeks`, `TestStalledUnauthorisedPushesAllocateNothing` and `TestPushErrorsReachTheUser` |
 | Limiter and token cache of the authorize endpoint | `internal/gitpolicy/gitpolicy.go` (`tokenOK` before `allow`) |
 | Commit identity from the provider's values | `identityName`, `validIdentityMail` in `internal/httpapi/git.go` |
 
