@@ -68,7 +68,7 @@ Create two clients in the realm of the deployment: a public client for the landi
 | Client | Type | Settings |
 |---|---|---|
 | Landing page (for example `eduide`) | public, standard flow only, PKCE method `S256` required | Valid redirect URI `https://<service host>/*` and nothing else, web origin `https://<service host>`. Direct access grants, implicit flow and service accounts off. Its id goes into the landing page config and into `oidc.clientIDs`. |
-| Gateway (for example `eduide-gateway`) | a **new** client, **confidential**, standard flow only | Valid redirect URIs, exactly, with no wildcard: `https://<instance host>/oauth2/callback` and `https://<webview host>/oauth2/callback`. Web origins: none, or these two origins. Direct access grants, implicit flow and service accounts off. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
+| Gateway (for example `eduide-gateway`) | a **new** client, **confidential**, standard flow only | Valid redirect URI, exactly one and with no wildcard: `https://<instance host>/oauth2/callback`. The webview host needs no entry: the SecurityPolicy sets this one callback URL, so the login always returns to the instance host, and the cookie domain only shares the login with the webview host. Web origins: none, or the instance origin. Direct access grants, implicit flow and service accounts off. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
 
 **Use two clients, and never list the gateway client in `oidc.clientIDs`.**
 Code in a session and script in the IDE's browser origin (the instance and webview host) must not be able to get a token the API accepts, because the API, including the approval of Git repositories, trusts that token as the user.
@@ -95,11 +95,11 @@ Use this when `oidc.gatewayClientID` and `oidc.clientIDs` name the same client t
 The order keeps every login working at every step. **This procedure is not yet tested on a real installation.** Try it on a test realm first.
 Do not change the existing client's "Client authentication" at any step.
 
-1. In Keycloak, create a **new** client (for example `eduide-gateway`). Client authentication **on**, standard flow only, direct access grants, implicit flow and service accounts off. Valid redirect URIs, exactly: `https://<instance host>/oauth2/callback` and `https://<webview host>/oauth2/callback`. No wildcard. Copy its secret from the Credentials tab.
+1. In Keycloak, create a **new** client (for example `eduide-gateway`). Client authentication **on**, standard flow only, direct access grants, implicit flow and service accounts off. Valid redirect URI, exactly one: `https://<instance host>/oauth2/callback`. No wildcard, and no entry for the webview host. Copy its secret from the Credentials tab.
 2. Store the secret in the Secret that `oidc.clientSecretName` names, under the key `client-secret`. Create or replace it from a file or a pipe, and never print it.
 3. Set `config.oidc.gatewayClientID` to the new client id. Leave `config.oidc.clientIDs` and the landing page client as they are. Deploy the chart.
-4. Verify: log in to the landing page, then log in to an IDE (a fresh browser session). Both must work. The old public client still has its instance and webview redirect URIs, so a failed step 3 costs nothing.
-5. Only now remove the instance and webview redirect URIs and web origins from the old, public client. Keep its service host redirect URI and web origin. Its "Client authentication" stays off.
+4. Verify: log in to the landing page, then log in to an IDE (a fresh browser session). Both must work. The old public client still has its instance host redirect URI, so a failed step 3 costs nothing.
+5. Only now remove the instance host redirect URI and web origin from the old, public client (and a webview host entry, if your installation added one). Keep its service host redirect URI and web origin. Its "Client authentication" stays off.
 6. Verify again: landing page login, IDE login.
 
 Go back:
