@@ -185,7 +185,7 @@ describe('RepoPicker', () => {
         injectableKeys: ['GIT_URI']
     });
 
-    it('names the repository and starts the chosen environment', () => {
+    it('names the repository and starts the chosen template', () => {
         const onPick = vi.fn();
         render(wrap(<RepoPicker repository='github.com/a/b' templates={[tpl('java'), tpl('python')]} onPick={onPick} onBack={vi.fn()} />));
         screen.getByRole('heading', { name: 'Open github.com/a/b' });
@@ -193,10 +193,10 @@ describe('RepoPicker', () => {
         expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ name: 'python' }));
     });
 
-    it('says so when no environment takes a repository, and when the link named an unknown one', () => {
+    it('says so when no template takes a repository, and when the link named an unknown one', () => {
         render(wrap(<RepoPicker repository='github.com/a/b' unknownName='nope' templates={[]} onPick={vi.fn()} onBack={vi.fn()} />));
-        screen.getByText('The environment nope from the link does not exist.');
-        screen.getByText('No environment can open a repository.');
+        screen.getByText('The template nope from the link does not exist.');
+        screen.getByText('No template can open a repository.');
     });
 });
 
@@ -230,7 +230,7 @@ describe('GitApproval', () => {
         await screen.findByText(/Exercise 1/);
         expect(screen.getByTestId('approve-repository').textContent).toBe('https://github.com/org/repo');
         expect(screen.getByTestId('approve-access').textContent).toBe('Read and push');
-        screen.getByText('Only allow this if you just ran a Git command in this environment yourself.');
+        screen.getByText('Only allow this if you just ran a Git command in this session yourself.');
         expect((await screen.findByTestId('approve-session-repository')).textContent).toBe('https://github.com/org/start');
         expect(client.PUT).not.toHaveBeenCalled();
         fireEvent.click(screen.getByRole('button', { name: 'Decline' }));

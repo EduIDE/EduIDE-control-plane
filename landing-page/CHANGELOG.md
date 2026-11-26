@@ -7,6 +7,8 @@ The section of a version becomes the notes of its GitHub Release.
 
 ### Changes
 
+- Stable `data-testid` attributes for end-to-end tests: `launch-app-<template name>` and `data-persistence` on the tiles, `variant-<id>`, `pick-empty`, `pick-start` and `info-start` in the dialogs, `account-button` and `logoutButton` in the header, `row-<key>`, `row-open` and `row-delete` on the environment rows
+- `data-testid` attributes for the Git accounts elements: `git-accounts`, `git-provider-<name>`, `git-connect`, `git-disconnect` and `git-disconnect-confirm` in the section, `git-gate-<connect|no-access>`, `git-gate-connect-button` and `git-gate-back` on the check before a start, `repo-picker` and `repo-picker-back` on the template picker (its tiles use `launch-app-<template name>`), `git-callback`, `git-approval`, `approve-allow`, `approve-decline` and `approve-remove` on the approval page
 - The deprecated `?artemisToken=` and a `?gitUri=` with credentials leave the address bar before the login, like the fragment forms; they no longer travel to Keycloak inside the redirect URI
 - A repository URL with a query or a fragment no longer makes the launch fail: the display source drops both
 - New message for `workspace-limit-reached`: the service limits the saved workspaces per user (`workspaces.perUser`)
@@ -26,6 +28,7 @@ The section of a version becomes the notes of its GitHub Release.
 - The footer is the same on every page (GitHub, bug report, imprint, privacy) and sits at the bottom of the viewport; `footerLinks.github` is new
 - The browser tab title comes from `config.title` (index.html says "EduIDE" until then)
 - Removed: Sentry, anonymous mode, `/session-ended` resume, git link checks (the service validates launch data)
+- Texts follow the EduIDE glossary: "environment" is now "session" or "template", "Temporary workspace" is "Temporary session", "Project templates" are "Starter projects" (DE "Startprojekte"), and the admin panel says "admin" instead of "operator"
 
 ## [1.5.1] - 2026-11-18
 

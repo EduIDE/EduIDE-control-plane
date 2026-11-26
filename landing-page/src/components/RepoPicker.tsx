@@ -7,14 +7,14 @@ import { TemplateTile } from './TemplateTile';
 interface RepoPickerProps {
     /** The repository as text, without credentials. */
     repository: string;
-    /** Name from the link that matches no environment, if the link had one. */
+    /** Name from the link that matches no template, if the link had one. */
     unknownName?: string;
     templates: Template[];
     onPick: (template: Template) => void;
     onBack: () => void;
 }
 
-/** A link with a repository but no usable environment: the user picks one that takes a repository. */
+/** A link with a repository but no usable template: the user picks one that takes a repository. */
 export const RepoPicker = ({ repository, unknownName, templates, onPick, onBack }: RepoPickerProps): React.JSX.Element => {
     const { t } = useI18n();
     return (
@@ -46,7 +46,7 @@ export const RepoPicker = ({ repository, unknownName, templates, onPick, onBack 
                 </>
             )}
             <div className='buttons'>
-                <button className='btn' onClick={onBack}>
+                <button className='btn' data-testid='repo-picker-back' onClick={onBack}>
                     <ArrowLeft aria-hidden />
                     {t('back')}
                 </button>

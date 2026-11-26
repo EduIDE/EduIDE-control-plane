@@ -136,8 +136,8 @@ describe('preflight before a launch with a repository', () => {
     });
 });
 
-describe('a link with a repository but without a usable environment', () => {
-    it('shows the picker with the repository and only listed environments that take one', async () => {
+describe('a link with a repository but without a usable template', () => {
+    it('shows the picker with the repository and only listed templates that take one', async () => {
         const { launch } = setup(`?gitUri=${encodeURIComponent('https://u:secret@github.com/org/repo.git')}`);
         await screen.findByRole('heading', { name: 'Open github.com/org/repo.git' });
         expect(document.body.textContent).not.toContain('secret');
@@ -160,23 +160,23 @@ describe('a link with a repository but without a usable environment', () => {
         );
     });
 
-    it('treats an unknown environment name like a missing one when the link has a repository', async () => {
+    it('treats an unknown template name like a missing one when the link has a repository', async () => {
         setup(`?appDef=nope&gitUri=${encodeURIComponent('https://github.com/org/repo')}`);
-        await screen.findByText('The environment nope from the link does not exist.');
+        await screen.findByText('The template nope from the link does not exist.');
         screen.getByRole('button', { name: 'Start Java 17' });
     });
 
-    it('keeps the old error for an unknown environment without a repository', async () => {
+    it('keeps the old error for an unknown template without a repository', async () => {
         setup('?appDef=nope');
-        await screen.findByText(/Unknown environment: nope/);
+        await screen.findByText(/Unknown template: nope/);
     });
 
-    it('says so when no environment takes a repository', async () => {
+    it('says so when no template takes a repository', async () => {
         setup(`?gitUri=${encodeURIComponent('https://github.com/org/repo')}`, { templates: [plain] });
-        await screen.findByText('No environment can open a repository.');
+        await screen.findByText('No template can open a repository.');
     });
 
-    it('does nothing for a link without repository and environment', async () => {
+    it('does nothing for a link without repository and template', async () => {
         const { launch } = setup('?title=x');
         await screen.findByRole('button', { name: 'Start Java 17' });
         expect(launch).not.toHaveBeenCalled();
@@ -189,7 +189,7 @@ describe('approval link', () => {
 
     it('shows the confirmation, starts nothing and approves nothing', async () => {
         const { launch, post } = setup(approve('&appDef=java-17'));
-        await screen.findByRole('heading', { name: 'Allow Git access for an environment?' });
+        await screen.findByRole('heading', { name: 'Allow Git access for a session?' });
         screen.getByRole('button', { name: 'Allow' });
         expect(launch).not.toHaveBeenCalled();
         expect(post).not.toHaveBeenCalled();

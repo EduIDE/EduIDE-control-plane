@@ -66,7 +66,7 @@ test("connect through the page", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Git accounts" })).toBeVisible();
   await expect(row).toContainText("Fake Git");
   await expect(row).toContainText("Not connected");
-  await row.getByRole("button", { name: "Connect" }).click();
+  await row.getByTestId("git-connect").click();
 
   // The provider redirects to /git/callback, the page completes the flow and returns to where it was.
   await expect(page.getByTestId("git-provider-fake")).toContainText("Connected as e2euser", { timeout: 30_000 });
@@ -77,9 +77,9 @@ test("connect through the page", async ({ page }) => {
   expect(JSON.stringify(list.body)).not.toMatch(/token/i);
 
   // Disconnect asks first.
-  await page.getByRole("button", { name: "Disconnect Fake Git" }).click();
+  await page.getByTestId("git-disconnect").click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await page.getByRole("dialog").getByRole("button", { name: "Disconnect" }).click();
+  await page.getByTestId("git-disconnect-confirm").click();
   await expect(page.getByTestId("git-provider-fake")).toContainText("Not connected");
 });
 
@@ -93,7 +93,7 @@ test("a start link to the private repository asks to connect, then launches", as
   await expect(page.getByRole("button", { name: /anyway/i })).toHaveCount(0);
 
   // Connect, come back to the same link and continue this launch without opening the link again.
-  await page.getByRole("button", { name: "Connect" }).click();
+  await page.getByTestId("git-gate-connect-button").click();
   await page.waitForURL(/https:\/\/instance\.ide\.e2e\.test\/[a-z2-7]{20}\//, { timeout: 120_000 });
   await expect(page.locator("body")).toContainText("fake-ide");
   await expect
@@ -118,18 +118,18 @@ test("the approval page approves only after a click", async ({ page }) => {
     ((await api(page, "GET", `/sessions/${name}/git/repositories`)).body as { approved: Array<{ repository: string }> }).approved;
 
   await page.goto(`https://ide.e2e.test/?session=${name}&approveRepo=${encodeURIComponent(OTHER_REPO)}&access=read`);
-  await expect(page.getByRole("heading", { name: "Allow Git access for an environment?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Allow Git access for a session?" })).toBeVisible();
   await expect(page.getByTestId("approve-repository")).toHaveText(`https://${FAKE}/course/other`);
   await expect(page.getByTestId("approve-access")).toHaveText("Read (clone and fetch)");
   await expect(page.getByText("Only allow this if you just ran a Git command")).toBeVisible();
   // Opening the link approved nothing.
   expect(await approved()).toEqual([]);
 
-  await page.getByRole("button", { name: "Allow" }).click();
+  await page.getByTestId("approve-allow").click();
   await expect(page.getByText("Repeat the Git command in your IDE.")).toBeVisible();
   expect((await approved()).map((a) => a.repository)).toEqual([`https://${FAKE}/course/other`]);
 
-  await page.getByRole("button", { name: `Remove https://${FAKE}/course/other` }).click();
+  await page.getByTestId("approve-remove").click();
   await expect.poll(approved).toEqual([]);
 
   // A link with a made-up access value is refused and nothing is asked of the service.

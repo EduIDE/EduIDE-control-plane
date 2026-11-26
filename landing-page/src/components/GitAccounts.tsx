@@ -45,7 +45,7 @@ export const GitAccounts = ({ api, providers, onChange }: GitAccountsProps): Rea
     };
 
     return (
-        <section aria-labelledby='git-accounts'>
+        <section aria-labelledby='git-accounts' data-testid='git-accounts'>
             <h2 id='git-accounts'>{t('git.title')}</h2>
             <p className='sub'>{t('git.intro')}</p>
             <p className='sub'>{t('git.logged')}</p>
@@ -66,6 +66,7 @@ export const GitAccounts = ({ api, providers, onChange }: GitAccountsProps): Rea
                         {p.connected ? (
                             <button
                                 className='btn'
+                                data-testid='git-disconnect'
                                 aria-label={t('git.disconnectLabel', { name: p.displayName })}
                                 onClick={() => setDisconnecting(p)}
                             >
@@ -75,6 +76,7 @@ export const GitAccounts = ({ api, providers, onChange }: GitAccountsProps): Rea
                         ) : (
                             <button
                                 className='btn primary'
+                                data-testid='git-connect'
                                 disabled={busy}
                                 aria-label={t('git.connectLabel', { name: p.displayName })}
                                 onClick={() => connect(p).catch(console.error)}
@@ -106,6 +108,7 @@ export const GitAccounts = ({ api, providers, onChange }: GitAccountsProps): Rea
                             </button>
                             <button
                                 className='btn danger'
+                                data-testid='git-disconnect-confirm'
                                 disabled={busy}
                                 onClick={() => confirmDisconnect(disconnecting).catch(console.error)}
                             >

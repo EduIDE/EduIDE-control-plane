@@ -66,11 +66,16 @@ export const GitGate = ({ api, gate, onBack }: GitGateProps): React.JSX.Element 
                 </div>
             )}
             <div className='buttons'>
-                <button className='btn' onClick={onBack}>
+                <button className='btn' data-testid='git-gate-back' onClick={onBack}>
                     <ArrowLeft aria-hidden />
                     {t('back')}
                 </button>
-                <button className='btn primary' disabled={busy} onClick={() => connect().catch(console.error)}>
+                <button
+                    className='btn primary'
+                    data-testid='git-gate-connect-button'
+                    disabled={busy}
+                    onClick={() => connect().catch(console.error)}
+                >
                     <Link2 aria-hidden />
                     {connecting ? t('git.connect') : t('git.gate.switch')}
                 </button>

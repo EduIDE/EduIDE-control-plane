@@ -114,7 +114,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
     };
 
     // A link from Artemis (?appDef=...) starts right away once the templates are known. Launches are idempotent (G14),
-    // so a reload returns to the same session. A link with a repository but without a usable environment asks for one.
+    // so a reload returns to the same session. A link with a repository but without a usable template asks for one.
     useEffect(() => {
         if (!link) {
             // No launch link: launch data a former link left behind must not end up in a later launch.
@@ -128,7 +128,7 @@ function App({ config, api, user, logoutUrl }: AppProps): React.JSX.Element {
         const template = templates.find(tpl => tpl.name === link.appDef);
         const gitUri = readGitUri(window.location.search, window.sessionStorage);
         if (!template && link.gitUri) {
-            // The picker never forwards the Artemis token or URL: a link without a known environment is not an Artemis launch.
+            // The picker never forwards the Artemis token or URL: a link without a known template is not an Artemis launch.
             forgetLaunchData();
             setPicker({
                 params: { ...link, artemisUrl: undefined },

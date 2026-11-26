@@ -40,7 +40,7 @@ Tokens and bodies are never logged.
 |---|---|---|
 | `fatal: unable to access 'http://127.0.0.1:8082/...': Failed to connect` | The agent listener is down, or the `insteadOf` entry is wrong | `kubectl logs <pod> -c agent`. Check `git config --global --get-regexp insteadof` in the session |
 | 404 on `/git/...` | The pod has no Git settings: it was claimed before the pool replaced it after a config change, or `gitAccounts.proxyURL` is empty | `kubectl get pod <pod> -o yaml` shows `AGENT_GIT_PROXY_URL` in the agent container. The pool replaces idle pods after a change of the Git settings (they are part of the pod hash), so wait for the roll or start a new session. A deployment without providers keeps its hash, so an upgrade replaces nothing |
-| 403 on `/git/...` | The instance is not claimed | Expected for idle warm pods |
+| 403 on `/git/...` | The instance is not claimed | Expected for idle instances |
 | 502 `git proxy unavailable` | git-proxy is down, or a NetworkPolicy blocks session pods | `kubectl -n <ns> get pods -l app.kubernetes.io/component=git-proxy`. Check the policy `session-to-git-proxy` and that the CNI enforces it. Agent log: `git proxy unreachable` |
 | `remote error: EduIDE cannot check your access right now` | The service internal port is not reachable, or the service returns errors (git-proxy log: `git authorize unavailable`) | Check the policy `service-internal`, the service `internal` port (`kubectl -n <ns> get svc <release>-eduide-control-plane-service`), and the service logs. Both service replicas serve it |
 | `remote error: <displayName> is not reachable right now` | The provider host is down or egress is blocked | Check the policy `git-proxy` egress (DNS, HTTPS, deny list) and the provider status page |
@@ -75,7 +75,7 @@ A longer clone or push during a rollout can break and the user retries.
 
 Users approve further repositories per session on the landing page (ADR 0023, API `PUT /sessions/{name}/git/repositories`).
 The approvals of a session are in the Secret `<session>-git-repos`, owned by the session, so they go when the session goes.
-Read them as an operator (repository names and access, no credentials):
+Read them as an admin (repository names and access, no credentials):
 
 ```bash
 kubectl -n <ns> get secret <session>-git-repos -o jsonpath='{.data.approvals}' | base64 -d | jq

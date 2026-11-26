@@ -148,11 +148,16 @@ export const GitApproval = ({ api, request, providers }: GitApprovalProps): Reac
             )}
             {!finished && (
                 <div className='buttons'>
-                    <button className='btn primary' disabled={busy || !!blocked} onClick={() => allow().catch(console.error)}>
+                    <button
+                        className='btn primary'
+                        data-testid='approve-allow'
+                        disabled={busy || !!blocked}
+                        onClick={() => allow().catch(console.error)}
+                    >
                         <Check aria-hidden />
                         {t('git.approve.allow')}
                     </button>
-                    <button className='btn' disabled={busy} onClick={() => setOutcome({ kind: 'declined' })}>
+                    <button className='btn' data-testid='approve-decline' disabled={busy} onClick={() => setOutcome({ kind: 'declined' })}>
                         <X aria-hidden />
                         {t('git.approve.decline')}
                     </button>
@@ -184,6 +189,7 @@ export const GitApproval = ({ api, request, providers }: GitApprovalProps): Reac
                                 </div>
                                 <button
                                     className='btn'
+                                    data-testid='approve-remove'
                                     disabled={busy}
                                     aria-label={t('git.approve.removeLabel', { repo: a.repository })}
                                     onClick={() => remove(a.repository).catch(console.error)}
