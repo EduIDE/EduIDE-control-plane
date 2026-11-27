@@ -2,10 +2,13 @@ package agent
 
 import (
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitapi"
@@ -68,6 +71,16 @@ func (a *Agent) EnableGit(proxyURL string, hosts []string, landingURL string) er
 
 // gitHandler serves /git/{host}/{rest...} while the instance is claimed.
 func (a *Agent) gitHandler(w http.ResponseWriter, r *http.Request) {
+	// net/http reads and discards an unread request body with no deadline: before the first flush of the answer,
+	// when the reverse proxy closes the body, and after the handler returns. The listener has no ReadTimeout (a
+	// push of gigabytes must not be cut), so a client that stalls its body would hold the connection forever.
+	// An answer that starts before the body ended means git is done sending, so the read deadline expires with
+	// it, and the discard fails at once. A body at its end is left alone: a long clone must keep its connection.
+	if r.Body != nil && r.Body != http.NoBody {
+		b := &eofBody{Reader: r.Body}
+		r.Body = b
+		w = &answerGuard{ResponseWriter: w, rc: http.NewResponseController(w), body: b}
+	}
 	a.mu.Lock()
 	claimed := a.session != ""
 	a.mu.Unlock()
@@ -77,6 +90,39 @@ func (a *Agent) gitHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	a.git.proxy.ServeHTTP(w, r)
 }
+
+// eofBody tells whether the request body was read to its end. Its Close does nothing, so the reverse proxy never
+// closes (and so never discards) the body of the server.
+type eofBody struct {
+	io.Reader
+	eof atomic.Bool
+}
+
+func (b *eofBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err == io.EOF {
+		b.eof.Store(true)
+	}
+	return n, err
+}
+
+func (b *eofBody) Close() error { return nil }
+
+// answerGuard expires the read deadline when the answer starts while the request body is not at its end.
+type answerGuard struct {
+	http.ResponseWriter
+	rc   *http.ResponseController
+	body *eofBody
+}
+
+func (g *answerGuard) WriteHeader(code int) {
+	if !g.body.eof.Load() {
+		_ = g.rc.SetReadDeadline(time.Now())
+	}
+	g.ResponseWriter.WriteHeader(code)
+}
+
+func (g *answerGuard) Unwrap() http.ResponseWriter { return g.ResponseWriter }
 
 func (a *Agent) getGitHosts(w http.ResponseWriter, _ *http.Request) {
 	out := agentapi.GitHosts{Hosts: []string{}}

@@ -1,10 +1,15 @@
 package agent
 
 import (
+	"bufio"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/gitapi"
 )
@@ -97,5 +102,62 @@ func TestEnableGitValidates(t *testing.T) {
 		if err := a.EnableGit(u, nil, ""); err == nil {
 			t.Errorf("%q accepted", u)
 		}
+	}
+}
+
+// A client that sends headers and stalls its body must not hold a connection or a goroutine once the agent
+// answered. net/http discards the unread body after the handler returns with no deadline; the listener has no
+// ReadTimeout on purpose. Needs a real server.
+func TestStalledBodyOnTheGitRouteHoldsNothing(t *testing.T) {
+	// The git-proxy answers without reading the body, like a denial, and ends the discard of the rest like the real one.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		defer func() { _ = http.NewResponseController(w).SetReadDeadline(time.Now()) }()
+		http.Error(w, "no", http.StatusForbidden)
+	}))
+	defer upstream.Close()
+	for name, claimed := range map[string]bool{"unclaimed instance": false, "answer of the git-proxy": true} {
+		t.Run(name, func(t *testing.T) {
+			a := gitAgent(t, upstream.URL, claimed)
+			srv := httptest.NewUnstartedServer(a.LocalHandler())
+			srv.Config.IdleTimeout = 500 * time.Millisecond // as in cmd/agent: the idle connection after the answer is bounded
+			srv.Start()
+			t.Cleanup(srv.Close)                                                                    // runs after the client connections are closed
+			get, err := http.Get(srv.URL + "/git/github.com/o/r/info/refs?service=git-upload-pack") // warm-up: connections of the proxy stay
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = get.Body.Close()
+			base := runtime.NumGoroutine()
+			var conns []net.Conn
+			for range 10 {
+				c, err := net.Dial("tcp", srv.Listener.Addr().String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = c.Close() })
+				_, _ = io.WriteString(c, "POST /git/github.com/o/r/git-upload-pack HTTP/1.1\r\nHost: x\r\nContent-Length: 100000\r\n\r\nxxxxxxxxxx")
+				conns = append(conns, c)
+			}
+			for _, c := range conns {
+				// The client gets the answer although its body never ends, and the server then ends the idle connection.
+				_ = c.SetReadDeadline(time.Now().Add(8 * time.Second))
+				resp, err := http.ReadResponse(bufio.NewReader(c), nil)
+				if err != nil {
+					t.Fatalf("no answer while the body stalls: %v", err)
+				}
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusForbidden {
+					t.Fatalf("status %d", resp.StatusCode)
+				}
+				if _, err := io.Copy(io.Discard, c); err != nil {
+					t.Fatalf("the connection stays open: %v", err)
+				}
+			}
+			for end := time.Now().Add(10 * time.Second); runtime.NumGoroutine() > base+3; time.Sleep(50 * time.Millisecond) {
+				if time.Now().After(end) {
+					t.Fatalf("%d goroutines, baseline %d", runtime.NumGoroutine(), base)
+				}
+			}
+		})
 	}
 }

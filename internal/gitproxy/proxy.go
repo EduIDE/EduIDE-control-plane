@@ -85,6 +85,11 @@ func Transport(pool *x509.CertPool) http.RoundTripper {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	tr.Proxy = nil // the provider hosts are reached directly; an environment proxy would see the credential
 	tr.MaxIdleConnsPerHost = 32
+	// HTTP/1.1 only: the HTTP/2 client of Go keeps a write buffer as large as the provider's maximum frame size
+	// (up to 512 KiB, GitLab.com offers 16 MiB) for every request in flight, about four times the cost of HTTP/1.1
+	// (TestMemoryOfStalledPushes). One transfer is one stream, so HTTP/2 gains nothing here.
+	tr.Protocols = new(http.Protocols)
+	tr.Protocols.SetHTTP1(true)
 	if pool != nil {
 		tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	}
@@ -232,6 +237,22 @@ func (h *Handler) replaceWithError(resp *http.Response, st *reqState, msg string
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rc := http.NewResponseController(w)
+	// After the handler returns, net/http reads and discards the rest of the request body with no deadline of its
+	// own. A client that sends headers and stalls its body would hold the connection and its memory forever, on
+	// every path (429, 404, 401, denial, busy slot, success). An expired read deadline makes that discard fail at
+	// once and closes the connection. It is the first defer, so it runs last, after the success path cleared its own.
+	// Only for a body that is not at its end: the server reads the connection in the background otherwise, and an
+	// expired deadline there would cancel the context of the connection, and with it every later request on it.
+	if r.Body != nil && r.Body != http.NoBody {
+		b := &eofBody{ReadCloser: r.Body}
+		r.Body = b
+		defer func() {
+			if !b.eof.Load() {
+				_ = rc.SetReadDeadline(time.Now())
+			}
+		}()
+	}
 	if !h.clients.allow(clientIP(r)) {
 		w.Header().Set("Retry-After", "1")
 		http.Error(w, "too many requests", http.StatusTooManyRequests)
@@ -254,7 +275,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := &reqState{t: t, prov: prov, start: time.Now()}
-	rc := http.NewResponseController(w)
 	// Order: path and headers, authorize, slot, and only then the peek of a push (it allocates a buffer and
 	// waits for the client). A denial before the peek does not know the client yet, so st.form is formERR. Real
 	// git 2.54 shows nothing of that message on a push with side-band ("bad band #69", a failed push), but it
@@ -300,7 +320,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// done is set when the handler returns. A late read of the request body (the provider answered before the
 	// upload ended) must neither re-arm the stopped timer nor touch the connection of a finished request.
 	done := false
-	defer func() { mu.Lock(); done = true; mu.Unlock() }()
 	// The deadlines run a little longer than the timer, so the timer decides first and the client gets its message.
 	setLimit := func(d time.Duration) {
 		if done {
@@ -320,6 +339,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	st.progress()
 	defer func() { _ = rc.SetReadDeadline(time.Time{}); _ = rc.SetWriteDeadline(time.Time{}) }()
+	// Registered after the deadline reset, so it runs before it: a late body read between the two would otherwise
+	// set a new deadline on the connection.
+	defer func() { mu.Lock(); done = true; mu.Unlock() }()
 	h.rp.ServeHTTP(w, r.WithContext(context.WithValue(ctx, stateKey{}, st)))
 	if st.result == "" { // the client went away before an answer
 		st.result = resultUpstreamError
@@ -409,6 +431,20 @@ func writeLFSError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Git LFS is not supported through EduIDE."})
+}
+
+// eofBody tells whether the request body was read to its end.
+type eofBody struct {
+	io.ReadCloser
+	eof atomic.Bool
+}
+
+func (b *eofBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.eof.Store(true)
+	}
+	return n, err
 }
 
 type countReader struct {

@@ -139,14 +139,15 @@ authz:
   affinity: {}
 
 # Git proxy between session pods and the Git hosts (ADR 0023). Rendered only with config.gitAccounts.providers.
-# It streams, so memory stays small however large a clone is.
+# It streams, so memory stays small however large a clone is. Sized for a burst of 100 sessions pushing at
+# once, with 3.5 times headroom (docs/operations/git-proxy.md: about 0.13 MiB per request in flight).
 gitProxy:
   # debug, info or warn. Changing it restarts the component.
   logLevel: info
   replicas: 2
   resources:
-    requests: {cpu: 10m, memory: 16Mi}
-    limits: {memory: 64Mi}
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 256Mi}
   nodeSelector: {}
   tolerations: []
   affinity: {}

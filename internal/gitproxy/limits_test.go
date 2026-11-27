@@ -352,3 +352,40 @@ func TestLateBodyReadAfterTheHandlerReturnedArmsNothing(t *testing.T) {
 		t.Errorf("%d deadline calls after the handler returned", w.calls.Load()-calls)
 	}
 }
+
+// hookedConn reports every read deadline, like the connection of a server does.
+type hookedConn struct {
+	*httptest.ResponseRecorder
+	onRead func(time.Time)
+}
+
+func (h *hookedConn) SetReadDeadline(t time.Time) error { h.onRead(t); return nil }
+func (h *hookedConn) SetWriteDeadline(time.Time) error  { return nil }
+
+// A late body read that lands between the reset of the deadlines and the end of the handler must not set a new
+// deadline: the done flag has to be set before the reset (defers run last in, first out).
+func TestDoneFlagIsSetBeforeTheDeadlinesAreCleared(t *testing.T) {
+	var late io.ReadCloser
+	rt := rtFunc(func(r *http.Request) (*http.Response, error) {
+		late = r.Body
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("early")), Request: r}, nil
+	})
+	h := New([]config.GitProvider{{Name: "p", Host: "h.test", DisplayName: "Host"}}, "https://landing.test", anonymous(), rt, slog.New(slog.DiscardHandler))
+	var armed atomic.Int64
+	reset := false
+	w := &hookedConn{ResponseRecorder: httptest.NewRecorder()}
+	w.onRead = func(d time.Time) {
+		if d.IsZero() && late != nil { // the reset: a late read of the body lands right here
+			reset = true
+			_, _ = io.Copy(io.Discard, late)
+			return
+		}
+		if reset && time.Until(d) > time.Second { // a deadline in the future after the reset
+			armed.Add(1)
+		}
+	}
+	h.ServeHTTP(w, gitReq("POST", "/h.test/o/r/git-upload-pack", strings.NewReader(strings.Repeat("x", 1000))))
+	if armed.Load() != 0 {
+		t.Errorf("a late body read set %d deadlines after the reset", armed.Load())
+	}
+}

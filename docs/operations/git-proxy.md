@@ -12,8 +12,24 @@ The user's token is used for the session repository (its `GIT_URI`) and for repo
 Other repositories are read anonymously, and a push to them is refused.
 Nothing of a clone or push is buffered, so a transfer of any size uses little memory.
 The proxy reads at most 4 KiB of a push body (2 seconds at most) to find out how git wants to read an error, and only for a request that the service authorised and that holds a slot of its instance.
-The worst case is 16 concurrent authorised requests per instance (`maxInFlight`), each with a 4 KiB peek buffer and a pooled 32 KiB copy buffer, about 0.6 MiB per instance; the 64Mi limit holds that for about 50 instances at their cap, or about 1000 concurrent authorised requests, per replica.
-An unauthorised request allocates nothing for the push body.
+A request that is not authorised, or finds no free slot, reads no body and allocates no peek buffer.
+When the handler answers, the connection of a client that stalls its body is closed: `net/http` would otherwise discard the unread body with no deadline, so the git-proxy expires the read deadline of the connection when it returns with the body not at its end (`TestStalledBodyHoldsNothingOnAnyPath`, with a real server).
+A provider that answers before the upload ended, with a client that stalls, is cut by the idle limit of 5 minutes.
+
+### Memory
+
+A request in flight costs memory until it ends, however little it moves. `TestMemoryOfStalledPushes` holds 320 authorised pushes (20 instances at their cap of 16) at a provider that never answers and reports heap plus stack of the process per request:
+
+| Connection to the provider | Per request |
+|---|---|
+| HTTP/1.1 (what the git-proxy uses) | about 130 KiB (heap 105, stack 24) |
+| HTTP/2 (the default of Go) | about 525 KiB with a provider that offers 1 MiB frames |
+
+The HTTP/2 client of Go keeps a write buffer of the maximum frame size the provider offers for every request in flight, up to 512 KiB. GitLab.com offers 16 MiB, GitHub about 68 KiB (read from their SETTINGS frame). The git-proxy therefore speaks HTTP/1.1 to providers; one transfer is one stream, so HTTP/2 gains nothing here.
+
+Plan with `limit = 20 MiB + 0.26 MiB x concurrent requests per replica`: 0.13 MiB live per request, doubled because the garbage collector lets the heap grow by that much before it collects. A session runs about 4 requests at once while it pushes (probe, `info/refs`, push, a parallel fetch), and a Service spreads connections evenly over the replicas.
+The chart assumes a deadline burst of 100 sessions pushing at once: 400 requests, 200 per replica, about 72 MiB. It sets 256Mi, which is 3.5 times that and holds about 900 requests per replica. One instance at its cap of 16 costs 2 MiB.
+Raise `gitProxy.resources.limits.memory` when a pod is killed for memory (`OOMKilled`) or `container_memory_working_set_bytes` stays above 70 percent of the limit during a burst. Raise `gitProxy.replicas` instead when you do not want a bigger pod: the replicas share the load, so doubling them halves the memory per pod.
 
 ## What users see on a push
 
