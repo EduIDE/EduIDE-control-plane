@@ -52,6 +52,7 @@ func waitGoroutines(t *testing.T, base int) {
 // A client that sends headers and stalls its body must not hold a connection or a goroutine after the handler
 // answered. net/http discards the unread body after the handler returns with no deadline of its own; the handler
 // sets an expired read deadline to end that. Needs a real server: a ResponseRecorder never discards anything.
+// The real transport case ends by the idle limit plus its grace instead: the handler waits on the body lock.
 func TestStalledBodyHoldsNothingOnAnyPath(t *testing.T) {
 	deny := azFunc(func(context.Context, string, gitapi.AuthorizeRequest) (gitapi.AuthorizeResponse, error) {
 		return gitapi.AuthorizeResponse{Reason: gitapi.ReasonUnauthorized, Message: "no"}, nil

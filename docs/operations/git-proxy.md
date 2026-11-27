@@ -15,7 +15,8 @@ The proxy reads at most 4 KiB of a push body (2 seconds at most) to find out how
 A request that is not authorised, or finds no free slot, reads no body and allocates no peek buffer.
 A request with a body (a POST) never reuses its connection: the answer carries `Connection: close`, and the git-proxy expires the read deadline of the connection when it returns, so a client that stalls its body is cut off (`net/http` would otherwise discard the unread body with no deadline; `TestStalledBodyHoldsNothingOnAnyPath`, with a real server).
 The cost is one new in-cluster TCP connection per POST; a request without a body (the `info/refs` GET) keeps its connection.
-A provider that answers before the upload ended, with a client that stalls, is cut by the idle limit of 5 minutes.
+A provider that answers before the upload ended, with a client that stalls, is cut by the idle limit of 5 minutes plus 5 seconds of grace.
+Until then it holds one of the 16 slots of its own session, so only that session waits.
 
 ### Memory
 
