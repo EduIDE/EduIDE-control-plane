@@ -33,24 +33,44 @@ const (
 	CodeRateLimited       ProblemCode = "rate-limited"
 	CodePayloadTooLarge   ProblemCode = "payload-too-large"
 	CodeInternal          ProblemCode = "internal"
+	// Git account flow (ADR 0023).
+	CodeGitInvalidState  ProblemCode = "git-invalid-state"
+	CodeGitStateExpired  ProblemCode = "git-state-expired"
+	CodeGitDenied        ProblemCode = "git-denied"
+	CodeGitProviderError ProblemCode = "git-provider-error"
+	// Repository approval (ADR 0023).
+	CodeGitApprovalDisabled ProblemCode = "git-approval-disabled"
+	CodeGitAccessNotAllowed ProblemCode = "git-access-not-allowed"
+	CodeGitApprovalLimit    ProblemCode = "git-approval-limit"
+	CodeGitNotAProvider     ProblemCode = "git-not-a-provider"
+	CodeGitNotConnected     ProblemCode = "git-not-connected"
 )
 
 var problemStatus = map[ProblemCode]int{
-	CodeUnauthorized:      http.StatusUnauthorized,
-	CodeForbidden:         http.StatusForbidden,
-	CodeNotFound:          http.StatusNotFound,
-	CodeInvalidInput:      http.StatusBadRequest,
-	CodeUnknownKey:        http.StatusBadRequest,
-	CodePersistence:       http.StatusBadRequest,
-	CodeTemplateNotFound:  http.StatusNotFound,
-	CodeWorkspaceNotFound: http.StatusNotFound,
-	CodeWorkspaceLost:     http.StatusConflict,
-	CodeWorkspaceInUse:    http.StatusConflict,
-	CodeSessionLimit:      http.StatusConflict,
-	CodeWorkspaceLimit:    http.StatusConflict,
-	CodeRateLimited:       http.StatusTooManyRequests,
-	CodePayloadTooLarge:   http.StatusRequestEntityTooLarge,
-	CodeInternal:          http.StatusInternalServerError,
+	CodeUnauthorized:        http.StatusUnauthorized,
+	CodeForbidden:           http.StatusForbidden,
+	CodeNotFound:            http.StatusNotFound,
+	CodeInvalidInput:        http.StatusBadRequest,
+	CodeUnknownKey:          http.StatusBadRequest,
+	CodePersistence:         http.StatusBadRequest,
+	CodeTemplateNotFound:    http.StatusNotFound,
+	CodeWorkspaceNotFound:   http.StatusNotFound,
+	CodeWorkspaceLost:       http.StatusConflict,
+	CodeWorkspaceInUse:      http.StatusConflict,
+	CodeSessionLimit:        http.StatusConflict,
+	CodeWorkspaceLimit:      http.StatusConflict,
+	CodeRateLimited:         http.StatusTooManyRequests,
+	CodePayloadTooLarge:     http.StatusRequestEntityTooLarge,
+	CodeInternal:            http.StatusInternalServerError,
+	CodeGitInvalidState:     http.StatusBadRequest,
+	CodeGitStateExpired:     http.StatusBadRequest,
+	CodeGitDenied:           http.StatusBadRequest,
+	CodeGitProviderError:    http.StatusBadGateway,
+	CodeGitApprovalDisabled: http.StatusForbidden,
+	CodeGitAccessNotAllowed: http.StatusForbidden,
+	CodeGitApprovalLimit:    http.StatusConflict,
+	CodeGitNotAProvider:     http.StatusBadRequest,
+	CodeGitNotConnected:     http.StatusConflict,
 }
 
 func problem(code ProblemCode, detail string) *apiError {

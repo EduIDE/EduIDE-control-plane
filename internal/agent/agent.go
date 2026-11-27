@@ -74,6 +74,9 @@ type Agent struct {
 	readyLast bool
 	readySeen bool
 
+	// git is nil while the feature is off (EnableGit).
+	git *gitRoute
+
 	// limit keeps probes and port scans from flooding the log.
 	limit *logx.Limiter
 }
@@ -293,6 +296,10 @@ func (a *Agent) LocalHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/session", a.getSession)
 	mux.HandleFunc("POST /v1/milestones", a.milestone)
+	mux.HandleFunc("GET /v1/git/hosts", a.getGitHosts)
+	if a.git != nil {
+		mux.HandleFunc("/git/{host}/{rest...}", a.gitHandler)
+	}
 	mux.HandleFunc("POST /v1/heartbeat", func(w http.ResponseWriter, _ *http.Request) {
 		a.log.Debug("heartbeat")
 		a.mu.Lock()

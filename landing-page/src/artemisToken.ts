@@ -91,7 +91,7 @@ export function readGitUri(search: string, store: Storage, warn: (m: string) => 
     return query;
 }
 
-function hasCredentials(uri: string): boolean {
+export function hasCredentials(uri: string): boolean {
     try {
         const u = new URL(uri);
         return u.username !== '' || u.password !== '';

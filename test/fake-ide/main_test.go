@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -125,5 +126,22 @@ func TestPollsAgentAndHidesValues(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("heartbeat status %d", resp.StatusCode)
+	}
+}
+
+func TestCookiesReportsNamesOnly(t *testing.T) {
+	srv := httptest.NewServer((&ide{}).handler())
+	defer srv.Close()
+	req, _ := http.NewRequest("GET", srv.URL+"/cookies", nil)
+	req.AddCookie(&http.Cookie{Name: "b", Value: "secret-value"})
+	req.AddCookie(&http.Cookie{Name: "a", Value: "secret-value"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(b), "secret-value") || !strings.Contains(string(b), `["a","b"]`) {
+		t.Errorf("%s", b)
 	}
 }

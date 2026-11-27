@@ -2,7 +2,7 @@
   "name": "eduide-session",
   "displayName": "EduIDE Session",
   "description": "Connects an EduIDE session to its agent: launch data, activity heartbeat and timeout notices",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "eduide",
   "license": "EPL-2.0",
   "repository": {

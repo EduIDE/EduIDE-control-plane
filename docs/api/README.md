@@ -22,6 +22,26 @@ Since [0021](../adr/0021-admin-api-and-public-status.md):
 - Public, no token (U17): `getPublicStatus` (`GET /status`, cached 15 s, rate limited per IP).
 - Admin API, read-only, tag `admin` (U16): `getAdminStatus`, `watchAdminStatus` (SSE), `listAdminPools`, `listAdminSessions`, `watchAdminSessions` (SSE), `getAdminSession`, `listAdminWorkspaces`, `getAdminProblems`, `listAdminTemplates`, `getAdminConfig`. They need the Keycloak role of `oidc.admin` (403 without it) and answer 404 while the deployment configures no role. Users appear only as `ownerHash`, launch data only as key names.
 Admin changes go through Helm values and the CRDs; there is no write endpoint.
+Since [0023](../adr/0023-git-accounts-and-git-proxy.md), tag `git`. All endpoints need the bearer token and answer 404 while the deployment configures no provider (except `GET /git/providers`, which is then empty).
+
+| Operation | Request | Answer | Problem codes |
+|---|---|---|---|
+| `listGitProviders` `GET /git/providers` | none | `[{name, type, host, displayName, connected, login?}]` | |
+| `connectGitProvider` `POST /git/providers/{name}/connect` | `{returnTo?}` (relative path) | `{authorizeUrl}` | `not-found`, `invalid-input`, `rate-limited` |
+| `gitCallback` `POST /git/callback` | `{state, code}` or `{state, error}` | `{provider, login, returnTo}` | `git-invalid-state`, `git-state-expired`, `git-denied`, `git-provider-error` (502), `rate-limited`, `invalid-input` |
+| `disconnectGitProvider` `DELETE /git/providers/{name}` | none | 204 | `not-found` |
+| `gitPreflight` `POST /git/preflight` | `{gitUri}` | `{result: ok\|connect\|no-access\|not-a-provider\|unknown, provider?{name, displayName}}` | `invalid-input`, `rate-limited` |
+| `listGitRepositories` `GET /sessions/{name}/git/repositories` | none | `{mode, maxPerSession, sessionRepository?, approved: [{repository, access, approvedAt}]}` | `not-found` |
+| `approveGitRepository` `PUT /sessions/{name}/git/repositories` | `{repository, access: read\|write}` | `{repository, access, approvedAt}` | `git-approval-disabled`, `git-access-not-allowed`, `git-approval-limit`, `git-not-a-provider`, `git-not-connected`, `invalid-input`, `not-found`, `rate-limited` |
+| `removeGitRepository` `DELETE /sessions/{name}/git/repositories` | `{repository}` | 204 | `invalid-input`, `not-found` |
+
+The public `GET /status` has `gitProviders: [{name, type, host, displayName}]` when providers are configured (absent otherwise).
+
+**Connect flow for the landing page.** The OAuth redirect URI is exactly `https://<hosts.service>/git/callback`, a landing page route (the landing page server answers it with the single-page app; the API lives under `/api/`). The page calls `connectGitProvider`, sends the browser to `authorizeUrl`, and on its return reads `code` and `state` (or `error` and `state`) from the query and posts them to `gitCallback`. No cookie is involved. A state is valid for 10 minutes; several flows can run at once.
+
+**Approval link.** When a session may not use a repository and approval could help, the Git error message holds `https://<hosts.service>/?session=<session name>&approveRepo=<url-encoded https URL of the repository>&access=<read|write>`. The landing page shows session and repository, requires an explicit click and calls `approveGitRepository` with its bearer token. The link holds no secret, and the service never approves on a GET. A change (approve, raise, remove) takes effect for new Git requests within 5 seconds.
+
+**Templates for a launch link without a usable template.** `GET /templates` is enough: offer the templates with `listed: true` whose `injectableKeys` contain `GIT_URI`.
 
 ## Errors
 

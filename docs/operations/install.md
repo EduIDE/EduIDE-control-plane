@@ -58,12 +58,25 @@ Hosts, realms and node labels belong in your values, never in the chart defaults
 
 ## 3. Keycloak
 
-Create two clients in the realm of the deployment.
+> **Warning: never switch "Client authentication" on for a client the landing page uses.**
+> The landing page is a browser app. Its client must stay **public** ("Client authentication" off). If you turn it on, every landing page login fails with `unauthorized_client`. This happened on two production installations on 2026-11-25.
+> The confidential client is a **new, separate** client for the gateway. You never convert an existing shared client.
+> Installations that share one client for the landing page and the gateway follow [Migrate from one shared client](#migrate-from-one-shared-client).
+
+Create two clients in the realm of the deployment: a public client for the landing page and a new confidential client for the gateway.
 
 | Client | Type | Settings |
 |---|---|---|
-| Landing page (for example `eduide`) | public, standard flow | Valid redirect URI `https://<service host>/*`, web origin `https://<service host>`. Its id goes into the landing page config and into `oidc.clientIDs`. |
-| Gateway (for example `eduide-gateway`) | **confidential** | Valid redirect URI `https://<instance host>/oauth2/callback`. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
+| Landing page (for example `eduide`) | public, standard flow only, PKCE method `S256` required | Valid redirect URI `https://<service host>/*` and nothing else, web origin `https://<service host>`. Direct access grants, implicit flow and service accounts off. Its id goes into the landing page config and into `oidc.clientIDs`. |
+| Gateway (for example `eduide-gateway`) | a **new** client, **confidential**, standard flow only | Valid redirect URI, exactly one and with no wildcard: `https://<instance host>/oauth2/callback`. The webview host needs no entry: the SecurityPolicy sets this one callback URL, so the login always returns to the instance host, and the cookie domain only shares the login with the webview host. Web origins: none, or the instance origin. Direct access grants, implicit flow and service accounts off. Its id is `oidc.gatewayClientID` and the audience `authz` checks. |
+
+**Use two clients, and never list the gateway client in `oidc.clientIDs`.**
+Code in a session and script in the IDE's browser origin (the instance and webview host) must not be able to get a token the API accepts, because the API, including the approval of Git repositories, trusts that token as the user.
+With a confidential gateway client, script cannot finish a login for it (it has no secret), and the API rejects the gateway's ID token (its `azp` is not in `oidc.clientIDs`).
+With one client for both roles, the client has to be public for the landing page, and script in the IDE origin can run its own authorization code flow against Keycloak and call the API as the user.
+That setup is not recommended, and the fix is a second client, never a confidential shared client: Keycloak ignores the gateway's client secret for a public client, and a confidential client breaks the landing page login.
+The landing page client must have no redirect URI on the instance or webview host, for the same reason.
+See [session access](../architecture/session-access.md#api-tokens-and-the-ide-origin) and [ADR 0023](../adr/0023-git-accounts-and-git-proxy.md).
 
 The tokens must carry the claim named in `oidc.userClaim` (default `preferred_username`), plus `name` and `email`.
 The gateway client secret is a Secret in the deployment namespace that the SecurityPolicy references. Create it from a file or a pipe; never print it and never put it in `values.yaml` in Git:
@@ -75,6 +88,26 @@ kubectl -n eduide-<deployment> create secret generic <gateway-secret-name> \
 
 The Secret name and key are chart values; check `values.yaml`.
 The ID token cookie (`eduide-id` by default) is set for the instance host. The cookie domain covers the webview host.
+
+### Migrate from one shared client
+
+Use this when `oidc.gatewayClientID` and `oidc.clientIDs` name the same client today.
+The order keeps the landing page login working at every step. Step 3 ends the IDE logins that are open (see there). **This procedure is not yet tested on a real installation.** Try it on a test realm first.
+Do not change the existing client's "Client authentication" at any step.
+
+1. In Keycloak, create a **new** client (for example `eduide-gateway`). Client authentication **on**, standard flow only, direct access grants, implicit flow and service accounts off. Valid redirect URI, exactly one: `https://<instance host>/oauth2/callback`. No wildcard, and no entry for the webview host. Copy its secret from the Credentials tab.
+2. Store the secret in the Secret that `oidc.clientSecretName` names, under the key `client-secret`. Create or replace it from a file or a pipe, and never print it.
+3. Set `config.oidc.gatewayClientID` to the new client id. Leave `config.oidc.clientIDs` and the landing page client as they are. Deploy the chart.
+   This step signs out every open IDE tab once: the ID token cookies of the gateway carry the old audience, so `authz` rejects them and redirects to the login of the new client. Every user with an open IDE tab signs in again once. Running sessions keep running; only the browser login is renewed. Choose a quiet time window, for example outside lectures and exams.
+4. Verify: log in to the landing page, then log in to an IDE (a fresh browser session). Both must work. The old public client still has its instance host redirect URI, so a failed step 3 costs nothing.
+5. Only now remove the instance host redirect URI and web origin from the old, public client (and a webview host entry, if your installation added one). Keep its service host redirect URI and web origin. Its "Client authentication" stays off.
+6. Verify again: landing page login, IDE login.
+
+Go back:
+
+- Before step 5: set `config.oidc.gatewayClientID` to the old client id again, restore the old secret value in the Secret, and deploy (or `helm rollback`).
+- After step 5: re-add the two redirect URIs and web origins to the old client first, then set `gatewayClientID` back and deploy.
+- Delete the new client only after the rollback is deployed.
 
 ## Admin role
 
@@ -120,10 +153,19 @@ The route of a session keeps its own HSTS header without `includeSubDomains`.
 
 | Secret | Created by | Content |
 |---|---|---|
-| Gateway client secret | operator of the deployment (you) | Keycloak client secret |
+| Gateway client secret | admin of the installation (you) | Secret of the new, confidential gateway client (never of the public landing page client) |
 | `ide-<instance>-token` | operator | Instance token of a pod, 32 random bytes |
 | `<session>-data` | service | Launch data of one session, owned by the session |
+| Git account key (`gitAccounts.encryptionKey.secretName`, else generated by the chart) | you or the chart | Only with Git providers. Encrypts the stored Git tokens and signs the connect state. Losing it makes users connect again |
 | User salt (`userSalt.secretName`, else generated by the chart) | you or the chart | Salt for pseudonymous user ids in traces and the admin API. authz also derives the key of its session cookie `eduide-authz` from it, so treat it as an authentication secret: whoever knows it and holds a login of their own can pass authz as another user |
+
+## Git accounts (optional)
+
+The service can connect GitHub and GitLab accounts of users ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)).
+The feature is off while `config.gitAccounts.providers` is empty, and the chart renders nothing for it then.
+Each provider needs an OAuth application at the Git host and the values described in the [chart README](../../charts/eduide-control-plane/README.md).
+With providers the chart also renders the `git-proxy` (2 replicas, ClusterIP Service, no route), the internal port 8083 of the service and the NetworkPolicies for them. See the [git-proxy runbook](git-proxy.md).
+**Planned:** a step-by-step admin guide for the OAuth applications.
 
 ## 5. Verify
 

@@ -41,6 +41,33 @@ sequenceDiagram
 
 Service and HTTPRoute of the pod exist since prewarming. The claim changes labels only, so the gateway does not change.
 
+## Launch with a Git repository
+
+With Git providers configured, the landing page asks the service before it starts a launch that has a `GIT_URI` without credentials ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)).
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant L as landing page
+  participant S as service
+  participant H as Git host
+  L->>S: POST /git/preflight {gitUri}
+  S->>H: GET info/refs (3 s, user credential if connected)
+  S-->>L: ok, connect, no-access, not-a-provider or unknown
+  alt connect
+    L->>S: POST /git/providers/{name}/connect {returnTo: this link}
+    L->>H: browser opens authorizeUrl
+    H-->>L: redirect to /git/callback?code&state
+    L->>S: POST /git/callback {code, state}
+    L->>L: back to the link, preflight again, launch
+  else ok, not-a-provider, unknown, or the request failed
+    L->>S: POST /sessions (as above)
+  end
+```
+
+`no-access` stops the launch with a message that names the connected account. A failed preflight request never blocks: the launch goes ahead.
+A link with `gitUri` and no usable `appDef` shows a template picker first. The agent and the IDE extension then route the clone through the git-proxy (`insteadOf` entry written by `eduide-session` before the launch data is handed out).
+
 ## Cold start
 
 ```mermaid

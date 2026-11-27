@@ -15,6 +15,7 @@ Decisions behind the diagrams: [ADR index](../../adr/README.md).
 ## Rules the diagrams only imply
 
 - NetworkPolicy, default deny: the session pod accepts :8080 only from Envoy and :8081 only from the operator; session pods cannot reach each other ([ADR 0019](../../adr/0019-network-isolation.md)).
+- With Git providers, session pods may also reach the `git-proxy` (:8080); the `git-proxy` reaches the service on :8083 and the Git hosts on the internet. Only the deployment view draws it ([ADR 0023](../../adr/0023-git-accounts-and-git-proxy.md)).
 - Claims and releases never change gateway configuration: routes and instance tokens exist from prewarming on ([ADR 0004](../../adr/0004-gateway-api-only.md)).
 - Webviews and the mini browser run on the fixed host `webview.<instance host>`, no wildcard.
 - Observability is not drawn: OTLP traces to one Jaeger v2 per cluster, Prometheus metrics ([ADR 0013](../../adr/0013-observability.md)).

@@ -159,6 +159,13 @@ func (s *Server) publicStatus(ctx context.Context) ([]byte, *apiError) {
 		}
 		out.Templates = append(out.Templates, pt)
 	}
+	if s.git != nil { // the landing page shows the connect buttons from this; nothing else about Git accounts is public
+		gp := []PublicGitProvider{}
+		for _, p := range s.git.Providers() {
+			gp = append(gp, PublicGitProvider{Name: p.Name, Type: PublicGitProviderType(p.Type), Host: p.Host, DisplayName: p.DisplayName})
+		}
+		out.GitProviders = &gp
+	}
 	out.Overall = worse(worse(out.Parts.SignIn, out.Parts.Starting), out.Parts.Workspaces)
 	b, err := json.Marshal(out)
 	if err != nil {

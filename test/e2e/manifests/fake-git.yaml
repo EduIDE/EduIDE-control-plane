@@ -1,0 +1,54 @@
+# The fake Git provider of the Git accounts run (test/fake-git). The Service name is the provider host:
+# https://fake-git.eduide-e2e.svc. Port 9000 is the test-only introspection, which the tests reach through
+# kubectl port-forward and no pod of the control plane uses.
+# The Secrets and ConfigMaps (fake-git-tls, e2e-git-oauth) are made by run.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fake-git
+  namespace: eduide-e2e
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: fake-git}
+  template:
+    metadata:
+      labels: {app: fake-git}
+    spec:
+      containers:
+        - name: fake-git
+          image: ghcr.io/eduide/eduide-control-plane/fake-git:e2e
+          imagePullPolicy: Never
+          env:
+            - {name: FAKE_GIT_CLIENT_ID, value: e2e-client}
+            # The redirect URI registered for the application: https://<hosts.service>/git/callback.
+            - {name: FAKE_GIT_REDIRECT_URI, value: "https://ide.e2e.test/git/callback"}
+            - name: FAKE_GIT_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: e2e-git-oauth, key: client-secret}}
+            # The service refreshes a token one minute before it expires, so the refresh test waits a few seconds only.
+            - {name: FAKE_GIT_ACCESS_TTL, value: 75s}
+          ports:
+            - {name: https, containerPort: 8443}
+            - {name: introspect, containerPort: 9000}
+          readinessProbe:
+            tcpSocket: {port: 9000}
+            periodSeconds: 1
+          volumeMounts:
+            - {name: tls, mountPath: /tls, readOnly: true}
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: tls
+          secret: {secretName: fake-git-tls}
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fake-git
+  namespace: eduide-e2e
+spec:
+  selector: {app: fake-git}
+  ports:
+    - {name: https, port: 443, targetPort: 8443}
+    - {name: introspect, port: 9000, targetPort: 9000}

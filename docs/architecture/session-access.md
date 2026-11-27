@@ -82,3 +82,13 @@ sequenceDiagram
 - The cookie domain covers the instance host and the webview host.
 
 Failure behavior: if `authz` is down, nobody gets into a new IDE. Open WebSockets stay up. See the [authz runbook](../operations/authz-errors.md).
+
+## API tokens and the IDE origin
+
+The REST API, including the approval of Git repositories ([ADR 0023](../adr/0023-git-accounts-and-git-proxy.md)), accepts a bearer token of a client in `oidc.clientIDs`. Code in the pod and script in the IDE's origin must not be able to get one. What holds today:
+
+- The agent strips the gateway's login cookies from every request to the IDE and drops cookies of those names that the IDE sets. The oauth2 filter sets no `Authorization` header towards the IDE.
+- The ID token cookie is set by Envoy with `Secure; HttpOnly`; the e2e test `TestGatewayAuth` fails otherwise.
+- The gateway client is confidential and separate from the landing page client. Script in the instance or webview origin cannot finish an OIDC flow for it (no secret), and the API rejects its ID token (`azp` is not in `oidc.clientIDs`).
+
+The last point needs two clients. With one client in both `oidc.clientIDs` and `oidc.gatewayClientID` the client is public, and script in the IDE origin can run an authorization code flow with PKCE against Keycloak, read the code on its own origin and call the API as the user. Do not fix it by making the shared client confidential: the landing page login breaks. Create a new gateway client. The Keycloak settings and the migration steps are in [install.md](../operations/install.md#migrate-from-one-shared-client).

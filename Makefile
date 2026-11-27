@@ -2,7 +2,7 @@
 # kind kubeconfig in .e2e/, never the default context of the machine.
 
 SHELL := /bin/bash
-BINARIES := operator service authz agent usage-export
+BINARIES := operator service authz agent git-proxy usage-export
 REGISTRY ?= ghcr.io/eduide/eduide-control-plane
 TAG ?= dev
 ENVTEST_K8S ?= 1.37.0

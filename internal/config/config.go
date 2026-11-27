@@ -43,6 +43,83 @@ type Config struct {
 	Admin Admin `json:"admin,omitempty"`
 	// Security tunes response headers of the service.
 	Security Security `json:"security,omitempty"`
+	// GitAccounts connects users to GitHub and GitLab hosts (ADR 0023). No providers means the feature is off.
+	GitAccounts GitAccounts `json:"gitAccounts,omitempty"`
+}
+
+// GitAccounts holds the Git hosts a user can connect an account for.
+type GitAccounts struct {
+	Providers []GitProvider `json:"providers,omitempty"`
+	// EncryptionKeyFile holds the secret the service derives the token encryption key and the state key from
+	// (at least 32 bytes). Required with providers; the service reads it, the config never holds it.
+	EncryptionKeyFile string `json:"encryptionKeyFile,omitempty"`
+	// ProxyURL is the git-proxy Service the operator hands to the agents of new session pods (the chart sets it).
+	// Empty means session pods get no path for Git traffic.
+	ProxyURL string `json:"proxyURL,omitempty"`
+	// Approval lets a user approve further repositories for the credential, per session, on the landing page.
+	Approval GitApproval `json:"approval,omitempty"`
+	// InternalURL is the internal listener of the service, which the git-proxy calls (the chart sets it).
+	InternalURL string `json:"internalURL,omitempty"`
+}
+
+// GitApproval tunes the approval of repositories other than the session repository (ADR 0023).
+type GitApproval struct {
+	// Mode is "off" (no approvals), "read" (approve for reading only) or "write" (for reading, or reading and
+	// pushing). Default "write".
+	Mode string `json:"mode,omitempty"`
+	// MaxPerSession bounds the approved repositories of one session. Default 20.
+	MaxPerSession int `json:"maxPerSession,omitempty"`
+}
+
+// Approval modes.
+const (
+	ApprovalOff   = "off"
+	ApprovalRead  = "read"
+	ApprovalWrite = "write"
+)
+
+// GitProvider is one Git host with its own OAuth application.
+type GitProvider struct {
+	// Name is a DNS label, unique; it is the path segment in the API and a label value on the token Secrets.
+	Name string `json:"name"`
+	// Type is "github" (OAuth App, also GitHub Enterprise Server) or "gitlab".
+	Type string `json:"type"`
+	// Host is a bare host name such as github.com. API and OAuth URLs derive from it.
+	Host        string `json:"host"`
+	DisplayName string `json:"displayName,omitempty"`
+	ClientID    string `json:"clientID"`
+	// ClientSecretFile holds the OAuth client secret; the chart mounts it from a Secret.
+	ClientSecretFile string `json:"clientSecretFile"`
+	// CAFile is a PEM bundle with the CA of the host, for a self-hosted instance with a private CA. It is added to
+	// the system roots for the service (OAuth, preflight) and the git-proxy. The chart mounts it from a ConfigMap.
+	CAFile string `json:"caFile,omitempty"`
+	// InactivityExpiry revokes and deletes an account that no session used for this long. Default 2160h.
+	InactivityExpiry *metav1.Duration `json:"inactivityExpiry,omitempty"`
+}
+
+// GitProviderTypes are the known values of GitProvider.Type.
+const (
+	GitHub = "github"
+	GitLab = "gitlab"
+)
+
+var (
+	gitNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`)
+	// A bare host name: labels of letters, digits and hyphens. No scheme, port, path or user info.
+	gitHostRE = regexp.MustCompile(`^([A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?\.)*[A-Za-z0-9]([-A-Za-z0-9]*[A-Za-z0-9])?$`)
+)
+
+// HTTPSURLHosts are the hosts an HTTPSURL key may name: allowedHosts, plus the provider hosts for GIT_URI only.
+// Another key such as ARTEMIS_URL names a server that receives requests with credentials, so a Git host must not
+// pass there just because users can connect an account to it.
+func (c *Config) HTTPSURLHosts(key string) []string {
+	hosts := slices.Clone(c.AllowedHosts)
+	if key == "GIT_URI" {
+		for _, p := range c.GitAccounts.Providers {
+			hosts = append(hosts, p.Host)
+		}
+	}
+	return hosts
 }
 
 // Security tunes response headers of the service.
@@ -101,7 +178,7 @@ type OIDC struct {
 	IssuerURL string `json:"issuerURL"`
 	// ClientIDs accepted as audience or azp of API tokens (landing page client).
 	ClientIDs []string `json:"clientIDs"`
-	// GatewayClientID is the confidential client of the SecurityPolicy; audience of the ID token cookie.
+	// GatewayClientID is the separate, confidential client of the SecurityPolicy (never the public landing page client); audience of the ID token cookie.
 	GatewayClientID string `json:"gatewayClientID"`
 	// UserClaim identifies the owner. Default preferred_username.
 	UserClaim string `json:"userClaim,omitempty"`
@@ -168,6 +245,9 @@ type Telemetry struct {
 // Agent describes the sidecar the operator injects into session pods.
 type Agent struct {
 	Image string `json:"image"`
+	// ImagePullPolicy (Always, IfNotPresent or Never) of the agent container. Empty leaves it unset, so Kubernetes
+	// decides from the image tag. The chart sets it from image.pullPolicy when that is not IfNotPresent.
+	ImagePullPolicy corev1.PullPolicy `json:"imagePullPolicy,omitempty"`
 	// LogLevel (debug, info or warn) becomes AGENT_LOG_LEVEL of the sidecar. Default info.
 	LogLevel  string                      `json:"logLevel,omitempty"`
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
@@ -241,6 +321,15 @@ func (c *Config) defaults() {
 	if c.Admin.RateLimitPerMinute == 0 {
 		c.Admin.RateLimitPerMinute = 60
 	}
+	if c.GitAccounts.Approval.Mode == "false" { // an unquoted `off` is a boolean in YAML 1.1
+		c.GitAccounts.Approval.Mode = ApprovalOff
+	}
+	if c.GitAccounts.Approval.Mode == "" {
+		c.GitAccounts.Approval.Mode = ApprovalWrite
+	}
+	if c.GitAccounts.Approval.MaxPerSession == 0 {
+		c.GitAccounts.Approval.MaxPerSession = 20
+	}
 	if c.RateLimit.LaunchesPerMinute == 0 {
 		c.RateLimit.LaunchesPerMinute = 10
 	}
@@ -249,6 +338,15 @@ func (c *Config) defaults() {
 	}
 	if c.Gateway.Namespace == "" {
 		c.Gateway.Namespace = c.Namespace
+	}
+	for i := range c.GitAccounts.Providers {
+		p := &c.GitAccounts.Providers[i]
+		if p.DisplayName == "" {
+			p.DisplayName = p.Name
+		}
+		if p.InactivityExpiry == nil {
+			p.InactivityExpiry = &metav1.Duration{Duration: 2160 * time.Hour}
+		}
 	}
 }
 
@@ -277,6 +375,9 @@ func (c *Config) validate() error {
 	if !slices.Contains([]string{"", "debug", "info", "warn"}, c.Agent.LogLevel) {
 		errs = append(errs, errors.New("config: agent.logLevel must be debug, info or warn"))
 	}
+	if !slices.Contains([]corev1.PullPolicy{"", corev1.PullAlways, corev1.PullIfNotPresent, corev1.PullNever}, c.Agent.ImagePullPolicy) {
+		errs = append(errs, errors.New("config: agent.imagePullPolicy must be Always, IfNotPresent or Never"))
+	}
 	if c.SessionsPerUser < 1 {
 		errs = append(errs, errors.New("config: sessionsPerUser must be at least 1"))
 	}
@@ -287,6 +388,7 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf("config: overview.titleStripPattern: %w", err))
 	}
 	errs = append(errs, c.validateAdmin()...)
+	errs = append(errs, c.validateGitAccounts()...)
 	return errors.Join(errs...)
 }
 
@@ -323,6 +425,54 @@ func (c *Config) validateAdmin() []error {
 	}
 	if d := c.Admin.ScalerInterval; d != nil && d.Duration <= 0 {
 		errs = append(errs, errors.New("config: admin.scalerInterval must be positive"))
+	}
+	return errs
+}
+
+func (c *Config) validateGitAccounts() []error {
+	g := c.GitAccounts
+	var errs []error
+	if len(g.Providers) > 0 && g.EncryptionKeyFile == "" {
+		errs = append(errs, errors.New("config: gitAccounts.encryptionKeyFile is required with providers"))
+	}
+	for name, u := range map[string]string{"proxyURL": g.ProxyURL, "internalURL": g.InternalURL} {
+		if u != "" && !httpURL(u) {
+			errs = append(errs, fmt.Errorf("config: gitAccounts.%s must be an http(s) URL", name))
+		}
+	}
+	if m := g.Approval.Mode; m != ApprovalOff && m != ApprovalRead && m != ApprovalWrite {
+		errs = append(errs, errors.New("config: gitAccounts.approval.mode must be off, read or write"))
+	}
+	if g.Approval.MaxPerSession < 1 {
+		errs = append(errs, errors.New("config: gitAccounts.approval.maxPerSession must be positive"))
+	}
+	names, hosts := map[string]bool{}, map[string]bool{}
+	for i, p := range g.Providers {
+		at := fmt.Sprintf("gitAccounts.providers[%d]", i)
+		if !gitNameRE.MatchString(p.Name) {
+			errs = append(errs, fmt.Errorf("config: %s.name must be a lowercase DNS label of at most 40 characters", at))
+		}
+		if names[p.Name] {
+			errs = append(errs, fmt.Errorf("config: %s.name %q is not unique", at, p.Name))
+		}
+		names[p.Name] = true
+		if p.Type != GitHub && p.Type != GitLab {
+			errs = append(errs, fmt.Errorf("config: %s.type must be github or gitlab", at))
+		}
+		if !gitHostRE.MatchString(p.Host) {
+			errs = append(errs, fmt.Errorf("config: %s.host must be a bare host name without scheme, port or path", at))
+		}
+		if h := strings.ToLower(p.Host); hosts[h] {
+			errs = append(errs, fmt.Errorf("config: %s.host %q is not unique", at, p.Host))
+		} else {
+			hosts[h] = true
+		}
+		if p.ClientID == "" || p.ClientSecretFile == "" {
+			errs = append(errs, fmt.Errorf("config: %s needs clientID and clientSecretFile", at))
+		}
+		if d := p.InactivityExpiry; d != nil && d.Duration <= 0 {
+			errs = append(errs, fmt.Errorf("config: %s.inactivityExpiry must be positive", at))
+		}
 	}
 	return errs
 }

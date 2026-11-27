@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -52,6 +53,22 @@ func TestAgentGetsItsLogLevel(t *testing.T) {
 		}
 	}
 	t.Fatal("agent container lacks AGENT_LOG_LEVEL=debug")
+}
+
+func TestAgentImagePullPolicy(t *testing.T) {
+	tmpl := &v1.IDETemplate{ObjectMeta: metav1.ObjectMeta{Name: "java", Namespace: "ns"}, Spec: v1.IDETemplateSpec{ImagePullPolicy: corev1.PullNever}}
+	for _, policy := range []corev1.PullPolicy{"", corev1.PullAlways} {
+		d := &deps{cfg: &config.Config{Agent: config.Agent{ImagePullPolicy: policy}}}
+		for _, c := range d.buildPod(tmpl, "inst", nil, "").Spec.Containers {
+			want := policy
+			if c.Name == "ide" {
+				want = corev1.PullNever // the template decides for the IDE image
+			}
+			if c.ImagePullPolicy != want {
+				t.Errorf("config %q: container %s has %q, want %q", policy, c.Name, c.ImagePullPolicy, want)
+			}
+		}
+	}
 }
 
 func TestWorkspaceMountOnlyWithClaim(t *testing.T) {

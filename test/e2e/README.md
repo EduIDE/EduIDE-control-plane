@@ -36,7 +36,8 @@ host (127.0.0.1:18443)  --kind extraPortMapping-->  node port 30443
 | DNS | The names `*.e2e.test` do not exist. In the cluster, CoreDNS rewrites them to the Service `gateway-entry`, so service, authz, the Envoy Gateway controller and Envoy reach Keycloak at the same issuer URL `https://keycloak.e2e.test/realms/eduide` as the tests. On the host, the test client dials `127.0.0.1:18443` for every `*.e2e.test` name. |
 | CA trust | The CA is a ConfigMap `e2e-ca`. It is mounted into the Envoy Gateway controller (Helm values `eg-values.yaml`), into the Envoy proxies (`EnvoyProxy` patch in `manifests/gateway.yaml`, over `/etc/ssl/certs/ca-certificates.crt`), and into the `service` and `authz` deployments (`run.sh` patches them after the chart install and sets `SSL_CERT_FILE`). Playwright ignores certificate errors. |
 | Keycloak | `quay.io/keycloak/keycloak:26.4`, dev mode, realm `eduide` imported from `realm.json`. Confidential client `eduide-gateway` (secret in `e2e-gateway-client`, key `client-secret`), public client `eduide-landing` with direct access grants for tests. Users `alice` and `bob`, password equal to the name. All test values, the cluster is throwaway and local. |
-| Fake IDE | `test/fake-ide`, loaded into the cluster as `ghcr.io/eduide/eduide-control-plane/fake-ide:e2e` (busybox base, so `sh` exists for the prepull init container). It serves `/`, a WebSocket echo `/ws`, `/headers` (header names only), `/data-state` (key names and a hash, never values) and `POST /heartbeat`. It long-polls the agent like the extension. |
+| Fake IDE | `test/fake-ide`, loaded into the cluster as `ghcr.io/eduide/eduide-control-plane/fake-ide:e2e` (alpine base with `git`, so `sh` exists for the prepull init container). It serves `/`, a WebSocket echo `/ws`, `/headers` (header names only), `/data-state` (key names and a hash, never values), `POST /heartbeat` and `POST /git-test` (fixed Git operations, exit codes and scrubbed stderr only) and `GET /cookies` (cookie names only) and `POST /try-approve` (takes a real session name and repository, sends a PUT without a token to the service and to the agent Git path, status codes only; the e2e accepts no connection or 401 from the pod, because session pods cannot reach private ranges). It long-polls the agent like the extension and writes the Git `insteadOf` entries from `GET /v1/git/hosts`. |
+| Fake Git provider | `test/fake-git`, loaded as `ghcr.io/eduide/eduide-control-plane/fake-git:e2e` (alpine with `git`), deployed by `manifests/fake-git.yaml` as Service `fake-git` on port 443. It has a CA of its own (`.e2e/certs-git`). See "Git accounts run" below. |
 | Charts | `charts/eduide-control-plane-crds`, `charts/eduide-control-plane` with `values.yaml`, `charts/eduide-landing-page` with `values-landing.yaml`. Images come from `make images TAG=e2e` plus the fake IDE, loaded with `kind load`. |
 
 ## Templates in `values.yaml`
@@ -63,14 +64,35 @@ Go tests with the build tag `e2e` in this directory, run in the order of the fil
 | `auth_test.go` | owner 200, other user 403, anonymous redirect to Keycloak, free pool instance 403, after release 403, token header stripped, WebSocket; NetworkPolicy negative test with a probe pod and a positive control |
 | `capacity_test.go` | oldest idle pod of the same node pool deleted, other pool untouched, session fails with `capacity-exhausted` |
 | `lifecycle_test.go` | SSE events, idle timeout |
-| `browser/` | Playwright: Artemis launch without login (G16), the token reaches the IDE |
+| `git_test.go` | Git accounts (ADR 0023), own phase with `values-git.yaml`: connect flow, preflight, foreign state, clone, commit, push and the credential rule in a session, repository approval (link in the refusal, read then write, negative cases, the pod cannot approve), refresh, disconnect, no token in logs and containers, NetworkPolicy. See below. |
+| `browser/` | Playwright: Artemis launch without login (G16), the token reaches the IDE. `git-accounts.spec.ts` runs in the Git phase: connect through the page, a start link to the private repository that asks to connect and then launches, the approval page |
+
+## Git accounts run
+
+The default install has no Git providers, so the suite above runs unchanged.
+After it, `run.sh` runs `helm upgrade` with `values-git.yaml` on top of `values.yaml` and runs the tests `TestGit*`.
+The values add the provider `fake` (type `gitlab`, host `fake-git.eduide-e2e.svc`, CA from the ConfigMap `fake-git-ca`) and `networkPolicy.gitProxyEgressExtra`, a rule that lets git-proxy reach the pods of the fake on port 8443. Session pods get no such rule, and a test proves they cannot reach the fake.
+The next `make e2e` installs the chart without providers again.
+
+The tests play the landing page: they call connect, open the authorize URL at the fake through `kubectl port-forward` (certificate checked against the fake CA), read code and state from the `Location` header and post them to `/git/callback`.
+The port-forward and the Git steps in the session use the kind kubeconfig only: the helper checks once that the context is `kind-*` and the server is on `127.0.0.1`.
+Codes, tokens and state never appear in the test output; failures name the number of the value only.
+
+```sh
+E2E_RUN=TestGitAccounts make e2e     # only this phase (the base install still runs first)
+```
+
+Without `E2E_GIT_CA_FILE` (set by `run.sh`) the tests skip, so `go test -tags e2e ./test/e2e/` against a cluster without the feature stays green.
+After the Go tests the phase runs `browser/git-accounts.spec.ts`. The browser cannot resolve the fake's cluster address, so `run.sh` starts `kubectl port-forward svc/fake-git` on `E2E_FAKE_GIT_PORT` (default 18444) and the spec answers the authorize step through it, the way the fake would redirect a browser.
+The approval modes `read` and `off` are not part of this run (default mode `write`).
+The refresh test waits about a minute: the fake's access tokens live 75 seconds and the service refreshes a minute before expiry.
 
 ## Run
 
 ```sh
 make e2e                       # everything
 E2E_INFRA_ONLY=1 make e2e      # only the cluster and the infrastructure smoke test
-E2E_RUN=TestMatrix make e2e    # a go test -run expression
+E2E_RUN=TestMatrix make e2e    # a go test -run expression (TestGit* selects the Git accounts phase only)
 E2E_SKIP_BROWSER=1 make e2e    # without Playwright (it installs Chromium on first use)
 E2E_SKIP_IMAGES=1 make e2e     # reuse the images already loaded
 make e2e-down                  # needs kind on PATH: export PATH=$PWD/bin:$PATH (run.sh installs it there)

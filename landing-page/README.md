@@ -10,6 +10,7 @@ The page a student lands on: it starts an IDE session through the control plane 
 - Session rows show the stop time of a running session (with the reason: idle or time limit) or the deletion date of a saved workspace, red only when files are about to be lost. Every row has Start and Delete (with a confirmation dialog)
 - Tiles show the start time (`startEstimate`), saved workspace or temporary session, and a dialog with what the template includes. Templates with starter projects (`variants`) open a picker first
 - Launch from an Artemis link (`?appDef=<template>&gitUri=...`) or from a tile. Progress follows the session event stream (SSE) and redirects when the session is Ready. At the session limit the page lists the running sessions to delete or open
+- Git accounts (only when the deployment has Git providers, ADR 0023): a "Git accounts" section with Connect and Disconnect, the route `/git/callback` (the redirect URI of the OAuth applications is `https://<hosts.service>/git/callback`), a check of the repository before a launch with a `gitUri`, a template picker for a link that has `gitUri` but no usable `appDef`, and the approval page for the link `/?session=<name>&approveRepo=<https URL>&access=<read|write>` of the git-proxy. See [docs/development/git-accounts.md](../docs/development/git-accounts.md)
 - English and German (browser language, switchable in the avatar menu), colors follow the system light or dark setting
 - `/status` (no login): the overall state in plain language, the three parts (sign in, starting sessions, saved workspaces) and the start time per template, split into temporary sessions and saved workspaces. Reads the public `GET /api/v1/status` every 30 s and shows "Status is not available right now" when the request fails
 - `/admin` (login and admin role): a read-only panel with Status, Pools, Sessions (with details and trace link), Workspaces, Problems, Templates and Limits as real paths (`/admin/pools`, `/admin/sessions`, ...). It loads lazily, so students never download it. Live data comes from the admin event streams, other pages reload every 30 s. Charts and figures that need Prometheus are hidden when the service sends none. Users appear only as pseudonymous hash
@@ -19,10 +20,12 @@ The page a student lands on: it starts an IDE session through the control plane 
 
 | Where | Name | Meaning |
 |---|---|---|
-| query | `appDef` | template name |
+| query | `appDef` | template name. Without it, a link with `gitUri` shows a template picker |
 | query | `gitUri`, `gitRef`, `artemisUrl` | launch data (only keys the template allows are sent) |
 | query | `title` | optional title shown in the session list |
 | query | `persistence` | optional `none` or `volume`, else the template default |
+| query | `session`, `approveRepo`, `access` | approval page: session name, repository (https URL) and `read` or `write`. Nothing is approved before a click on "Allow" |
+| query | `code`, `state`, `error` | only on `/git/callback`, set by the Git host. Moved into `sessionStorage` before the login and removed from the address bar |
 | fragment | `artemisToken` | Artemis token. Read before Keycloak starts, kept in `sessionStorage`, removed from the address bar, deleted after the launch. `?artemisToken` still works and logs a deprecation warning |
 
 ## Configuration

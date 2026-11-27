@@ -28,6 +28,14 @@ export function parseLaunchParams(search: string): LaunchParams | undefined {
     };
 }
 
+/** A link that names a repository but no template: the page asks which template should open it. */
+export function parseRepositoryLink(search: string): LaunchParams | undefined {
+    const p = new URLSearchParams(search);
+    const get = (k: string): string | undefined => p.get(k) || undefined;
+    const gitUri = get('gitUri');
+    return gitUri ? { appDef: '', gitUri, gitRef: get('gitRef'), title: get('title'), persistence: get('persistence') } : undefined;
+}
+
 // The display source is not secret, so a token in the userinfo part of an Artemis git URL must not end up in it.
 // The service refuses a display source with a query or a fragment, so both are dropped as well.
 export function displaySource(gitUri: string): string {

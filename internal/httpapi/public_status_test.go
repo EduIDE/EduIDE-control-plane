@@ -26,6 +26,8 @@ var publicPaths = []string{
 	"templates", "templates[].name", "templates[].displayName", "templates[].logoUrl", "templates[].startEstimate",
 	"templates[].startEstimate.none", "templates[].startEstimate.none.seconds",
 	"templates[].startEstimate.volume", "templates[].startEstimate.volume.seconds", "templates[].warm",
+	// Only with configured Git providers (ADR 0023): what the landing page needs for its connect buttons.
+	"gitProviders", "gitProviders[].name", "gitProviders[].type", "gitProviders[].host", "gitProviders[].displayName",
 }
 
 func jsonPaths(prefix string, v any, out map[string]bool) {

@@ -116,6 +116,22 @@ paths:
       responses:
         "204": {description: Recorded or already known.}
         "400": {description: "Malformed body, name not in the allowlist, or a timestamp more than a minute in the future."}
+  /v1/git/hosts:
+    get:
+      operationId: getGitHosts
+      tags: [local]
+      description: |
+        The Git provider hosts of this deployment and the landing page URL, for the extension, which writes the
+        `url.<agent>/git/<host>/.insteadOf` entries from it (ADR 0023). The list is empty when the feature is off.
+        With the feature on, the same listener serves `ANY /git/{host}/{path}`: it forwards to the git-proxy with the
+        instance name and token, only while the instance is claimed (403 before), and answers 404 when the feature is off.
+        The `/git/` paths are Git smart HTTP and not described here.
+      responses:
+        "200":
+          description: Hosts.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitHosts"}
 components:
   securitySchemes:
     instanceToken: {type: http, scheme: bearer}
@@ -162,6 +178,14 @@ components:
         kind: {type: string, enum: [idle-warning, max-warning, info]}
         message: {type: string, maxLength: 1024}
         at: {type: string, format: date-time, description: "When the session will end."}
+    GitHosts:
+      type: object
+      required: [hosts]
+      properties:
+        hosts:
+          type: array
+          items: {type: string}
+        landingUrl: {type: string, description: "Landing page, where the user connects an account."}
     LocalSession:
       type: object
       required: [version, claimed]

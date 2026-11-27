@@ -14,6 +14,10 @@ config:
     admin: {rolePath: realm_access.roles, role: eduide-admin}
   admin:
     links: {jaeger: "https://jaeger.example.org"}
+  gitAccounts:
+    providers:
+    - {name: github, type: github, host: github.com, displayName: GitHub, clientID: github-client, clientSecretRef: {name: git-oauth, key: github}}
+    - {name: gitlab, type: gitlab, host: gitlab.example.org, displayName: Example GitLab, clientID: gitlab-client, clientSecretRef: {name: git-oauth, key: gitlab}, inactivityExpiry: 720h}
 oidc:
   clientSecretName: eduide-gateway-oidc
 templates:

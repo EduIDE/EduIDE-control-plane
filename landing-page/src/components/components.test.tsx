@@ -185,7 +185,7 @@ describe('TemplateTile', () => {
         expect(screen.getByLabelText(/Saved workspace/).getAttribute('data-persistence')).toBe('saved');
         rerender(wrap(<TemplateTile template={python} onPick={vi.fn()} onInfo={vi.fn()} />));
         expect(screen.getByTestId('launch-app-python')).toBeTruthy();
-        expect(screen.getByLabelText(/Temporary workspace/).getAttribute('data-persistence')).toBe('temporary');
+        expect(screen.getByLabelText(/Temporary session/).getAttribute('data-persistence')).toBe('temporary');
     });
 
     it('shows Ready instantly for a warm temporary template without an estimate', () => {

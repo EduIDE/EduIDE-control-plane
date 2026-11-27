@@ -36,7 +36,7 @@ func TestValidateData(t *testing.T) {
 	tpl := javaTemplate()
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out, err := validateData(tpl, tt.in, alice, []string{"git.example.org"})
+			out, err := validateData(tpl, tt.in, alice, hostsFor("git.example.org"))
 			if tt.code == "" {
 				if err != nil {
 					t.Fatalf("unexpected %v", err)
@@ -58,7 +58,7 @@ func TestValidatePattern(t *testing.T) {
 		{Name: "TAG", Format: v1alpha1.FormatPattern, Pattern: `v[0-9]+|latest`},
 	}}}
 	for val, ok := range map[string]bool{"v12": true, "latest": true, "xv12": false, "v12x": false, "v1\nlatest": false} {
-		_, err := validateData(tpl, map[string]string{"TAG": val}, alice, nil)
+		_, err := validateData(tpl, map[string]string{"TAG": val}, alice, hostsFor())
 		if (err == nil) != ok {
 			t.Errorf("%q: err=%v, want ok=%v", val, err, ok)
 		}
@@ -114,7 +114,7 @@ func FuzzValidateData(f *testing.F) {
 	f.Add("GIT_URI", "https://u@git.example.org", "", "")
 	tpl := javaTemplate()
 	f.Fuzz(func(t *testing.T, k1, v1, k2, v2 string) {
-		out, err := validateData(tpl, map[string]string{k1: v1, k2: v2}, alice, []string{"git.example.org"})
+		out, err := validateData(tpl, map[string]string{k1: v1, k2: v2}, alice, hostsFor("git.example.org"))
 		if err != nil {
 			return
 		}
@@ -152,7 +152,7 @@ func TestAllowCredentials(t *testing.T) {
 		{Name: "GIT_URI", Format: v1alpha1.FormatHTTPSURL, AllowCredentials: true},
 		{Name: "ARTEMIS_URL", Format: v1alpha1.FormatHTTPSURL},
 	}}}
-	hosts := []string{"artemis.example.org"}
+	hosts := hostsFor("artemis.example.org")
 	tests := []struct {
 		name, key, val, detail string
 	}{
@@ -193,3 +193,6 @@ func TestWithoutCredentials(t *testing.T) {
 		}
 	}
 }
+
+// hostsFor is an allowed host list that is the same for every key.
+func hostsFor(h ...string) func(string) []string { return func(string) []string { return h } }

@@ -1,4 +1,4 @@
-# One Dockerfile for the four Go binaries: docker build --build-arg CMD=operator -f build/Dockerfile .
+# One Dockerfile for the Go binaries (operator, service, authz, agent, git-proxy): docker build --build-arg CMD=operator -f build/Dockerfile .
 FROM --platform=$BUILDPLATFORM golang:1.27.4 AS build
 ARG TARGETOS TARGETARCH CMD VERSION=dev
 WORKDIR /src

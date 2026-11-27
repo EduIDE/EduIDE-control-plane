@@ -28,6 +28,9 @@ Rules: add metrics and labels freely; renaming or removing one needs a deprecati
 | `eduide_launch_total` | counter | `template`, `result` | service | Launches: `created`, `existing` (idempotent repeat), `rejected` |
 | `eduide_authz_decisions_total` | counter | `result`, `reason` | authz | ext_authz decisions: `allow`, `deny`, `login` (redirect to sign in again) |
 | `eduide_authz_check_seconds` | histogram | | authz | Duration of one ext_authz check |
+| `eduide_gitproxy_requests_total` | counter | `provider`, `kind`, `result` | git-proxy | Git requests (ADR 0023): `provider` is the configured provider name, `unknown` for a host that is none; `kind` is `read` or `push`; `result` is `ok`, `denied` (the service said no, see the log reason), `upstream-denied` (the provider answered 401, 403 or 404, or a redirect), `upstream-error` (provider unreachable or 5xx) or `unavailable` (the service could not answer) |
+| `eduide_gitproxy_bytes_total` | counter | `provider`, `direction` | git-proxy | Bytes streamed: `in` is client to provider (pushes), `out` is provider to client (clones and fetches) |
+| `eduide_gitproxy_upstream_seconds` | histogram | `provider`, `kind` | git-proxy | Duration of a forwarded request until the last byte went to the client; buckets 0.1 s to 600 s |
 
-Ports: operator `:9464`, service `:9090`, authz `:9090` (all `/metrics`), next to `/healthz` and `/readyz`.
+Ports: operator `:9464`, service `:9090`, authz `:9090`, git-proxy `:9090` (all `/metrics`), next to `/healthz` and `/readyz`.
 No metric carries a user name, e-mail or token (G18).

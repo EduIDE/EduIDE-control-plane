@@ -75,6 +75,14 @@ func run(log *slog.Logger) error {
 	a := agent.New(token, env("AGENT_IDE_PORT", "3000"), log)
 	a.PathPrefix = os.Getenv("AGENT_PATH_PREFIX")
 
+	// Set by the operator only with Git accounts (ADR 0023); without it /git/ answers 404.
+	if u := os.Getenv("AGENT_GIT_PROXY_URL"); u != "" {
+		hosts := strings.FieldsFunc(os.Getenv("AGENT_GIT_HOSTS"), func(r rune) bool { return r == ',' })
+		if err := a.EnableGit(u, hosts, os.Getenv("AGENT_GIT_LANDING_URL")); err != nil {
+			return err
+		}
+	}
+
 	if c := os.Getenv("AGENT_ID_TOKEN_COOKIE"); c != "" {
 		agent.StripCookie(c)
 	}

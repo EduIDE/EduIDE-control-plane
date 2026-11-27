@@ -36,7 +36,9 @@ config:
     issuerURL: ""
     # required: clients accepted for API tokens (landing page client)
     clientIDs: []
-    # required: confidential client of the SecurityPolicy
+    # required: a separate, confidential client for the SecurityPolicy. Never the public landing page client
+    # and never listed in clientIDs. Do not switch the landing page client to confidential: its logins fail.
+    # Migration from one shared client: docs/operations/install.md, "Migrate from one shared client".
     gatewayClientID: ""
     userClaim: preferred_username
     idTokenCookie: eduide-id
@@ -52,12 +54,31 @@ config:
   agent:
     # Default: <image.registry>/agent:<image.tag>
     image: ""
+    # imagePullPolicy: Always, IfNotPresent or Never. Not set by default: the agent follows image.pullPolicy when
+    # that is not IfNotPresent.
     # debug, info or warn. Applies to session pods created after the change.
     logLevel: info
     resources:
       requests: {cpu: 10m, memory: 16Mi}
       limits: {memory: 64Mi}
   rateLimit: {}
+  # Optional: connect GitHub and GitLab accounts (ADR 0023). Without providers the feature is off and the chart
+  # renders nothing for it. Each provider needs an OAuth application registered at the host with the callback URL
+  # https://<hosts.service>/git/callback (a landing page route, so the landing page must be served on hosts.service).
+  # The client secret comes from an existing Secret in this namespace.
+  gitAccounts:
+    providers: []
+    # - name: github                    # DNS label, unique
+    #   type: github                    # github (OAuth App) or gitlab
+    #   host: github.com                # bare host name
+    #   displayName: GitHub
+    #   clientID: ""
+    #   clientSecretRef: {name: git-oauth, key: github}
+    #   caConfigMapRef: {name: git-ca, key: ca.crt}   # optional: PEM CA of a self-hosted host with a private CA
+    #   inactivityExpiry: 2160h         # default; an unused account is revoked and deleted after this time
+    # approval:                         # repositories a user approves for one session on the landing page (ADR 0023)
+    #   mode: write                     # off, read (approve for reading only) or write (reading, or reading and pushing); default write
+    #   maxPerSession: 20
   # Optional, read-only admin API (U16); all keys optional.
   # admin:
   #   prometheusURL: http://prometheus-operated.monitoring:9090   # enables figures and time series; plain http(s), no credentials
@@ -65,8 +86,15 @@ config:
   #   rateLimitPerMinute: 60                                      # per admin user
   #   scalerInterval: 30s                                         # set by the chart from poolScaler.config.interval; with prometheusURL it drives the scaler-silent warning
 
+# Key of the Git account token store (only used with config.gitAccounts.providers).
+gitAccounts:
+  encryptionKey:
+    # Use an own Secret with key "key" (at least 32 bytes) instead of the generated one.
+    secretName: ""
+
 oidc:
-  # required: existing Secret in this namespace with the client secret of config.oidc.gatewayClientID
+  # required: existing Secret in this namespace with the secret of the separate confidential client
+  # config.oidc.gatewayClientID (a public client has no secret)
   # under the key "client-secret" (the key the SecurityPolicy reads).
   clientSecretName: ""
   # Optional: reach the identity provider through these Gateway API backendRefs instead of directly, for clusters
@@ -110,6 +138,20 @@ authz:
   tolerations: []
   affinity: {}
 
+# Git proxy between session pods and the Git hosts (ADR 0023). Rendered only with config.gitAccounts.providers.
+# It streams, so memory stays small however large a clone is. Sized for a burst of 100 sessions pushing at
+# once, with 3.5 times headroom (docs/operations/git-proxy.md: about 0.13 MiB per request in flight).
+gitProxy:
+  # debug, info or warn. Changing it restarts the component.
+  logLevel: info
+  replicas: 2
+  resources:
+    requests: {cpu: 10m, memory: 64Mi}
+    limits: {memory: 256Mi}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
 # Prewarmed instances per template: name, the IDETemplate spec and an optional pool.
 # The pool name equals the template name.
 templates: []
@@ -147,6 +189,9 @@ networkPolicy:
   - fe80::/10
   # Cluster specific ranges to deny as well, for example the pod CIDR and the node network when they are public.
   sessionEgressExtraDeny: []
+  # Extra egress rules (NetworkPolicyEgressRule list) of git-proxy, for a Git host on a private address (a self-hosted
+  # GitLab in the cluster network). Session pods get no such path. Empty by default.
+  gitProxyEgressExtra: []
   # Where session pods may resolve names.
   dnsNamespaceSelector:
     matchLabels:

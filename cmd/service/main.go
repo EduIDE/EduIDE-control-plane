@@ -27,6 +27,8 @@ import (
 	"github.com/EduIDE/EduIDE-control-plane/api/v1alpha1"
 	"github.com/EduIDE/EduIDE-control-plane/internal/auth"
 	"github.com/EduIDE/EduIDE-control-plane/internal/config"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitaccount"
+	"github.com/EduIDE/EduIDE-control-plane/internal/gitpolicy"
 	"github.com/EduIDE/EduIDE-control-plane/internal/httpapi"
 	"github.com/EduIDE/EduIDE-control-plane/internal/logx"
 	"github.com/EduIDE/EduIDE-control-plane/internal/telemetry"
@@ -49,6 +51,12 @@ func httpServers(ctx context.Context, api, ops http.Handler) []*http.Server {
 			BaseContext: func(net.Listener) context.Context { return ctx }}, // ends SSE streams on shutdown
 		{Addr: ":9090", Handler: ops, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 64 << 10},
 	}
+}
+
+// internalServer is the listener the git-proxy calls. The gateway never routes to it and a NetworkPolicy lets only
+// the git-proxy reach it. A token refresh can take a while, so the write timeout is generous.
+func internalServer(h http.Handler) *http.Server {
+	return &http.Server{Addr: ":8083", Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: time.Minute, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 16 << 10}
 }
 
 func run() error {
@@ -112,6 +120,11 @@ func run() error {
 	); err != nil {
 		return err
 	}
+	if len(cfg.GitAccounts.Providers) > 0 { // the Git authorize endpoint finds the session of an instance (ADR 0023)
+		if err := gitpolicy.IndexSessions(ctx, c); err != nil {
+			return err
+		}
+	}
 	go func() {
 		if err := c.Start(ctx); err != nil {
 			slog.Error("cache stopped", "error", err.Error())
@@ -149,8 +162,23 @@ func run() error {
 		return errors.New("the admin API needs a non-empty telemetry.userSaltFile")
 	}
 	api := httpapi.NewServer(cfg, c, writer, hub, salt)
+	gitAccounts, err := gitaccount.NewFromConfig(writer, cfg)
+	if err != nil {
+		return err
+	}
+	if gitAccounts != nil {
+		api.EnableGitAccounts(gitAccounts)
+		go gitAccounts.RunSweep(ctx)
+	}
 	go api.RunSignInCheck(ctx)
 	servers := httpServers(ctx, api.Handler(auth.NewOIDC(cfg.OIDC)), ops)
+	if gitAccounts != nil {
+		servers = append(servers, internalServer(&gitpolicy.Handler{
+			Sessions: gitpolicy.CacheSessions{Cache: c, Namespace: cfg.Namespace}, Secrets: writer, Accounts: gitAccounts,
+			Namespace: cfg.Namespace, LandingURL: "https://" + cfg.Hosts.Service, Salt: salt,
+			ApprovalMode: cfg.GitAccounts.Approval.Mode, Approvals: gitpolicy.Store{C: writer, Namespace: cfg.Namespace},
+		}))
+	}
 	logStarting(cfg, servers[0].Addr, servers[1].Addr, salt)
 	errc := make(chan error, len(servers))
 	for _, s := range servers {
@@ -175,6 +203,6 @@ func run() error {
 func logStarting(cfg *config.Config, apiAddr, opsAddr string, salt []byte) {
 	slog.Info("starting", "version", logx.Version(), "deployment", cfg.Deployment, "namespace", cfg.Namespace,
 		"api_addr", apiAddr, "ops_addr", opsAddr, "service_host", cfg.Hosts.Service, "instance_host", cfg.Hosts.Instance,
-		"oidc_issuer", cfg.OIDC.IssuerURL, "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0,
+		"oidc_issuer", cfg.OIDC.IssuerURL, "otlp_endpoint_set", cfg.Telemetry.OTLPEndpoint != "", "user_salt_set", len(salt) > 0, "git_providers", len(cfg.GitAccounts.Providers),
 		"sessions_per_user", cfg.SessionsPerUser, "launches_per_minute", cfg.RateLimit.LaunchesPerMinute, "log_level", logx.Level().String())
 }

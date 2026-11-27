@@ -211,7 +211,7 @@ func (s *Server) validate(ctx context.Context, u auth.User, req *LaunchRequest) 
 	if req.Data != nil {
 		in = *req.Data
 	}
-	data, perr := validateData(&tpl, in, u, s.cfg.AllowedHosts)
+	data, perr := validateData(&tpl, in, u, s.cfg.HTTPSURLHosts)
 	if perr != nil {
 		return nil, perr
 	}
@@ -230,7 +230,9 @@ func (s *Server) validate(ctx context.Context, u auth.User, req *LaunchRequest) 
 		return nil, perr
 	}
 
+	// The key hashes the data as the user sent it: a changed display name must not start a second session.
 	key := launchKey(u.Owner, tpl.Name, wsName, data)
+	data = s.withGitIdentity(ctx, u.Owner, &tpl, data)
 	slog.DebugContext(ctx, "launch validated", "template", tpl.Name, "workspace", wsName, "keys", len(data), "launch_key", key)
 	// Live read: the cache may not hold a session a launch created a moment ago.
 	sessions, err := s.ownedSessions(ctx, s.w, u.Owner)

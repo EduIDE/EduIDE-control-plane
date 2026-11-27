@@ -927,3 +927,43 @@ footer a:hover {
         padding: 20px;
     }
 }
+
+.git-rows {
+    list-style: none;
+    margin: 12px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.git-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+}
+
+.facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 6px 16px;
+    margin: 0 0 16px;
+}
+
+.facts dt {
+    color: var(--text-2);
+    font-size: 13px;
+}
+
+.facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.alert.ok {
+    background: var(--ok-soft);
+    color: var(--ok);
+}

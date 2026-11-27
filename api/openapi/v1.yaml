@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: EduIDE control plane API
-  version: 1.1.1
+  version: 1.2.0
   description: |
     Public REST API of the EduIDE service. Source of truth for server stubs and the TypeScript client.
     Rules (ADR 0010): only additive changes within v1; errors are RFC 9457 Problem Details with a stable `code`.
@@ -16,6 +16,8 @@ tags:
   - name: sessions
   - name: workspaces
   - name: overview
+  - name: git
+    description: "Git accounts (ADR 0023): connect a GitHub or GitLab account once. The tokens stay in the control plane. Without configured providers `GET /git/providers` is empty and the others answer 404. Every endpoint needs the bearer token."
   - name: public
     description: "Unauthenticated health summary for the landing page (U17). Contains no user, session, host or capacity data."
   - name: admin
@@ -127,6 +129,103 @@ paths:
             application/problem+json:
               schema: {$ref: "#/components/schemas/Problem"}
         default: {$ref: "#/components/responses/Problem"}
+  /sessions/{name}/git/repositories:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    get:
+      operationId: listGitRepositories
+      tags: [git]
+      description: |
+        The repositories whose Git access this session has: the repository it was started with and those the user
+        approved for it (ADR 0023). Only the session owner sees them. The session must exist and not be deleting.
+      responses:
+        "200":
+          description: Repositories and the approval settings of the deployment.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitRepositories"}
+        "404":
+          description: No session of the calling user has this name, or it is being deleted, or the deployment has no Git provider (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+    put:
+      operationId: approveGitRepository
+      tags: [git]
+      description: |
+        Approves a repository for this session, or changes the access of an approval. It is idempotent: the same
+        request again changes nothing. The session owner needs a connected account on the host of the repository.
+        `access` is `read` or `write` (read and push) and must be allowed by the approval mode. Problem codes:
+        `git-approval-disabled` (mode `off`), `git-access-not-allowed` (`write` in mode `read`), `git-approval-limit`
+        (the session has the most approvals), `git-not-a-provider` (the host is no configured provider),
+        `git-not-connected` (no account on that host), `invalid-input` (not an https URL without credentials, query,
+        fragment or port). The approval ends with the session. A change takes effect for new Git requests within
+        within 5 seconds (the git-proxy reuses an answer for at most that long). The same bound holds for `DELETE`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitApprovalRequest"}
+      responses:
+        "200":
+          description: The approval.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitApproval"}
+        "400":
+          description: "`invalid-input` or `git-not-a-provider`."
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "403":
+          description: "`git-approval-disabled` or `git-access-not-allowed`."
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: No session of the calling user has this name, or it is being deleted (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "409":
+          description: "`git-approval-limit` or `git-not-connected`."
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many calls (`rate-limited`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+    delete:
+      operationId: removeGitRepository
+      tags: [git]
+      description: Removes the approval of a repository. A repository without approval succeeds as well. The repository the session was started with cannot be removed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitRepositoryRef"}
+      responses:
+        "204": {description: Removed.}
+        "400":
+          description: "`invalid-input`."
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: No session of the calling user has this name, or it is being deleted (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many calls (`rate-limited`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
   /sessions/{name}/events:
     parameters:
       - $ref: "#/components/parameters/Name"
@@ -210,6 +309,151 @@ paths:
           content:
             text/event-stream:
               schema: {type: string}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/providers:
+    get:
+      operationId: listGitProviders
+      tags: [git]
+      description: Git providers the admin configured, with the connection state of the calling user. Empty when the feature is off.
+      responses:
+        "200":
+          description: Providers in configuration order.
+          content:
+            application/json:
+              schema: {type: array, items: {$ref: "#/components/schemas/GitProvider"}}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/providers/{name}:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    delete:
+      operationId: disconnectGitProvider
+      tags: [git]
+      description: Revokes the token at the Git host (best effort) and deletes it. Disconnecting an account that is not connected succeeds.
+      responses:
+        "204": {description: Disconnected.}
+        "404":
+          description: No provider has this name (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/providers/{name}/connect:
+    parameters:
+      - $ref: "#/components/parameters/Name"
+    post:
+      operationId: connectGitProvider
+      tags: [git]
+      description: |
+        Starts the OAuth flow. The answer holds the URL the browser opens at the Git host. No cookie is involved:
+        the `state` in the URL is sealed by the service and names the calling user.
+        The host redirects the browser to `https://<hosts.service>/git/callback` (a landing page route, not an API
+        path) with `code` and `state` (or `error` and `state`) in the query. The landing page then calls
+        `POST /git/callback` with its own bearer token. The flow expires after 10 minutes. Several flows (two
+        providers, two tabs) can run at the same time.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitConnectRequest"}
+      responses:
+        "200":
+          description: Authorize URL.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitConnectResponse"}
+        "404":
+          description: No provider has this name (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many calls (`rate-limited`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/callback:
+    post:
+      operationId: gitCallback
+      tags: [git]
+      description: |
+        Ends the OAuth flow. The landing page posts the `code` and `state` it received from the Git host (or `error`
+        and `state`). The service opens the state, requires that it belongs to the calling user, exchanges the code,
+        reads the account and stores it. Failures carry one of these problem codes: `git-invalid-state` (state
+        unreadable, unknown provider, or started by another user), `git-state-expired`, `git-denied` (the user
+        refused at the host), `git-provider-error` (the host rejected the code or did not answer, or sent another
+        error), `rate-limited`, `internal`. Provider error text never reaches the client. A state is not single use:
+        the expiry and the single-use code of the host bound a replay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitCallbackRequest"}
+      responses:
+        "200":
+          description: Connected.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitCallbackResponse"}
+        "400":
+          description: The flow failed (`git-invalid-state`, `git-state-expired`, `git-denied`, `invalid-input`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: The deployment configures no Git provider (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many calls (`rate-limited`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "502":
+          description: The Git host failed (`git-provider-error`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        default: {$ref: "#/components/responses/Problem"}
+  /git/preflight:
+    post:
+      operationId: gitPreflight
+      tags: [git]
+      description: |
+        Tells whether a launch with this repository needs a step first. The service sends one `info/refs` request to
+        the provider host (path `/<repository>.git/info/refs`, because GitLab redirects a path without `.git`; 3 s timeout, with the credential of the user when there is an account, never following a
+        redirect) and discards the answer. The URL follows the rules of the launch key `GIT_URI`: https, no
+        credentials. Results: `ok` (reachable, with the credential or anonymously), `connect` (provider host, no
+        account, not readable anonymously), `no-access` (account connected, the host says not found or no access),
+        `not-a-provider` (the host is no configured provider, nothing was checked), `unknown` (the host did not answer
+        in time or answered 5xx; the launch must not be blocked). `provider` is set when the host is a provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/GitPreflightRequest"}
+      responses:
+        "200":
+          description: Result.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/GitPreflightResponse"}
+        "400":
+          description: Not an https URL without credentials (`invalid-input`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "404":
+          description: The deployment configures no Git provider (`not-found`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
+        "429":
+          description: Too many calls (`rate-limited`).
+          content:
+            application/problem+json:
+              schema: {$ref: "#/components/schemas/Problem"}
         default: {$ref: "#/components/responses/Problem"}
   /admin/status:
     get:
@@ -386,11 +630,98 @@ components:
         code:
           type: string
           description: Stable machine-readable code. New codes may be added within v1.
-          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, workspace-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, internal]
+          enum: [unauthorized, forbidden, not-found, invalid-input, unknown-key, persistence-not-allowed, template-not-found, workspace-not-found, workspace-lost, workspace-in-use, session-limit-reached, workspace-limit-reached, capacity-exhausted, start-failed, rate-limited, payload-too-large, git-invalid-state, git-state-expired, git-denied, git-provider-error, git-approval-disabled, git-access-not-allowed, git-approval-limit, git-not-a-provider, git-not-connected, internal]
         sessions:
           description: Running sessions of the user, only with `session-limit-reached`.
           type: array
           items: {$ref: "#/components/schemas/Session"}
+    GitProvider:
+      type: object
+      required: [name, type, host, displayName, connected]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [github, gitlab]}
+        host: {type: string}
+        displayName: {type: string}
+        connected: {type: boolean}
+        login: {type: string, description: "Account login at the host, only when connected."}
+    GitConnectRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        returnTo: {type: string, maxLength: 512, description: "Relative path on the landing page the callback redirects to. Must start with a single `/`."}
+    GitConnectResponse:
+      type: object
+      required: [authorizeUrl]
+      properties:
+        authorizeUrl: {type: string}
+    GitCallbackRequest:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: {type: string, maxLength: 2048}
+        code: {type: string, maxLength: 2048}
+        error: {type: string, maxLength: 256, description: "The `error` parameter of the host when the user refused or the host failed."}
+    GitCallbackResponse:
+      type: object
+      required: [provider, login, returnTo]
+      properties:
+        provider: {type: string, description: "Name of the provider."}
+        login: {type: string, description: "Account login at the host."}
+        returnTo: {type: string, description: "The `returnTo` of the connect call, `/` when none was given."}
+    GitRepositoryRef:
+      type: object
+      additionalProperties: false
+      required: [repository]
+      properties:
+        repository: {type: string, maxLength: 2048, description: "`https://<host>/<path>` without credentials, query or fragment. A trailing `.git` or slash does not matter."}
+    GitApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [repository, access]
+      properties:
+        repository: {type: string, maxLength: 2048, description: "`https://<host>/<path>` without credentials, query or fragment."}
+        access: {$ref: "#/components/schemas/GitAccess"}
+    GitAccess:
+      type: string
+      enum: [read, write]
+      description: "`write` means read and push."
+    GitApproval:
+      type: object
+      required: [repository, access, approvedAt]
+      properties:
+        repository: {type: string, description: "`https://<host>/<path>`, normalized."}
+        access: {$ref: "#/components/schemas/GitAccess"}
+        approvedAt: {type: string, format: date-time}
+    GitRepositories:
+      type: object
+      required: [mode, maxPerSession, approved]
+      properties:
+        mode: {type: string, enum: [off, read, write], description: "Approval mode of the deployment. With `off` nothing can be approved."}
+        maxPerSession: {type: integer}
+        sessionRepository:
+          type: string
+          description: "The repository the session was started with, without credentials. It always has `write` access. Absent when the session has none or its host is no provider."
+        approved: {type: array, items: {$ref: "#/components/schemas/GitApproval"}}
+    GitPreflightRequest:
+      type: object
+      additionalProperties: false
+      required: [gitUri]
+      properties:
+        gitUri: {type: string, maxLength: 2048}
+    GitPreflightResponse:
+      type: object
+      required: [result]
+      properties:
+        result: {type: string, enum: [ok, connect, no-access, not-a-provider, unknown]}
+        provider: {$ref: "#/components/schemas/GitPreflightProvider"}
+    GitPreflightProvider:
+      type: object
+      required: [name, displayName]
+      properties:
+        name: {type: string}
+        displayName: {type: string}
     PersistenceMode:
       type: string
       enum: [none, volume]
@@ -903,6 +1234,14 @@ components:
         logoUrl: {type: string}
         startEstimate: {$ref: "#/components/schemas/PublicStartEstimate"}
         warm: {type: boolean, description: "The pool of the template has an idle ready instance."}
+    PublicGitProvider:
+      type: object
+      required: [name, type, host, displayName]
+      properties:
+        name: {type: string}
+        type: {type: string, enum: [github, gitlab]}
+        host: {type: string}
+        displayName: {type: string}
     PublicStatus:
       type: object
       required: [overall, updatedAt, parts, templates]
@@ -911,3 +1250,7 @@ components:
         updatedAt: {type: string, format: date-time}
         parts: {$ref: "#/components/schemas/PublicStatusParts"}
         templates: {type: array, items: {$ref: "#/components/schemas/PublicTemplate"}}
+        gitProviders:
+          type: array
+          description: Git hosts users can connect an account for. Absent when the deployment has none.
+          items: {$ref: "#/components/schemas/PublicGitProvider"}

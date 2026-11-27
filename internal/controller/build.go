@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -101,7 +102,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 		podSec.FSGroup = u
 	}
 	agent := corev1.Container{
-		Name: "agent", Image: d.cfg.Agent.Image, Resources: d.cfg.Agent.Resources,
+		Name: "agent", Image: d.cfg.Agent.Image, ImagePullPolicy: d.cfg.Agent.ImagePullPolicy, Resources: d.cfg.Agent.Resources,
 		Ports: []corev1.ContainerPort{{Name: "proxy", ContainerPort: 8080}, {Name: "control", ContainerPort: 8081}},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_IDE_PORT", Value: strconv.Itoa(int(port))},
@@ -122,6 +123,7 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		},
 	}
+	agent.Env = append(agent.Env, d.gitEnv()...)
 	mode := int32(0o444)
 	tok := corev1.Volume{Name: "token", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
 		SecretName: tokenName(instance), DefaultMode: &mode,
@@ -153,12 +155,41 @@ func (d *deps) buildPod(t *v1.IDETemplate, instance string, extra map[string]str
 	}
 }
 
-// specHash identifies what a pod is built from: the template spec, the agent image and the deployment placement.
+// gitEnv tells the agent where Git traffic goes (ADR 0023). Without providers or a proxy URL it is empty and the
+// agent answers 404 on /git/. specHash covers the values, so the pool replaces idle pods after a config change.
+func (d *deps) gitEnv() []corev1.EnvVar {
+	g := d.cfg.GitAccounts
+	if len(g.Providers) == 0 || g.ProxyURL == "" {
+		return nil
+	}
+	hosts := make([]string, len(g.Providers))
+	for i, p := range g.Providers {
+		hosts[i] = p.Host
+	}
+	return []corev1.EnvVar{
+		{Name: "AGENT_GIT_PROXY_URL", Value: g.ProxyURL},
+		{Name: "AGENT_GIT_HOSTS", Value: strings.Join(hosts, ",")},
+		{Name: "AGENT_GIT_LANDING_URL", Value: "https://" + d.cfg.Hosts.Service},
+	}
+}
+
+// specHash identifies what a pod is built from: the template spec, the agent image, the deployment placement and
+// the Git settings and the pull policy of the agent.
 // A pool replaces idle pods with another hash.
 func (d *deps) specHash(t *v1.IDETemplate) string {
 	// routeVersion changes when the route of an instance changes, so pools replace idle instances with old routes.
 	const routeVersion = 2
-	b, _ := json.Marshal([]any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement, routeVersion})
+	in := []any{t.Spec, d.cfg.Agent.Image, d.cfg.Placement, routeVersion}
+	// The Git settings of the agent are part of the pod. Without providers the input stays what it was before the
+	// feature, so an upgrade does not replace the idle pods of installations that do not use it.
+	if env := d.gitEnv(); len(env) > 0 {
+		in = append(in, env)
+	}
+	// Same rule for the pull policy: unset keeps the old hash, a set or changed policy replaces idle pods.
+	if p := d.cfg.Agent.ImagePullPolicy; p != "" {
+		in = append(in, p)
+	}
+	b, _ := json.Marshal(in)
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])[:16]
 }

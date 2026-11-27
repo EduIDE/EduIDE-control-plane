@@ -102,6 +102,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/sessions/{name}/git/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        /**
+         * @description The repositories whose Git access this session has: the repository it was started with and those the user
+         *     approved for it (ADR 0023). Only the session owner sees them. The session must exist and not be deleting.
+         */
+        get: operations["listGitRepositories"];
+        /**
+         * @description Approves a repository for this session, or changes the access of an approval. It is idempotent: the same
+         *     request again changes nothing. The session owner needs a connected account on the host of the repository.
+         *     `access` is `read` or `write` (read and push) and must be allowed by the approval mode. Problem codes:
+         *     `git-approval-disabled` (mode `off`), `git-access-not-allowed` (`write` in mode `read`), `git-approval-limit`
+         *     (the session has the most approvals), `git-not-a-provider` (the host is no configured provider),
+         *     `git-not-connected` (no account on that host), `invalid-input` (not an https URL without credentials, query,
+         *     fragment or port). The approval ends with the session. A change takes effect for new Git requests within
+         *     within 5 seconds (the git-proxy reuses an answer for at most that long). The same bound holds for `DELETE`.
+         */
+        put: operations["approveGitRepository"];
+        post?: never;
+        /** @description Removes the approval of a repository. A repository without approval succeeds as well. The repository the session was started with cannot be removed. */
+        delete: operations["removeGitRepository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{name}/events": {
         parameters: {
             query?: never;
@@ -197,6 +230,118 @@ export interface paths {
         get: operations["watchOverview"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Git providers the admin configured, with the connection state of the calling user. Empty when the feature is off. */
+        get: operations["listGitProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/providers/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** @description Revokes the token at the Git host (best effort) and deletes it. Disconnecting an account that is not connected succeeds. */
+        delete: operations["disconnectGitProvider"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/providers/{name}/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Starts the OAuth flow. The answer holds the URL the browser opens at the Git host. No cookie is involved:
+         *     the `state` in the URL is sealed by the service and names the calling user.
+         *     The host redirects the browser to `https://<hosts.service>/git/callback` (a landing page route, not an API
+         *     path) with `code` and `state` (or `error` and `state`) in the query. The landing page then calls
+         *     `POST /git/callback` with its own bearer token. The flow expires after 10 minutes. Several flows (two
+         *     providers, two tabs) can run at the same time.
+         */
+        post: operations["connectGitProvider"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Ends the OAuth flow. The landing page posts the `code` and `state` it received from the Git host (or `error`
+         *     and `state`). The service opens the state, requires that it belongs to the calling user, exchanges the code,
+         *     reads the account and stores it. Failures carry one of these problem codes: `git-invalid-state` (state
+         *     unreadable, unknown provider, or started by another user), `git-state-expired`, `git-denied` (the user
+         *     refused at the host), `git-provider-error` (the host rejected the code or did not answer, or sent another
+         *     error), `rate-limited`, `internal`. Provider error text never reaches the client. A state is not single use:
+         *     the expiry and the single-use code of the host bound a replay.
+         */
+        post: operations["gitCallback"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/git/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Tells whether a launch with this repository needs a step first. The service sends one `info/refs` request to
+         *     the provider host (path `/<repository>.git/info/refs`, because GitLab redirects a path without `.git`; 3 s timeout, with the credential of the user when there is an account, never following a
+         *     redirect) and discards the answer. The URL follows the rules of the launch key `GIT_URI`: https, no
+         *     credentials. Results: `ok` (reachable, with the credential or anonymously), `connect` (provider host, no
+         *     account, not readable anonymously), `no-access` (account connected, the host says not found or no access),
+         *     `not-a-provider` (the host is no configured provider, nothing was checked), `unknown` (the host did not answer
+         *     in time or answered 5xx; the launch must not be blocked). `provider` is set when the host is a provider.
+         */
+        post: operations["gitPreflight"];
         delete?: never;
         options?: never;
         head?: never;
@@ -392,9 +537,84 @@ export interface components {
              * @description Stable machine-readable code. New codes may be added within v1.
              * @enum {string}
              */
-            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "workspace-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "internal";
+            code: "unauthorized" | "forbidden" | "not-found" | "invalid-input" | "unknown-key" | "persistence-not-allowed" | "template-not-found" | "workspace-not-found" | "workspace-lost" | "workspace-in-use" | "session-limit-reached" | "workspace-limit-reached" | "capacity-exhausted" | "start-failed" | "rate-limited" | "payload-too-large" | "git-invalid-state" | "git-state-expired" | "git-denied" | "git-provider-error" | "git-approval-disabled" | "git-access-not-allowed" | "git-approval-limit" | "git-not-a-provider" | "git-not-connected" | "internal";
             /** @description Running sessions of the user, only with `session-limit-reached`. */
             sessions?: components["schemas"]["Session"][];
+        };
+        GitProvider: {
+            name: string;
+            /** @enum {string} */
+            type: "github" | "gitlab";
+            host: string;
+            displayName: string;
+            connected: boolean;
+            /** @description Account login at the host, only when connected. */
+            login?: string;
+        };
+        GitConnectRequest: {
+            /** @description Relative path on the landing page the callback redirects to. Must start with a single `/`. */
+            returnTo?: string;
+        };
+        GitConnectResponse: {
+            authorizeUrl: string;
+        };
+        GitCallbackRequest: {
+            state: string;
+            code?: string;
+            /** @description The `error` parameter of the host when the user refused or the host failed. */
+            error?: string;
+        };
+        GitCallbackResponse: {
+            /** @description Name of the provider. */
+            provider: string;
+            /** @description Account login at the host. */
+            login: string;
+            /** @description The `returnTo` of the connect call, `/` when none was given. */
+            returnTo: string;
+        };
+        GitRepositoryRef: {
+            /** @description `https://<host>/<path>` without credentials, query or fragment. A trailing `.git` or slash does not matter. */
+            repository: string;
+        };
+        GitApprovalRequest: {
+            /** @description `https://<host>/<path>` without credentials, query or fragment. */
+            repository: string;
+            access: components["schemas"]["GitAccess"];
+        };
+        /**
+         * @description `write` means read and push.
+         * @enum {string}
+         */
+        GitAccess: "read" | "write";
+        GitApproval: {
+            /** @description `https://<host>/<path>`, normalized. */
+            repository: string;
+            access: components["schemas"]["GitAccess"];
+            /** Format: date-time */
+            approvedAt: string;
+        };
+        GitRepositories: {
+            /**
+             * @description Approval mode of the deployment. With `off` nothing can be approved.
+             * @enum {string}
+             */
+            mode: "off" | "read" | "write";
+            maxPerSession: number;
+            /** @description The repository the session was started with, without credentials. It always has `write` access. Absent when the session has none or its host is no provider. */
+            sessionRepository?: string;
+            approved: components["schemas"]["GitApproval"][];
+        };
+        GitPreflightRequest: {
+            gitUri: string;
+        };
+        GitPreflightResponse: {
+            /** @enum {string} */
+            result: "ok" | "connect" | "no-access" | "not-a-provider" | "unknown";
+            provider?: components["schemas"]["GitPreflightProvider"];
+        };
+        GitPreflightProvider: {
+            name: string;
+            displayName: string;
         };
         /** @enum {string} */
         PersistenceMode: "none" | "volume";
@@ -905,12 +1125,21 @@ export interface components {
             /** @description The pool of the template has an idle ready instance. */
             warm: boolean;
         };
+        PublicGitProvider: {
+            name: string;
+            /** @enum {string} */
+            type: "github" | "gitlab";
+            host: string;
+            displayName: string;
+        };
         PublicStatus: {
             overall: components["schemas"]["ServiceLevel"];
             /** Format: date-time */
             updatedAt: string;
             parts: components["schemas"]["PublicStatusParts"];
             templates: components["schemas"]["PublicTemplate"][];
+            /** @description Git hosts users can connect an account for. Absent when the deployment has none. */
+            gitProviders?: components["schemas"]["PublicGitProvider"][];
         };
     };
     responses: {
@@ -1110,6 +1339,162 @@ export interface operations {
             default: components["responses"]["Problem"];
         };
     };
+    listGitRepositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Repositories and the approval settings of the deployment. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitRepositories"];
+                };
+            };
+            /** @description No session of the calling user has this name, or it is being deleted, or the deployment has no Git provider (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    approveGitRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description The approval. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitApproval"];
+                };
+            };
+            /** @description `invalid-input` or `git-not-a-provider`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `git-approval-disabled` or `git-access-not-allowed`. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No session of the calling user has this name, or it is being deleted (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description `git-approval-limit` or `git-not-connected`. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many calls (`rate-limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    removeGitRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitRepositoryRef"];
+            };
+        };
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description `invalid-input`. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description No session of the calling user has this name, or it is being deleted (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many calls (`rate-limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
     watchSession: {
         parameters: {
             query?: never;
@@ -1237,6 +1622,215 @@ export interface operations {
                 };
                 content: {
                     "text/event-stream": string;
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    listGitProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Providers in configuration order. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitProvider"][];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    disconnectGitProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Disconnected. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No provider has this name (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    connectGitProvider: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                name: components["parameters"]["Name"];
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["GitConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Authorize URL. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitConnectResponse"];
+                };
+            };
+            /** @description No provider has this name (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many calls (`rate-limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    gitCallback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitCallbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Connected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitCallbackResponse"];
+                };
+            };
+            /** @description The flow failed (`git-invalid-state`, `git-state-expired`, `git-denied`, `invalid-input`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The deployment configures no Git provider (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many calls (`rate-limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The Git host failed (`git-provider-error`). */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            default: components["responses"]["Problem"];
+        };
+    };
+    gitPreflight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitPreflightRequest"];
+            };
+        };
+        responses: {
+            /** @description Result. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitPreflightResponse"];
+                };
+            };
+            /** @description Not an https URL without credentials (`invalid-input`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description The deployment configures no Git provider (`not-found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description Too many calls (`rate-limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
                 };
             };
             default: components["responses"]["Problem"];

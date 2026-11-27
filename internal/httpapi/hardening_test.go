@@ -156,3 +156,34 @@ func TestAdminTemplatesShowResolvedTimeouts(t *testing.T) {
 		t.Fatalf("%+v", ts)
 	}
 }
+
+// A handler that forgets the content type must not let Go sniff user data into text/html.
+func TestResponseWithoutContentTypeIsNotSniffedAsHTML(t *testing.T) {
+	h := secureAndProblemFallback("max-age=1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><script>alert(1)</script>" + r.URL.Query().Get("x")))
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/?x=%3Cb%3E", nil))
+	if ct := rec.Header().Get("Content-Type"); ct != "application/octet-stream" || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("content type %q, headers %v", ct, rec.Header())
+	}
+	// A handler that sets one keeps it, and a 204 gets none.
+	h = secureAndProblemFallback("max-age=1", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("{}"))
+	}))
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	if rec.Header().Get("Content-Type") != "application/json" {
+		t.Errorf("%v", rec.Header())
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("DELETE", "/", nil))
+	if rec.Code != 204 || rec.Header().Get("Content-Type") != "" {
+		t.Errorf("%d %v", rec.Code, rec.Header())
+	}
+}

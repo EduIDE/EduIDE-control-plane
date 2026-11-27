@@ -26,6 +26,8 @@ export interface AgentClientOptions {
   maxBackoffMs?: number;
   heartbeatIntervalMs?: number;
   now?: () => number;
+  // Runs once the session is claimed, and again after the agent was unreachable, before the launch data is handed out.
+  beforeExpose?: () => Promise<void>;
 }
 
 const STORE_KEY = "eduide.shownNotices";
@@ -40,6 +42,7 @@ export class AgentClient {
   private lastHeartbeat = -Infinity;
   private abort = new AbortController();
   private stopped = false;
+  private needSync = true;
   private loop?: Promise<void>;
 
   constructor(private readonly o: AgentClientOptions) {}
@@ -145,12 +148,19 @@ export class AgentClient {
         if (!r.ok) {
           throw new Error(`status ${r.status}`);
         }
-        this.apply((await r.json()) as LocalSession);
+        const s = (await r.json()) as LocalSession;
+        // Other extensions read the launch data through the commands. They must not see it before Git is set up.
+        if (s.claimed && this.needSync) {
+          this.needSync = false;
+          await this.o.beforeExpose?.().catch(() => undefined);
+        }
+        this.apply(s);
         backoff = min;
       } catch {
         if (this.stopped) {
           return;
         }
+        this.needSync = true;
         await new Promise<void>((resolve) => {
           const onAbort = () => (clearTimeout(t), resolve());
           const t = setTimeout(() => {

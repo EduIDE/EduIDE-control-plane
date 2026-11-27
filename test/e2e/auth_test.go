@@ -4,8 +4,11 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +38,7 @@ func TestGatewayAuth(t *testing.T) {
 		t.Fatalf("phase %s: %s", s.Phase, s.Message)
 	}
 
-	owner := browserLogin(t, alice, "https://"+instanceHost+"/oauth2/login")
+	owner, ownerCookies := browserLoginRecording(t, alice, "https://"+instanceHost+"/oauth2/login")
 	other := browserLogin(t, bob, "https://"+instanceHost+"/oauth2/login")
 	anon := testHTTPClient(t, false, false)
 
@@ -60,6 +63,56 @@ func TestGatewayAuth(t *testing.T) {
 		status, body, _ := get(t, owner, s.URL+"headers")
 		if status != 200 || strings.Contains(strings.ToLower(body), "x-eduide-instance-token") {
 			t.Fatalf("status %d body %s", status, body)
+		}
+	})
+	// ADR 0023 threat model: the approval and every other API call rely on the fact that code in the pod or script in
+	// the IDE's origin cannot get a bearer token. The ID token cookie is the one token the browser holds for the
+	// instance host, so it must be HttpOnly (script cannot read it) and must never reach the IDE (the agent strips it).
+	t.Run("login cookies are HttpOnly and never reach the IDE", func(t *testing.T) {
+		var idCookies int
+		for _, l := range ownerCookies() {
+			host, line, _ := strings.Cut(l, " ")
+			if !strings.HasPrefix(host, instanceHost) || strings.Contains(line, "Max-Age=0") || strings.Contains(line, "Max-Age=-1") || strings.Contains(line, "1970") { // deleting a cookie
+				continue
+			}
+			name, _, _ := strings.Cut(line, "=")
+			if name == "eduide-id" {
+				idCookies++
+			}
+			// Envoy writes the attributes without a blank: "...;secure;HttpOnly".
+			if low := strings.ReplaceAll(strings.ToLower(line), " ", ""); !strings.Contains(low, ";httponly") || !strings.Contains(low, ";secure") {
+				t.Errorf("cookie %s of the instance host is not HttpOnly and Secure: %s", name, strings.SplitN(line, ";", 2)[1])
+			}
+		}
+		if idCookies == 0 {
+			t.Fatal("the login did not set the ID token cookie eduide-id on the instance host: the test proves nothing")
+		}
+		u, _ := url.Parse(s.URL)
+		var sent []string
+		for _, c := range owner.Jar.Cookies(u) {
+			sent = append(sent, c.Name)
+		}
+		if !slices.Contains(sent, "eduide-id") {
+			t.Fatalf("the client does not send eduide-id to the instance (it sends %v): the test proves nothing", sent)
+		}
+		status, body, _ := get(t, owner, s.URL+"cookies")
+		if status != 200 {
+			t.Fatalf("status %d", status)
+		}
+		var got struct{ Cookies []string }
+		if err := json.Unmarshal([]byte(body), &got); err != nil {
+			t.Fatal(err)
+		}
+		// The oauth2 filter must not forward the access token as a bearer header either (forwardAccessToken is off).
+		if status, body, _ := get(t, owner, s.URL+"headers"); status != 200 || strings.Contains(strings.ToLower(body), `"authorization"`) {
+			t.Errorf("the IDE received an Authorization header (status %d): %s", status, body)
+		}
+		for _, n := range got.Cookies {
+			for _, p := range []string{"eduide-id", "eduide-authz", "IdToken", "AccessToken", "BearerToken", "RefreshToken", "OauthHMAC", "OauthExpires", "OauthNonce", "CodeVerifier"} {
+				if strings.HasPrefix(n, p) {
+					t.Errorf("the IDE received the login cookie %s", n)
+				}
+			}
 		}
 	})
 	t.Run("websocket", func(t *testing.T) {

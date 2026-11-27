@@ -61,7 +61,7 @@ The decision, per request:
 - Results are counted in `eduide_authz_decisions_total` as `allow`, `deny` or `login`.
 - On release, the session leaves `Ready` and authz denies at once ([0009](0009-claim-protocol.md)).
 - The NetworkPolicy and the agent token stay as the second line ([0019](0019-network-isolation.md), [0006](0006-agent-sidecar.md)).
-- On the test cluster, the gateway client is the existing confidential Keycloak client, its secret is copied by pipe into the namespace, and the callback is on the instance host (U10).
+- On the test cluster, the gateway client is a confidential Keycloak client of its own (separate from the public landing page client), its secret is copied by pipe into the namespace, and the callback is on the instance host (U10).
 
 ### Consequences
 

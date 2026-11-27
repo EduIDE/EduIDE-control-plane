@@ -223,7 +223,7 @@ def deployment():
     artemis = node(d, 40, 600, 220, 150, "device", "Artemis", "Artemis", fill=EXTERNAL_FILL)
     component(d, 55, 670, 190, 60, "Artemis", stereotype="subsystem", external=True)
 
-    node(d, 440, -40, 1500, 940, "executionEnvironment", "Kubernetes Cluster (stud, parma, prod)",
+    node(d, 440, -40, 1500, 1090, "executionEnvironment", "Kubernetes Cluster (stud, parma, prod)",
          "Kubernetes · Calico or k3s NetworkPolicy")
     group(d, 480, 270, 290, 260, "<b>namespace envoy-gateway-system</b>")
     gw_box = (500, 310, 250, 200)
@@ -231,7 +231,7 @@ def deployment():
               fill=EXTERNAL_FILL)
     component(d, 515, 420, 220, 70, "Envoy Gateway", stereotype="subsystem", external=True)
 
-    group(d, 860, 60, 650, 800, "<b>namespace eduide-&lt;deployment&gt;</b>")
+    group(d, 860, 60, 650, 960, "<b>namespace eduide-&lt;deployment&gt;</b>")
     svc_box = (880, 110, 270, 170)
     svc = node(d, *svc_box, "pod", "service × 2", "Go · :8080 REST v1, SSE")
     subsystem(d, 895, 200, 240, 65, "EduIDE Service", size=14)
@@ -249,6 +249,9 @@ def deployment():
     op = node(d, *op_box, "pod", "operator", "Go · controller-runtime<br/>leader election · :9464 metrics")
     subsystem(d, 1235, 700, 240, 80, "EduIDE Operator", size=14)
 
+    gp_box = (1220, 850, 270, 150)
+    gp = node(d, *gp_box, "pod", "git-proxy × 2 (with Git providers)", "Go · :8080 Git, :9090 metrics<br/>asks service :8083 (internal)")
+    subsystem(d, 1235, 935, 240, 55, "EduIDE git-proxy", size=14)
     api_box = (1640, 330, 270, 170)
     api = node(d, *api_box, "executionEnvironment", "kube-apiserver", "Kubernetes · :6443", fill=EXTERNAL_FILL)
     component(d, 1655, 420, 240, 65, "Kubernetes API", stereotype="subsystem", external=True)
@@ -281,6 +284,10 @@ def deployment():
     d.edge(op, sess, LINE, exit=(0, frac(op_box, 650)), entry=(1, frac(se_box, 650)))
     d.text(1152, 600, 66, 48, "<b>Agent<br/>Control</b>", size=12, align="center")
     d.text(1152, 654, 66, 20, ":8081", size=12, align="center")
+
+    # Git traffic of the session: agent to git-proxy, which calls GitHub or GitLab with the user's token
+    d.edge(sess, gp, LINE, exit=(0.5, 1), entry=(0, 0.5), points=[(1015, 915)])
+    d.text(1030, 880, 180, 36, "<b>Git Service</b><br/>HTTP :8080, instance token", size=12)
 
     # everyone watches the API server
     d.edge(svc, api, LINE, exit=(fx(880, 270, 1130), 0), entry=(fx(1640, 270, 1860), 0),

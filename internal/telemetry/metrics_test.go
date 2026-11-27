@@ -25,7 +25,7 @@ func TestMetricsContract(t *testing.T) {
 		documented[m[1]] = true
 	}
 	reg := prometheus.NewRegistry()
-	all := slices.Concat(OperatorMetrics, ServiceMetrics, AuthzMetrics)
+	all := slices.Concat(OperatorMetrics, ServiceMetrics, AuthzMetrics, GitProxyMetrics)
 	reg.MustRegister(all...)
 	// Touch every vector so Gather reports it.
 	SessionStartup.WithLabelValues("t", "cold", "ready", "none", "lazy")
@@ -48,6 +48,9 @@ func TestMetricsContract(t *testing.T) {
 	APIRequestDuration.WithLabelValues("launchSession")
 	Launches.WithLabelValues("t", "created")
 	AuthzDecisions.WithLabelValues("allow", "owner")
+	GitProxyRequests.WithLabelValues("github", "read", "ok")
+	GitProxyBytes.WithLabelValues("github", "in")
+	GitProxyUpstreamDuration.WithLabelValues("github", "read")
 	mfs, err := reg.Gather()
 	if err != nil {
 		t.Fatal(err)

@@ -1,0 +1,21 @@
+# Extra values of the Git accounts run (helm upgrade -f values.yaml -f values-git.yaml). The fake provider is
+# test/fake-git, the Service fake-git in the e2e namespace; its name is the provider host and its serving
+# certificate is signed by a CA of its own (ConfigMap fake-git-ca, made by run.sh).
+config:
+  gitAccounts:
+    providers:
+      - name: fake
+        type: gitlab
+        host: fake-git.eduide-e2e.svc
+        displayName: Fake Git
+        clientID: e2e-client
+        clientSecretRef: {name: e2e-git-oauth, key: client-secret}
+        caConfigMapRef: {name: fake-git-ca, key: ca.crt}
+networkPolicy:
+  # The fake is a pod with a private address: git-proxy needs a rule of its own, session pods get none.
+  gitProxyEgressExtra:
+    - to:
+        - podSelector:
+            matchLabels: {app: fake-git}
+      ports:
+        - {protocol: TCP, port: 8443}

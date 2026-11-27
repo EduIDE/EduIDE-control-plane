@@ -30,6 +30,15 @@ app.kubernetes.io/component: {{ .component }}
 {{ .Values.userSalt.secretName | default (printf "%s-user-salt" (include "ecp.fullname" .)) }}
 {{- end }}
 
+{{/* "true" when the config names Git account providers (ADR 0023); empty otherwise */}}
+{{- define "ecp.gitEnabled" -}}
+{{- if dig "gitAccounts" "providers" (list) .Values.config }}true{{ end }}
+{{- end }}
+
+{{- define "ecp.gitKeySecret" -}}
+{{ .Values.gitAccounts.encryptionKey.secretName | default (printf "%s-git-accounts-key" (include "ecp.fullname" .)) }}
+{{- end }}
+
 {{- define "ecp.podSecurityContext" -}}
 runAsNonRoot: true
 seccompProfile:
@@ -46,11 +55,34 @@ seccompProfile:
   type: RuntimeDefault
 {{- end }}
 
+{{/* "true" when a Git provider names a CA bundle (a self-hosted host with a private CA) */}}
+{{- define "ecp.gitCA" -}}
+{{- range $p := dig "gitAccounts" "providers" (list) .Values.config }}{{ if $p.caConfigMapRef }}true{{ end }}{{ end -}}
+{{- end }}
+
 {{/* config.yaml: the values as given, agent image and salt file filled in */}}
 {{- define "ecp.config" -}}
 {{- $c := deepCopy .Values.config -}}
 {{- if not $c.agent.image }}{{ $_ := set $c.agent "image" (include "ecp.image" (dict "ctx" . "name" "agent")) }}{{ end -}}
+{{- /* Mutable preview tags need Always for the agent too; the default IfNotPresent renders nothing, so the config stays as it was. */ -}}
+{{- if and (not $c.agent.imagePullPolicy) (ne (.Values.image.pullPolicy | default "IfNotPresent") "IfNotPresent") }}{{ $_ := set $c.agent "imagePullPolicy" .Values.image.pullPolicy }}{{ end -}}
 {{- $_ := set $c "telemetry" (mergeOverwrite (dict) ($c.telemetry | default dict) (dict "userSaltFile" "/etc/eduide/secrets/user-salt")) -}}
+{{- if include "ecp.gitEnabled" . -}}
+{{- /* The client secrets and the key are files of a projected volume in the service pod; the config names the paths only. */ -}}
+{{- $provs := list -}}
+{{- range $p := $c.gitAccounts.providers -}}
+{{- $q := omit $p "clientSecretRef" "caConfigMapRef" -}}
+{{- $_ := set $q "clientSecretFile" (printf "/etc/eduide/git-accounts/client-secret-%s" $p.name) -}}
+{{- if $p.caConfigMapRef }}{{ $_ := set $q "caFile" (printf "/etc/eduide/git-ca/%s.pem" $p.name) }}{{ end -}}
+{{- $provs = append $provs $q -}}
+{{- end -}}
+{{- $full := include "ecp.fullname" . -}}
+{{- $_ := set $c "gitAccounts" (dict "providers" $provs "approval" ($c.gitAccounts.approval | default dict) "encryptionKeyFile" "/etc/eduide/git-accounts/encryption-key"
+  "proxyURL" (printf "http://%s-git-proxy.%s.svc:8080" $full .Release.Namespace)
+  "internalURL" (printf "http://%s-service.%s.svc:8083" $full .Release.Namespace)) -}}
+{{- else -}}
+{{- $_ := unset $c "gitAccounts" -}}
+{{- end -}}
 {{- if .Values.poolScaler.enabled -}}
 {{- $_ := set $c "admin" (mergeOverwrite (dict "scalerInterval" (.Values.poolScaler.config.interval | default "30s")) ($c.admin | default dict)) -}}
 {{- end -}}

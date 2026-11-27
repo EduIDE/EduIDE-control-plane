@@ -3,14 +3,22 @@
 {{- define "ecp.operatorRules" }}
 {{- (.Files.Get "files/operator-rules.yaml" | fromYaml).rules | toYaml }}
 {{- end }}
+{{- /* The Git account Secrets have hashed names, so the rule cannot name them; the verbs apply to all Secrets of the namespace. */ -}}
+{{- define "ecp.gitRules" }}
+{{- if include "ecp.gitEnabled" . }}
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [list, update, patch]
+{{- end }}
+{{- end }}
 {{- range $c := list
   (dict "name" "operator" "rules" (include "ecp.operatorRules" . | fromYamlArray))
-  (dict "name" "service" "rules" (list
+  (dict "name" "service" "rules" (concat (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idetemplates" "idepools" "idesessions" "ideworkspaces") "verbs" (list "get" "list" "watch"))
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions" "ideworkspaces") "verbs" (list "create" "delete"))
     (dict "apiGroups" (list "") "resources" (list "secrets") "verbs" (list "create" "get" "delete"))
     (dict "apiGroups" (list "events.k8s.io") "resources" (list "events") "verbs" (list "list" "watch"))
-    (dict "apiGroups" (list "") "resources" (list "resourcequotas") "verbs" (list "get" "list"))))
+    (dict "apiGroups" (list "") "resources" (list "resourcequotas") "verbs" (list "get" "list"))) (include "ecp.gitRules" . | fromYamlArray)))
   (dict "name" "authz" "rules" (list
     (dict "apiGroups" (list "eduide.github.io") "resources" (list "idesessions") "verbs" (list "list" "watch"))))
   (dict "name" "pool-scaler" "rules" (list
