@@ -100,13 +100,18 @@ func TestMemoryOfStalledPushes(t *testing.T) {
 			warm(instances + 1)
 			waitRunning(t, h, 1)
 			heap0, stack0 := settle()
+			// In batches: 321 connections at once overflow the listen queue of some systems (macOS).
 			for i := range n {
 				warm(i / maxInFlight)
+				if (i+1)%20 == 0 {
+					waitRunning(t, h, i+2)
+				}
 			}
 			waitRunning(t, h, n+1)
 			time.Sleep(time.Second) // let the buffers of the streams fill
 			heap1, stack1 := settle()
-			heapPer, stackPer := float64(heap1-heap0)/float64(n), float64(stack1-stack0)/float64(n)
+			// Signed: a stack that shrank (or a GC that freed more than the requests added) must not wrap around.
+			heapPer, stackPer := max(float64(int64(heap1)-int64(heap0)), 0)/float64(n), max(float64(int64(stack1)-int64(stack0)), 0)/float64(n)
 			t.Logf("%s upstream: %d stalled pushes, heap %.0f KiB + stack %.0f KiB = %.0f KiB per request", mode, n, heapPer/1024, stackPer/1024, (heapPer+stackPer)/1024)
 			// Far above the measured figures, so noise passes; a change that makes a request cost megabytes does not.
 			if heapPer+stackPer > 1<<20 {

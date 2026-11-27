@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"net"
 	"net/http"
@@ -157,6 +158,55 @@ func TestStalledBodyOnTheGitRouteHoldsNothing(t *testing.T) {
 				if time.Now().After(end) {
 					t.Fatalf("%d goroutines, baseline %d", runtime.NumGoroutine(), base)
 				}
+			}
+		})
+	}
+}
+
+// Three POSTs through one client: a large streamed answer arrives whole every time, also when the git-proxy answers
+// before it reads the body. The agent only ever expires the read deadline; a response is never cut.
+func TestGitPostsStreamWholeAnswers(t *testing.T) {
+	const size = 8 << 20
+	for name, readBody := range map[string]bool{"git-proxy reads the body": true, "git-proxy answers early": false} {
+		t.Run(name, func(t *testing.T) {
+			chunk := bytes.Repeat([]byte("p"), 32<<10)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if readBody {
+					_, _ = io.Copy(io.Discard, r.Body)
+				}
+				for sent := 0; sent < size; sent += len(chunk) {
+					_, _ = w.Write(chunk)
+				}
+			}))
+			defer upstream.Close()
+			a := gitAgent(t, upstream.URL, true)
+			srv := httptest.NewServer(a.LocalHandler())
+			defer srv.Close()
+			client := &http.Client{Transport: &http.Transport{}, Timeout: 20 * time.Second}
+			defer client.CloseIdleConnections()
+			for i := range 3 {
+				resp, err := client.Post(srv.URL+"/git/github.com/o/r/git-upload-pack", "application/x-git-upload-pack-request", bytes.NewReader(bytes.Repeat([]byte("w"), 1<<20)))
+				if err != nil {
+					t.Fatalf("POST %d: %v", i+1, err)
+				}
+				n, err := io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if err != nil || n != size || resp.StatusCode != 200 {
+					t.Fatalf("POST %d: status %d, %d of %d bytes, error %v", i+1, resp.StatusCode, n, size, err)
+				}
+				if !resp.Close {
+					t.Errorf("POST %d: the connection of a request with a body stays open", i+1)
+				}
+			}
+			// A request without a body keeps its connection.
+			resp, err := client.Get(srv.URL + "/git/github.com/o/r/info/refs?service=git-upload-pack")
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.Close {
+				t.Error("GET got Connection: close")
 			}
 		})
 	}

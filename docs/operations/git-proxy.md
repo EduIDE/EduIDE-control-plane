@@ -13,7 +13,8 @@ Other repositories are read anonymously, and a push to them is refused.
 Nothing of a clone or push is buffered, so a transfer of any size uses little memory.
 The proxy reads at most 4 KiB of a push body (2 seconds at most) to find out how git wants to read an error, and only for a request that the service authorised and that holds a slot of its instance.
 A request that is not authorised, or finds no free slot, reads no body and allocates no peek buffer.
-When the handler answers, the connection of a client that stalls its body is closed: `net/http` would otherwise discard the unread body with no deadline, so the git-proxy expires the read deadline of the connection when it returns with the body not at its end (`TestStalledBodyHoldsNothingOnAnyPath`, with a real server).
+A request with a body (a POST) never reuses its connection: the answer carries `Connection: close`, and the git-proxy expires the read deadline of the connection when it returns, so a client that stalls its body is cut off (`net/http` would otherwise discard the unread body with no deadline; `TestStalledBodyHoldsNothingOnAnyPath`, with a real server).
+The cost is one new in-cluster TCP connection per POST; a request without a body (the `info/refs` GET) keeps its connection.
 A provider that answers before the upload ended, with a client that stalls, is cut by the idle limit of 5 minutes.
 
 ### Memory

@@ -241,17 +241,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// After the handler returns, net/http reads and discards the rest of the request body with no deadline of its
 	// own. A client that sends headers and stalls its body would hold the connection and its memory forever, on
 	// every path (429, 404, 401, denial, busy slot, success). An expired read deadline makes that discard fail at
-	// once and closes the connection. It is the first defer, so it runs last, after the success path cleared its own.
-	// Only for a body that is not at its end: the server reads the connection in the background otherwise, and an
-	// expired deadline there would cancel the context of the connection, and with it every later request on it.
+	// once. It is the first defer, so it runs last, after the success path cleared its own.
+	// A request with a body never reuses its connection (Connection: close, which net/http honours even when
+	// ReverseProxy copies the headers of the provider), so the expired deadline cannot poison a later request:
+	// net/http reads the connection in the background and cancels its context when that read fails, and nobody
+	// can rely on knowing at this point whether it does.
 	if r.Body != nil && r.Body != http.NoBody {
-		b := &eofBody{ReadCloser: r.Body}
-		r.Body = b
-		defer func() {
-			if !b.eof.Load() {
-				_ = rc.SetReadDeadline(time.Now())
-			}
-		}()
+		w.Header().Set("Connection", "close")
+		defer func() { _ = rc.SetReadDeadline(time.Now()) }()
 	}
 	if !h.clients.allow(clientIP(r)) {
 		w.Header().Set("Retry-After", "1")
@@ -431,20 +428,6 @@ func writeLFSError(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "application/vnd.git-lfs+json")
 	w.WriteHeader(http.StatusNotImplemented)
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": "Git LFS is not supported through EduIDE."})
-}
-
-// eofBody tells whether the request body was read to its end.
-type eofBody struct {
-	io.ReadCloser
-	eof atomic.Bool
-}
-
-func (b *eofBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if err == io.EOF {
-		b.eof.Store(true)
-	}
-	return n, err
 }
 
 type countReader struct {

@@ -7,7 +7,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/EduIDE/EduIDE-control-plane/internal/agentapi"
@@ -71,15 +71,17 @@ func (a *Agent) EnableGit(proxyURL string, hosts []string, landingURL string) er
 
 // gitHandler serves /git/{host}/{rest...} while the instance is claimed.
 func (a *Agent) gitHandler(w http.ResponseWriter, r *http.Request) {
-	// net/http reads and discards an unread request body with no deadline: before the first flush of the answer,
-	// when the reverse proxy closes the body, and after the handler returns. The listener has no ReadTimeout (a
-	// push of gigabytes must not be cut), so a client that stalls its body would hold the connection forever.
-	// An answer that starts before the body ended means git is done sending, so the read deadline expires with
-	// it, and the discard fails at once. A body at its end is left alone: a long clone must keep its connection.
+	// net/http reads and discards an unread request body with no deadline of its own: when the answer starts, when
+	// the reverse proxy closes the body, and after the handler returns. The listener has no ReadTimeout (a push of
+	// gigabytes must not be cut), so a client that stalls its body would hold the connection forever. A request with
+	// a body therefore never reuses its connection: Connection: close, and an expired read deadline when the handler
+	// returns (only reads are touched, a streamed answer is never cut). The body hides its Close, so the reverse
+	// proxy does not discard the body of the server either.
 	if r.Body != nil && r.Body != http.NoBody {
-		b := &eofBody{Reader: r.Body}
+		w.Header().Set("Connection", "close")
+		b := &guardedBody{r: r.Body}
 		r.Body = b
-		w = &answerGuard{ResponseWriter: w, rc: http.NewResponseController(w), body: b}
+		defer b.end(http.NewResponseController(w))
 	}
 	a.mu.Lock()
 	claimed := a.session != ""
@@ -91,38 +93,33 @@ func (a *Agent) gitHandler(w http.ResponseWriter, r *http.Request) {
 	a.git.proxy.ServeHTTP(w, r)
 }
 
-// eofBody tells whether the request body was read to its end. Its Close does nothing, so the reverse proxy never
-// closes (and so never discards) the body of the server.
-type eofBody struct {
-	io.Reader
-	eof atomic.Bool
+// guardedBody is the request body for the reverse proxy: no Close, and no read once the handler ended.
+type guardedBody struct {
+	mu   sync.Mutex // held during a read
+	r    io.Reader
+	done bool
 }
 
-func (b *eofBody) Read(p []byte) (int, error) {
-	n, err := b.Reader.Read(p)
-	if err == io.EOF {
-		b.eof.Store(true)
+func (b *guardedBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.done {
+		return 0, http.ErrBodyReadAfterClose
 	}
-	return n, err
+	return b.r.Read(p)
 }
 
-func (b *eofBody) Close() error { return nil }
+func (b *guardedBody) Close() error { return nil }
 
-// answerGuard expires the read deadline when the answer starts while the request body is not at its end.
-type answerGuard struct {
-	http.ResponseWriter
-	rc   *http.ResponseController
-	body *eofBody
+// end expires the read deadline, which fails a read of the transport that still waits for a stalled client, and
+// waits until that read returned. net/http clears the deadline again when it aborts a read that is in flight, and the
+// discard of the rest of the body after the handler would then wait for the client with no deadline.
+func (b *guardedBody) end(rc *http.ResponseController) {
+	_ = rc.SetReadDeadline(time.Now())
+	b.mu.Lock()
+	b.done = true
+	b.mu.Unlock()
 }
-
-func (g *answerGuard) WriteHeader(code int) {
-	if !g.body.eof.Load() {
-		_ = g.rc.SetReadDeadline(time.Now())
-	}
-	g.ResponseWriter.WriteHeader(code)
-}
-
-func (g *answerGuard) Unwrap() http.ResponseWriter { return g.ResponseWriter }
 
 func (a *Agent) getGitHosts(w http.ResponseWriter, _ *http.Request) {
 	out := agentapi.GitHosts{Hosts: []string{}}
